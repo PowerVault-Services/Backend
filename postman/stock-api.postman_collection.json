@@ -1,0 +1,469 @@
+{
+  "info": {
+    "_postman_id": "6f15c2b3-a113-4875-ae23-bc6ea7e74b08",
+    "name": "Solar Backend - Stock API",
+    "description": "Requests for testing stock pages: All Stock, Add Product, Stock In, Stock Out.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0) Health Check",
+      "item": [
+        {
+          "name": "GET Root",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{host}}/"
+          }
+        }
+      ]
+    },
+    {
+      "name": "1) Meta And Master Data",
+      "item": [
+        {
+          "name": "GET Stock Meta",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('success=true', function () {",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{stock_base}}/meta"
+          }
+        },
+        {
+          "name": "POST Create Category",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Created category id', function () {",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.id).to.be.a('number');",
+                  "});",
+                  "pm.collectionVariables.set('categoryId', String(json.data.id));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Category {{$timestamp}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stock_base}}/categories"
+          }
+        },
+        {
+          "name": "GET Categories",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('success=true', function () {",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(Array.isArray(json.data)).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{stock_base}}/categories"
+          }
+        },
+        {
+          "name": "POST Create Unit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Created unit id', function () {",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.id).to.be.a('number');",
+                  "});",
+                  "pm.collectionVariables.set('unitId', String(json.data.id));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Unit {{$timestamp}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stock_base}}/units"
+          }
+        },
+        {
+          "name": "GET Units",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('success=true', function () {",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(Array.isArray(json.data)).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{stock_base}}/units"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2) Add Product Page",
+      "item": [
+        {
+          "name": "POST Create Product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Created productId', function () {",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.productId).to.be.a('number');",
+                  "});",
+                  "pm.collectionVariables.set('productId', String(json.data.productId));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"SKU-{{$timestamp}}\",\n  \"name\": \"MC4 Connector {{$randomInt}}\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"unitId\": \"{{unitId}}\",\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stock_base}}/products"
+          }
+        },
+        {
+          "name": "GET Products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('success=true', function () {",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(Array.isArray(json.data)).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{stock_base}}/products?includeInactive=true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3) Stock In/Out Pages",
+      "item": [
+        {
+          "name": "POST Stock In",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('success=true and onHandAfterTx exists', function () {",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.onHandAfterTx).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": \"{{productId}}\",\n  \"quantity\": \"{{inQty}}\",\n  \"txDate\": \"{{txDate}}\",\n  \"project\": \"Project A\",\n  \"receiver\": \"Somchai\",\n  \"vendor\": \"Supplier X\",\n  \"insuranceCompany\": \"Insure Co\",\n  \"insuranceNo\": \"INS-001\",\n  \"note\": \"Initial stock in\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stock_base}}/in"
+          }
+        },
+        {
+          "name": "POST Stock Out",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('success=true and onHandAfterTx exists', function () {",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(json.data.onHandAfterTx).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": \"{{productId}}\",\n  \"quantity\": \"{{outQty}}\",\n  \"txDate\": \"{{txDate}}\",\n  \"project\": \"Project A\",\n  \"receiver\": \"Narin\",\n  \"note\": \"Stock out for work order\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stock_base}}/out"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4) List Pages",
+      "item": [
+        {
+          "name": "GET All Stock Summary",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('summary payload is valid', function () {",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(Array.isArray(json.data.list)).to.eql(true);",
+                  "  pm.expect(json.data.pagination).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{stock_base}}/summary?page=1&pageSize=20&productId={{productId}}"
+          }
+        },
+        {
+          "name": "GET Stock In List",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('in-list payload is valid', function () {",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(Array.isArray(json.data.list)).to.eql(true);",
+                  "  pm.expect(json.data.pagination).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{stock_base}}/in?page=1&pageSize=20&productId={{productId}}"
+          }
+        },
+        {
+          "name": "GET Stock Out List",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('out-list payload is valid', function () {",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "  pm.expect(Array.isArray(json.data.list)).to.eql(true);",
+                  "  pm.expect(json.data.pagination).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{stock_base}}/out?page=1&pageSize=20&productId={{productId}}"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "host",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "stock_base",
+      "value": "{{host}}/api/stock"
+    },
+    {
+      "key": "categoryId",
+      "value": ""
+    },
+    {
+      "key": "unitId",
+      "value": ""
+    },
+    {
+      "key": "productId",
+      "value": ""
+    },
+    {
+      "key": "inQty",
+      "value": "20"
+    },
+    {
+      "key": "outQty",
+      "value": "5"
+    },
+    {
+      "key": "txDate",
+      "value": "2026-02-02"
+    }
+  ]
+}
