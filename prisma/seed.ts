@@ -1,8 +1,7 @@
-import { PrismaClient, Role } from '@prisma/client';
+import { Role } from '@prisma/client';
+import prisma from '../src/config/prisma';
 import bcrypt from 'bcryptjs';
 import * as process from 'process';
-
-const prisma = new PrismaClient();
 
 async function main() {
   // 1. สร้าง Password Hash

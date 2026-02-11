@@ -1,8 +1,8 @@
 // src/services/syncService.ts
-import { PrismaClient } from '@prisma/client';
-import { huaweiService, HuaweiDevice, HuaweiStation } from './huaweiService';
 
-const prisma = new PrismaClient();
+import { huaweiService, HuaweiDevice, HuaweiStation } from './huaweiService';
+import prisma from '../config/prisma';
+
 
 // ---------------- Utils ----------------
 function pickStationCode(s: HuaweiStation): string | null {
@@ -437,7 +437,7 @@ export const syncMonitoringTick = async () => {
   } catch (error: any) {
     console.error('❌ Sync Job Failed:', error?.message ?? error);
   } finally {
-    // สรุปว่ารอบนี้ยิงอะไรไปกี่ครั้ง (ช่วย debug จุดที่โดน rate limit)
+    // endpoint part summary (per tick)
     const stats = huaweiService.getStats();
     console.log('📊 Huawei API call summary:', stats);
 
@@ -453,8 +453,6 @@ export const syncMonitoringTick = async () => {
 
     // สรุป run_state ที่เจอ (ช่วยปรับ HUAWEI_FAULT_RUN_STATES ให้แม่น)
     // (ถ้าไม่มีจะไม่พิมพ์)
-    // NOTE: runStateCount อยู่ใน scope try; ถ้าเกิด error ก่อนประกาศจะไม่พิมพ์
-
     if (DEBUG) {
       console.log('📌 retryQueue size:', retryQueue.length, retryQueue.slice(0, 10));
       if (syncPauseUntil) console.log('📌 pausedUntil:', new Date(syncPauseUntil).toISOString());

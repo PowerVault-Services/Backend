@@ -1,8 +1,6 @@
 // src/routes/homepageRoutes.ts
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import prisma from '../config/prisma';
 export const homepageRoutes = Router();
 
 function calcPlantStatus(inverters: { status: string | null; lastSyncAt: Date | null }[]) {
@@ -146,10 +144,10 @@ homepageRoutes.get('/plants', async (req, res) => {
 
     const energyRows = await prisma.siteDailyEnergy.findMany({
       where: { siteId: { in: siteIds }, date: today },
-      select: { siteId: true, yieldKWh: true },
+	      select: { siteId: true, energyKWh: true },
     });
     const energyMap = new Map<number, number>();
-    for (const r of energyRows) energyMap.set(r.siteId, safeNum(r.yieldKWh));
+	    for (const r of energyRows) energyMap.set(r.siteId, safeNum(r.energyKWh));
 
     // total yield: ตอนนี้คุณยังไม่ได้เก็บเป็น site-level
     // เราจะคำนวณแบบ “รวม totalEnergy ล่าสุดของแต่ละ inverter” (ถ้ามี)

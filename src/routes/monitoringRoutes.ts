@@ -1,8 +1,7 @@
-  import { Router } from 'express';
-  import { PrismaClient } from '@prisma/client';
+	import { Router } from 'express';
+	import prisma from '../config/prisma';
 
-  const router = Router();
-  const prisma = new PrismaClient();
+	const router = Router();
 
   // list sites
   router.get('/sites', async (_req, res) => {
@@ -50,11 +49,11 @@
     const last7Days = new Date();
     last7Days.setDate(last7Days.getDate() - 7);
 
-    const energySeries = await prisma.siteDailyEnergy.findMany({
-      where: { siteId, date: { gte: last7Days } },
-      select: { date: true, yieldKWh: true },
-      orderBy: { date: 'asc' },
-    });
+	    const energySeries = await prisma.siteDailyEnergy.findMany({
+	      where: { siteId, date: { gte: last7Days } },
+	      select: { date: true, energyKWh: true },
+	      orderBy: { date: 'asc' },
+	    });
 
     res.json({
       data: {

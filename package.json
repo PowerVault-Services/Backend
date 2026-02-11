@@ -13,7 +13,6 @@
   "license": "ISC",
   "dependencies": {
     "@prisma/client": "^5.22.0",
-    "@prisma/engines": "^7.3.0",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
@@ -22,6 +21,9 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
+    "nodemailer": "^8.0.1",
+    "pdfkit": "^0.17.2",
+    "puppeteer": "^24.37.2",
     "uuid": "^13.0.0",
     "zod": "^4.3.6"
   },
@@ -33,6 +35,8 @@
     "@types/multer": "^2.0.0",
     "@types/node": "^25.0.10",
     "@types/node-cron": "^3.0.11",
+    "@types/nodemailer": "^7.0.9",
+    "@types/pdfkit": "^0.17.4",
     "@types/uuid": "^10.0.0",
     "nodemon": "^3.1.11",
     "prisma": "^5.22.0",

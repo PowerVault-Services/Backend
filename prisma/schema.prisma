@@ -1,5 +1,3 @@
-// prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -9,13 +7,39 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// --- 1. User & Role Management ---
+// =======================
+// ENUMS
+// =======================
+
 enum Role {
   ADMIN
   SYSTEM_OWNER
   SERVICE_TEAM
   CLEANING_TEAM
 }
+
+enum JobType {
+  CLEANING
+  SERVICE
+  INSPECTION
+}
+
+enum JobStatus {
+  DRAFT
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum StockTxType {
+  IN
+  OUT
+}
+
+// =======================
+// USER & SITE
+// =======================
 
 model User {
   id        Int      @id @default(autoincrement())
@@ -32,6 +56,9 @@ model User {
   ownedSites   Site[] @relation("SiteOwner")
   assignedJobs Job[]  @relation("AssignedJobs")
   createdJobs  Job[]  @relation("CreatedJobs")
+
+  cleaningJobsStep2Sent CleaningJob[] @relation("CleaningJobStep2SentBy")
+  cleaningJobsStep5Sent CleaningJob[] @relation("CleaningJobStep5SentBy")
 }
 
 model Site {
@@ -46,6 +73,10 @@ model Site {
   ownerId Int?
   owner   User? @relation("SiteOwner", fields: [ownerId], references: [id])
 
+  pvModuleCount Int?
+  contactPhone  String?
+  contactEmail  String?
+
   inverters     Inverter[]
   jobs          Job[]
   dailyEnergies SiteDailyEnergy[]
@@ -54,6 +85,30 @@ model Site {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+// =======================
+// ENERGY (FIX BUG HERE)
+// =======================
+
+model SiteDailyEnergy {
+  id     Int  @id @default(autoincrement())
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id])
+
+  date      DateTime
+  energyKWh Float
+
+  raw Json?
+
+  createdAt DateTime @default(now())
+
+  @@unique([siteId, date])
+  @@index([siteId, date])
+}
+
+// =======================
+// INVERTER
+// =======================
 
 model Inverter {
   id           Int    @id @default(autoincrement())
@@ -67,39 +122,19 @@ model Inverter {
   huaweiDevId String? @unique
   stationCode String?
 
-  activePower     Float   @default(0)
+  activePower     Float     @default(0)
   lastDailyEnergy Float?
   status          String?
-
-  // raw run_state from Huawei (for debugging / accurate status mapping)
-  runState Int?
-
-  lastSyncAt DateTime?
+  runState        Int?
+  lastSyncAt      DateTime?
 
   alarms       Alarm[]
   kpiSnapshots InverterKpiSnapshot[]
 }
 
-model SyncState {
-  id        Int      @id @default(autoincrement())
-  key       String   @unique
-  value     String
-  updatedAt DateTime @updatedAt
-}
-
-enum JobType {
-  CLEANING
-  SERVICE
-  INSPECTION
-}
-
-enum JobStatus {
-  DRAFT
-  ASSIGNED
-  IN_PROGRESS
-  COMPLETED
-  CANCELLED
-}
+// =======================
+// JOB
+// =======================
 
 model Job {
   id     Int       @id @default(autoincrement())
@@ -123,6 +158,60 @@ model Job {
   attachments JobAttachment[]
   stockUsage  StockTransaction[]
 
+  projectType   String?
+  contractor    String?
+  planEmailBody String?
+  reportUrl     String?
+  step          Int     @default(1)
+
+  cleaningJob   CleaningJob?
+  inspectionJob InspectionJob?
+  serviceJob    ServiceJob?
+
+  emailLogs EmailLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ServiceJob {
+  jobId Int @id
+  job   Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  // Step1
+  projectName   String?
+  systemSizeKWp Float?
+  pvModuleEA    Int?
+  locationText  String?
+  projectType   String?
+  contactPhone  String?
+  contactEmail  String?
+  workDate      DateTime?
+  workTimeText  String?
+  customerName  String?
+  note          String?
+
+  // Step2 (ขออนุญาต / นัดหมาย)
+  step2EmailTo      String?
+  step2EmailSubject String?
+  step2EmailBody    String? @db.Text
+  step2SentAt       DateTime?
+  step2SentByUserId Int?
+
+  // Step3 (อัปโหลดฟอร์ม Service Report + รูปหลักฐาน)
+  step3Meta Json?
+
+  // Step4
+  reportFileUrl   String?
+  reportCreatedAt DateTime?
+
+  // Step5 (ส่งรายงาน)
+  step5EmailTo      String?
+  step5EmailSubject String?
+  step5EmailBody    String? @db.Text
+  step5SentAt       DateTime?
+  step5SentByUserId Int?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -130,15 +219,116 @@ model Job {
 model JobAttachment {
   id        Int      @id @default(autoincrement())
   fileUrl   String
-  fileType  String? // 'BEFORE', 'AFTER', 'REPORT'
+  fileType  String?
   jobId     Int
   job       Job      @relation(fields: [jobId], references: [id])
   createdAt DateTime @default(now())
 }
 
+// =======================
+// CLEANING JOB
+// =======================
+
+model CleaningJob {
+  id Int @id @default(autoincrement())
+
+  jobId Int @unique
+  job   Job @relation(fields: [jobId], references: [id])
+
+  projectName   String?
+  projectType   String?
+  systemSizeKWp Float?
+  pvModuleEA    Int?
+  locationText  String?
+  contactPhone  String?
+  contactEmail  String?
+  workDate      DateTime?
+  workTimeText  String?
+  customerName  String?
+  note          String?
+
+  step2EmailTo      String?
+  step2EmailSubject String?
+  step2EmailBody    String?   @db.Text
+  step2SentAt       DateTime?
+  step2SentByUserId Int?
+  step2SentBy       User?     @relation("CleaningJobStep2SentBy", fields: [step2SentByUserId], references: [id])
+
+  step3SummaryNote String? @db.Text
+  checklist        Json?
+
+  reportFileUrl   String?
+  reportCreatedAt DateTime?
+
+  step5EmailTo      String?
+  step5EmailSubject String?
+  step5EmailBody    String?   @db.Text
+  step5SentAt       DateTime?
+  step5SentByUserId Int?
+  step5SentBy       User?     @relation("CleaningJobStep5SentBy", fields: [step5SentByUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// =======================
+// EMAIL LOG
+// =======================
+
+model EmailLog {
+  id Int @id @default(autoincrement())
+
+  jobId Int?
+  job   Job? @relation(fields: [jobId], references: [id])
+
+  step         Int?
+  to           String
+  subject      String
+  bodyPreview  String?
+  status       String
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+}
+
+// =======================
+// STOCK
+// =======================
+
+model StockTransaction {
+  id   Int         @id @default(autoincrement())
+  type StockTxType
+
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
+
+  quantity Decimal  @db.Decimal(18, 3)
+  txDate   DateTime @default(now())
+
+  project          String?
+  receiver         String?
+  vendor           String?
+  insuranceCompany String?
+  insuranceNo      String?
+  note             String?
+
+  jobId Int?
+  job   Job? @relation(fields: [jobId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type, txDate])
+  @@index([productId, txDate])
+}
+
+// =======================
+// PRODUCT
+// =======================
+
 model Product {
   id         Int    @id @default(autoincrement())
-  sku        String @unique // รหัสสินค้า
+  sku        String @unique
   name       String
   categoryId Int
   unitId     Int
@@ -148,72 +338,35 @@ model Product {
 
   isActive Boolean @default(true)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
   txs StockTransaction[]
 
-  @@index([categoryId])
-  @@index([unitId])
-  @@index([name])
-}
-
-enum TransactionType {
-  IN
-  OUT
-}
-
-model StockTransaction {
-  id   Int         @id @default(autoincrement())
-  type StockTxType
-
-  productId Int
-  product   Product @relation(fields: [productId], references: [id])
-
-  quantity Decimal  @db.Decimal(18, 3) // รองรับทศนิยม
-  txDate   DateTime @default(now())
-
-  // metadata สำหรับหน้ารับเข้า/จ่ายออก
-  project          String? // โครงการ
-  receiver         String? // ผู้รับผิดชอบ/ผู้รับ
-  vendor           String? // ผู้ขาย/ผู้จ่าย (แล้วแต่ type)
-  insuranceCompany String?
-  insuranceNo      String?
-  note             String?
-
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  Job       Job?     @relation(fields: [jobId], references: [id])
-  jobId     Int?
-
-  @@index([type, txDate])
-  @@index([productId, txDate])
 }
 
-// ---- Monitoring / Analytics ----
-
-model SiteDailyEnergy {
-  id     Int  @id @default(autoincrement())
-  siteId Int
-  site   Site @relation(fields: [siteId], references: [id])
-
-  // วันที่ของข้อมูล (ควร normalize เป็น 00:00:00)
-  date DateTime
-
-  // ผลผลิตไฟฟ้ารายวัน (kWh)
-  yieldKWh Float @default(0)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([siteId, date])
-  @@index([date])
+model ProductCategory {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  products  Product[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 }
+
+model Unit {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  products  Product[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+// =======================
+// ALARM & KPI
+// =======================
 
 model Alarm {
   id Int @id @default(autoincrement())
 
-  // id ของ alarm จาก Huawei (บางระบบให้เป็น Long/String)
   huaweiAlarmId String? @unique
 
   siteId Int?
@@ -221,10 +374,6 @@ model Alarm {
 
   inverterId Int?
   inverter   Inverter? @relation(fields: [inverterId], references: [id])
-
-  stationCode String?
-  devId       String?
-  sn          String?
 
   name       String?
   severity   Int?
@@ -236,14 +385,7 @@ model Alarm {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  @@index([stationCode])
-  @@index([devId])
-  @@index([status])
-  @@index([occurredAt])
 }
-
-// ---- Inverter KPI Snapshots ----
 
 model InverterKpiSnapshot {
   id         Int      @id @default(autoincrement())
@@ -261,7 +403,7 @@ model InverterKpiSnapshot {
   raw       Json?
   createdAt DateTime @default(now())
 
-  stringSnapshots InverterStringSnapshot[]
+  strings InverterStringSnapshot[]
 
   @@unique([inverterId, ts])
   @@index([inverterId, ts])
@@ -281,25 +423,38 @@ model InverterStringSnapshot {
   @@index([snapshotId])
 }
 
-enum StockTxType {
-  IN
-  OUT
-}
+model InspectionJob {
+  jobId Int @id
+  job   Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
-model ProductCategory {
-  id        Int      @id @default(autoincrement())
-  name      String   @unique
+  projectName   String?
+  systemSizeKWp Float?
+  pvModuleEA    Int?
+  locationText  String?
+  projectType   String?
+  contactPhone  String?
+  contactEmail  String?
+  workDate      DateTime?
+  workTimeText  String?
+  customerName  String?
+  note          String?
+
+  // Step2 (draft + send)
+  step2EmailTo      String?
+  step2EmailSubject String?
+  step2EmailBody    String?
+  step2SentAt       DateTime?
+  step2SentByUserId Int?
+
+  // Step3 (draft + send report)
+  step3EmailTo      String?
+  step3EmailSubject String?
+  step3EmailBody    String?
+  reportFileUrl     String?
+  reportCreatedAt   DateTime?
+  step3SentAt       DateTime?
+  step3SentByUserId Int?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  products Product[]
-}
-
-model Unit {
-  id        Int      @id @default(autoincrement())
-  name      String   @unique // เช่น "ชิ้น", "กล่อง", "เมตร"
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  products Product[]
 }
