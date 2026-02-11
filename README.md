@@ -11,10 +11,7 @@ npm install
 docker compose up -d
 
 # สร้างตาราง
-npx prisma migrate dev
-
-# (ถ้ามี seed) 
-npx prisma db seed
+npx prisma generate
 
 # run dev
 npm run dev
