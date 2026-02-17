@@ -4,9 +4,7 @@
 ## install&run
 
 ```bash
-cd solar-backend
 npm install
-
 docker compose up -d
 npx prisma generate
 npm run dev
