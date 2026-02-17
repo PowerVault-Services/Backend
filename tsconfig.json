@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "es2020",           /* ใช้มาตรฐาน JavaScript ใหม่หน่อย */
+    "module": "commonjs",         /* มาตรฐาน Module ของ Node.js */
+    "rootDir": "./src",           /* โค้ดของเราจะอยู่ในโฟลเดอร์ src */
+    "outDir": "./dist",           /* เวลาแปลงเสร็จ ให้ไปอยู่ที่ dist */
+    "strict": true,               /* เปิดโหมดเข้มงวด (ช่วยกัน Bug ได้เยอะ) */
+    "esModuleInterop": true,      /* ช่วยให้ import library แบบเก่าได้ */
+    "skipLibCheck": true,          /* ข้ามการเช็ค type ของ library คนอื่น (ประหยัดเวลา) */
+    "types": ["node"]
+  },
+  "include": ["src"]         /* บอกว่าโค้ดเราอยู่ที่ไหน */
+}

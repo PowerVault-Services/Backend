@@ -1,0 +1,639 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =======================
+// ENUMS
+// =======================
+
+enum Role {
+  ADMIN
+  SYSTEM_OWNER
+  SERVICE_TEAM
+  CLEANING_TEAM
+}
+
+enum JobType {
+  CLEANING
+  SERVICE
+  INSPECTION
+  OM
+}
+
+enum ProjectStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+}
+
+enum LayoutType {
+  PV_LAYOUT
+  PV_STRING_LAYOUT
+}
+
+enum JobStatus {
+  DRAFT
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum StockTxType {
+  IN
+  OUT
+}
+
+// =======================
+// USER & SITE
+// =======================
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  email     String?  @unique
+  role      Role     @default(SYSTEM_OWNER)
+  firstName String
+  lastName  String
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ownedSites   Site[] @relation("SiteOwner")
+  assignedJobs Job[]  @relation("AssignedJobs")
+  createdJobs  Job[]  @relation("CreatedJobs")
+
+  cleaningJobsStep2Sent CleaningJob[] @relation("CleaningJobStep2SentBy")
+  cleaningJobsStep5Sent CleaningJob[] @relation("CleaningJobStep5SentBy")
+}
+
+model Site {
+  id          Int     @id @default(autoincrement())
+  name        String
+  address     String?
+  latitude    Float?
+  longitude   Float?
+  capacityKWp Float
+  plantCode   String  @unique
+
+  // -------- Client Data (PowerVault Thailand / Service) --------
+  projectStatus ProjectStatus @default(ACTIVE)
+  warrantyStart DateTime?
+  warrantyEnd   DateTime?
+
+  companyName          String?
+  ecpPpa               String?
+  projectTypeText      String?
+  freeOmText           String?
+  warrantyOutputPct    Float?
+  codDate              DateTime?
+
+  panelBrand           String?
+  panelModel           String?
+  panelWatt            Float?
+  inverterCount        Int?
+  inverterBrand        String?
+  siteEngineer         String?
+  responsiblePerson1   String?
+  responsiblePerson2   String?
+  remark               String?
+
+  siteImageUrl String?
+
+  ownerId Int?
+  owner   User? @relation("SiteOwner", fields: [ownerId], references: [id])
+
+  pvModuleCount Int?
+  contactPhone  String?
+  contactEmail  String?
+
+  inverters     Inverter[]
+  jobs          Job[]
+  dailyEnergies SiteDailyEnergy[]
+  alarms        Alarm[]
+
+  warrantySupplierItems SiteWarrantySupplierItem[]
+  warrantyCustomerItems SiteWarrantyCustomerItem[]
+  layouts              SiteLayout[]
+  forecastMonthly       SiteForecastMonthly[]
+  forecastYearly        SiteForecastYearly[]
+  otherRows             SiteOtherRow[]
+  serviceEntries        ServiceEntry[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// =======================
+// CLIENT DATA (PROJECT DETAIL)
+// =======================
+
+model SiteWarrantySupplierItem {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  // e.g. "Solar Panels", "Inverter & Monitoring System"
+  category String
+  // e.g. "Product Warranty", "Linear Power Warranty"
+  itemName String
+
+  supplierName String?
+  productName  String?
+  quantity     Int?
+  startWarranty DateTime?
+  endWarranty   DateTime?
+  warrantyYears Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId, category])
+}
+
+model SiteWarrantyCustomerItem {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  category String
+  itemName String
+  warrantyYears Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId, category])
+}
+
+model SiteLayout {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  type LayoutType
+  fileUrl String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, type])
+}
+
+model SiteForecastMonthly {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  month Int
+  globalKwhM2 Float?
+  eGridKwh Float?
+  prRatio Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, month])
+  @@index([siteId, month])
+}
+
+model SiteForecastYearly {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  year Int
+  degradationPct Float?
+  annualProductionKwh Float?
+  warrantyEnergyOutputKwh Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, year])
+  @@index([siteId, year])
+}
+
+model SiteOtherRow {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  status String?
+  description String?
+  remark String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId])
+}
+
+// PowerVault Service tab: list rows with (Job, Description)
+model ServiceEntry {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  job JobType
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId, job])
+}
+
+// =======================
+// ENERGY (FIX BUG HERE)
+// =======================
+
+model SiteDailyEnergy {
+  id     Int  @id @default(autoincrement())
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id])
+
+  date      DateTime
+  energyKWh Float
+
+  raw Json?
+
+  createdAt DateTime @default(now())
+
+  @@unique([siteId, date])
+  @@index([siteId, date])
+}
+
+// =======================
+// INVERTER
+// =======================
+
+model Inverter {
+  id           Int    @id @default(autoincrement())
+  serialNumber String @unique
+  name         String
+  model        String
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id])
+
+  huaweiDevId String? @unique
+  stationCode String?
+
+  activePower     Float     @default(0)
+  lastDailyEnergy Float?
+  status          String?
+  runState        Int?
+  lastSyncAt      DateTime?
+
+  alarms       Alarm[]
+  kpiSnapshots InverterKpiSnapshot[]
+}
+
+// =======================
+// JOB
+// =======================
+
+model Job {
+  id     Int       @id @default(autoincrement())
+  jobNo  String    @unique
+  title  String
+  type   JobType
+  status JobStatus @default(DRAFT)
+
+  scheduledDate DateTime?
+  details       String?
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id])
+
+  assignedToId Int?
+  assignedTo   User? @relation("AssignedJobs", fields: [assignedToId], references: [id])
+
+  createdById Int
+  createdBy   User @relation("CreatedJobs", fields: [createdById], references: [id])
+
+  attachments JobAttachment[]
+  stockUsage  StockTransaction[]
+
+  projectType   String?
+  contractor    String?
+  planEmailBody String?
+  reportUrl     String?
+  step          Int     @default(1)
+
+  cleaningJob   CleaningJob?
+  inspectionJob InspectionJob?
+  serviceJob    ServiceJob?
+
+  emailLogs EmailLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ServiceJob {
+  jobId Int @id
+  job   Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  // Step1
+  projectName   String?
+  systemSizeKWp Float?
+  pvModuleEA    Int?
+  locationText  String?
+  projectType   String?
+  contactPhone  String?
+  contactEmail  String?
+  workDate      DateTime?
+  workTimeText  String?
+  customerName  String?
+  note          String?
+
+  // Step2 (ขออนุญาต / นัดหมาย)
+  step2EmailTo      String?
+  step2EmailSubject String?
+  step2EmailBody    String? @db.Text
+  step2SentAt       DateTime?
+  step2SentByUserId Int?
+
+  // Step3 (อัปโหลดฟอร์ม Service Report + รูปหลักฐาน)
+  step3Meta Json?
+
+  // Step4
+  reportFileUrl   String?
+  reportCreatedAt DateTime?
+
+  // Step5 (ส่งรายงาน)
+  step5EmailTo      String?
+  step5EmailSubject String?
+  step5EmailBody    String? @db.Text
+  step5SentAt       DateTime?
+  step5SentByUserId Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model JobAttachment {
+  id        Int      @id @default(autoincrement())
+  fileUrl   String
+  fileType  String?
+  jobId     Int
+  job       Job      @relation(fields: [jobId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+// =======================
+// CLEANING JOB
+// =======================
+
+model CleaningJob {
+  id Int @id @default(autoincrement())
+
+  jobId Int @unique
+  job   Job @relation(fields: [jobId], references: [id])
+
+  projectName   String?
+  projectType   String?
+  systemSizeKWp Float?
+  pvModuleEA    Int?
+  locationText  String?
+  contactPhone  String?
+  contactEmail  String?
+  workDate      DateTime?
+  workTimeText  String?
+  customerName  String?
+  note          String?
+
+  step2EmailTo      String?
+  step2EmailSubject String?
+  step2EmailBody    String?   @db.Text
+  step2SentAt       DateTime?
+  step2SentByUserId Int?
+  step2SentBy       User?     @relation("CleaningJobStep2SentBy", fields: [step2SentByUserId], references: [id])
+
+  step3SummaryNote String? @db.Text
+  checklist        Json?
+
+  reportFileUrl   String?
+  reportCreatedAt DateTime?
+
+  step5EmailTo      String?
+  step5EmailSubject String?
+  step5EmailBody    String?   @db.Text
+  step5SentAt       DateTime?
+  step5SentByUserId Int?
+  step5SentBy       User?     @relation("CleaningJobStep5SentBy", fields: [step5SentByUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// =======================
+// EMAIL LOG
+// =======================
+
+model EmailLog {
+  id Int @id @default(autoincrement())
+
+  jobId Int?
+  job   Job? @relation(fields: [jobId], references: [id])
+
+  step         Int?
+  to           String
+  subject      String
+  bodyPreview  String?
+  status       String
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+}
+
+// =======================
+// STOCK
+// =======================
+
+model StockTransaction {
+  id   Int         @id @default(autoincrement())
+  type StockTxType
+
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
+
+  quantity Decimal  @db.Decimal(18, 3)
+  txDate   DateTime @default(now())
+
+  project          String?
+  receiver         String?
+  vendor           String?
+  insuranceCompany String?
+  insuranceNo      String?
+  note             String?
+
+  jobId Int?
+  job   Job? @relation(fields: [jobId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type, txDate])
+  @@index([productId, txDate])
+}
+
+// =======================
+// PRODUCT
+// =======================
+
+model Product {
+  id         Int    @id @default(autoincrement())
+  sku        String @unique
+  name       String
+  categoryId Int
+  unitId     Int
+
+  category ProductCategory @relation(fields: [categoryId], references: [id])
+  unit     Unit            @relation(fields: [unitId], references: [id])
+
+  isActive Boolean @default(true)
+
+  txs StockTransaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ProductCategory {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  products  Product[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Unit {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  products  Product[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+// =======================
+// ALARM & KPI
+// =======================
+
+model Alarm {
+  id Int @id @default(autoincrement())
+
+  // Unique id ต่อ "เหตุการณ์" เพื่อ upsert ได้
+  // รูปแบบแนะนำ: "{stationCode}:{esnCode}:{alarmId}:{raiseTime}"
+  huaweiAlarmId String @unique
+
+  siteId Int?
+  site   Site? @relation(fields: [siteId], references: [id])
+
+  inverterId Int?
+  inverter   Inverter? @relation(fields: [inverterId], references: [id])
+
+  name       String?
+  severity   Int?
+  status     String?
+  occurredAt DateTime?
+  clearedAt  DateTime?
+
+  raw Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId, clearedAt])
+  @@index([inverterId, clearedAt])
+  @@index([severity, clearedAt])
+  @@index([occurredAt])
+}
+
+
+model InverterKpiSnapshot {
+  id         Int      @id @default(autoincrement())
+  inverterId Int
+  inverter   Inverter @relation(fields: [inverterId], references: [id])
+
+  ts          DateTime
+  activePower Float    @default(0)
+  dayEnergy   Float    @default(0)
+  totalEnergy Float?
+  runState    Int?
+  temperature Float?
+  powerFactor Float?
+
+  raw       Json?
+  createdAt DateTime @default(now())
+
+  strings InverterStringSnapshot[]
+
+  @@unique([inverterId, ts])
+  @@index([inverterId, ts])
+}
+
+model InverterStringSnapshot {
+  id         Int                 @id @default(autoincrement())
+  snapshotId Int
+  snapshot   InverterKpiSnapshot @relation(fields: [snapshotId], references: [id])
+
+  stringNo Int
+  voltage  Float?
+  current  Float?
+  status   String?
+
+  @@unique([snapshotId, stringNo])
+  @@index([snapshotId])
+}
+
+model InspectionJob {
+  jobId Int @id
+  job   Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  projectName   String?
+  systemSizeKWp Float?
+  pvModuleEA    Int?
+  locationText  String?
+  projectType   String?
+  contactPhone  String?
+  contactEmail  String?
+  workDate      DateTime?
+  workTimeText  String?
+  customerName  String?
+  note          String?
+
+  // Step2 (draft + send)
+  step2EmailTo      String?
+  step2EmailSubject String?
+  step2EmailBody    String?
+  step2SentAt       DateTime?
+  step2SentByUserId Int?
+
+  // Step3 (draft + send report)
+  step3EmailTo      String?
+  step3EmailSubject String?
+  step3EmailBody    String?
+  reportFileUrl     String?
+  reportCreatedAt   DateTime?
+  step3SentAt       DateTime?
+  step3SentByUserId Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
