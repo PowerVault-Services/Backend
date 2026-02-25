@@ -14,6 +14,7 @@ import { stockRoutes } from './routes/stockRoutes';
 import cleaningRoutes from './routes/cleaningRoutes';
 import inspectionRoutes from './routes/inspectionRoutes';
 import serviceRoutes from './routes/serviceRoutes';
+import alarmRoutes from './routes/alarmRoutes';
 
 const app = express();
 app.use(cors());
@@ -27,6 +28,7 @@ app.use('/api/cleaning', cleaningRoutes);
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 app.use('/api/inspection', inspectionRoutes);
 app.use('/api/service', serviceRoutes);
+app.use('/api/alarms', alarmRoutes);
 
 app.get('/', (req: Request, res: Response) => {
   res.send('Hello! Solar Energy Backend is Running 🚀');

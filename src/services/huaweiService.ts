@@ -1,26 +1,20 @@
-// src/services/huaweiService.ts
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 
-/**
- * Huawei Northbound API (บาง tenant) ตอบ rate limit เป็น:
- * - HTTP 407 หรือ
- * - HTTP 200 แต่ success=false + failCode=407
- *
- * แนวทาง:
- * 1) Global Throttle (คิวเดียว) เว้นระยะขั้นต่ำทุก request
- * 2) Global Cooldown: ถ้าโดน 407/403/429 ให้ "พักทั้งระบบ"
- * 3) Login guard: ไม่เกิน 5 ครั้ง / 10 นาที
- */
 
 type RetryRequestConfig = InternalAxiosRequestConfig & {
   _retry?: boolean;
   _retryCount?: number;
 };
 
+type HuaweiCreds = {
+  userName: string;
+  systemCode: string;
+  label?: string; 
+};
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const jitter = (ms: number) => ms + Math.floor(Math.random() * 350);
 
-// ✅ export types ให้ syncService.ts import ได้
 export type HuaweiStation = {
   plantCode?: string;
   stationCode?: string;
@@ -34,7 +28,7 @@ export type HuaweiStation = {
 };
 
 export type HuaweiDevice = {
-  id: number | string; // devId
+  id: number | string; 
   devDn?: string;
   devName?: string;
   esnCode?: string;
@@ -51,8 +45,10 @@ class HuaweiService {
   private client: AxiosInstance;
   private token: string | null = null;
   private loginPromise: Promise<void> | null = null;
+  private userName: string;
+  private systemCode: string;
+  private label: string;
 
-  // --- stats for debugging ---
   private stats = {
     login: 0,
     stations: 0,
@@ -81,7 +77,14 @@ class HuaweiService {
    */
   private debug = String(process.env.HUAWEI_API_DEBUG ?? '').trim() === '1';
 
-  constructor() {
+  constructor(creds?: HuaweiCreds) {
+    const envUser = process.env.HUAWEI_USER;
+    const envPass = process.env.HUAWEI_PASSWORD;
+
+    this.userName = creds?.userName ?? envUser ?? '';
+    this.systemCode = creds?.systemCode ?? envPass ?? '';
+    this.label = creds?.label ?? creds?.userName ?? 'HUAWEI';
+
     this.client = axios.create({
       baseURL: this.baseUrl,
       headers: { 'Content-Type': 'application/json' },
@@ -93,7 +96,7 @@ class HuaweiService {
       const now = Date.now();
       if (now < this.cooldownUntil) {
         const wait = this.cooldownUntil - now;
-        console.warn(`🧊 Huawei cooldown active. Waiting ${wait}ms...`);
+        console.warn(`🧊 [${this.label}] Huawei cooldown active. Waiting ${wait}ms...`);
         await sleep(jitter(wait));
       }
 
@@ -107,6 +110,11 @@ class HuaweiService {
       if (this.token) {
         config.headers = config.headers ?? {};
         config.headers['xsrf-token'] = this.token;
+      }
+      
+      if (this.debug) {
+        const method = (config.method ?? 'GET').toUpperCase();
+        console.log(`➡️  [${this.label}] ${method} ${config.url ?? ''}`);
       }
       return config;
     });
@@ -127,7 +135,7 @@ class HuaweiService {
         // ---- token หมดอายุ -> relogin แล้ว retry 1 ครั้ง ----
         if (isAuthError && !originalRequest._retry) {
           originalRequest._retry = true;
-          console.log('🔄 Huawei token expired. Relogin and retry...');
+          console.log(`🔄 [${this.label}] Huawei token expired. Relogin and retry...`);
           await this.ensureLoggedIn({ force: true });
           return this.client(originalRequest);
         }
@@ -140,23 +148,19 @@ class HuaweiService {
           const retryAfterMs =
             retryAfterHeader != null && !Number.isNaN(Number(retryAfterHeader)) ? Number(retryAfterHeader) * 1000 : null;
 
-          // backoff: 30s, 60s, 90s, 120s ... (cap 5 นาที)
           const baseDelay = Math.min(300_000, 30_000 * originalRequest._retryCount);
           const delay = retryAfterMs != null ? Math.max(baseDelay, retryAfterMs) : baseDelay;
 
-          // ✅ ตั้ง cooldown ทั้งระบบ
           this.cooldownUntil = Date.now() + delay;
 
-          // ✅ ปรับ throttle ช้าลงแบบ adaptive
           const newMin = Math.min(15_000, Math.floor(this.minIntervalMs * 1.25));
           if (newMin !== this.minIntervalMs) {
-            console.warn(`🐢 Increasing Huawei minIntervalMs: ${this.minIntervalMs} -> ${newMin}`);
+            console.warn(`🐢 [${this.label}] Increasing Huawei minIntervalMs: ${this.minIntervalMs} -> ${newMin}`);
             this.minIntervalMs = newMin;
           }
 
-          // จำกัดจำนวน retry ต่อ request
           if (originalRequest._retryCount <= 8) {
-            console.warn(`Huawei rate limit (407). Cooling down ${delay}ms then retry...`);
+            console.warn(`[${this.label}] Huawei rate limit (407). Cooling down ${delay}ms then retry...`);
             await sleep(jitter(delay));
             return this.client(originalRequest);
           }
@@ -166,7 +170,6 @@ class HuaweiService {
       }
     );
   }
-
   public getStats() {
     return { ...this.stats };
   }
@@ -204,7 +207,7 @@ class HuaweiService {
     }
 
     if (this.debug) {
-      console.warn(`🧊 notifyRateLimit kind=${kind} delayMs=${delayMs} reason=${opts?.reason ?? ''}`);
+      console.warn(`🧊 [${this.label}] notifyRateLimit kind=${kind} delayMs=${delayMs} reason=${opts?.reason ?? ''}`);
     }
   }
 
@@ -225,7 +228,7 @@ class HuaweiService {
     this.stats[endpoint] += 1;
     if (this.debug) {
       const extra = meta ? ` ${JSON.stringify(meta)}` : '';
-      console.log(`📡 Huawei API ${String(endpoint)} #${this.stats[endpoint]}${extra}`);
+      console.log(`📡 [${this.label}] Huawei API ${String(endpoint)} #${this.stats[endpoint]}${extra}`);
     }
   }
 
@@ -245,11 +248,11 @@ class HuaweiService {
   }
 
   private async login() {
-    const userName = process.env.HUAWEI_USER;
-    const systemCode = process.env.HUAWEI_PASSWORD;
+    const userName = this.userName;
+    const systemCode = this.systemCode;
 
     if (!userName || !systemCode) {
-      throw new Error('Missing HUAWEI_USER or HUAWEI_PASSWORD in .env');
+      throw new Error('Missing Huawei credentials (userName/systemCode)');
     }
 
     // login rate guard: ไม่ให้เกิน 5 ครั้ง / 10 นาที (กันโดน lock)
@@ -279,8 +282,8 @@ class HuaweiService {
     if (!this.token) throw new Error('Huawei login succeeded but xsrf-token header missing');
 
     this.client.defaults.headers.common['xsrf-token'] = this.token;
-    console.log('✅ Huawei Login Success');
-    console.log('xsrf-token:', this.token);
+    console.log(`✅ [${this.label}] Huawei Login Success`);
+    console.log(`[${this.label}] xsrf-token:`, this.token);
   }
 
   // ---------- Endpoint: stations ----------
@@ -358,7 +361,56 @@ class HuaweiService {
     this.handleFailCodeFromBody('getDevRealKpi', res.data);
     return res.data;
   }
+  
+    // ---------- Endpoint: getAlarmList ----------
+  public async getAlarmList(params: {
+    stationCodes?: string[] | string;
+    sns?: string[] | string;
+    beginTime: number;
+    endTime: number;
+    language?: string;
+    levels?: string;  // "1,2,3,4"
+    devTypes?: string;
+  }) {
+    await this.ensureLoggedIn();
+
+    const body: any = {
+      beginTime: params.beginTime,
+      endTime: params.endTime,
+      language: params.language ?? 'en_US',
+    };
+
+    if (params.stationCodes) body.stationCodes = Array.isArray(params.stationCodes) ? params.stationCodes.join(',') : params.stationCodes;
+    if (params.sns) body.sns = Array.isArray(params.sns) ? params.sns.join(',') : params.sns;
+    if (params.levels) body.levels = params.levels;
+    if (params.devTypes) body.devTypes = params.devTypes;
+
+    if (this.debug) console.log(`📡 [${this.label}] POST /thirdData/getAlarmList`, body);
+
+    const res = await this.client.post('/thirdData/getAlarmList', body);
+    this.handleFailCodeFromBody('getAlarmList', res.data);
+    return res.data;
+  }
 }
 
-export const huaweiService = new HuaweiService();
+
+
+const baseUser = process.env.HUAWEI_USER!;
+const basePass = process.env.HUAWEI_PASSWORD!;
+
+const alarmUser = process.env.HUAWEI_ALARM_USER ?? baseUser;
+const alarmPass = process.env.HUAWEI_ALARM_PASSWORD ?? basePass;
+
+const ondemandUser = process.env.HUAWEI_ONDEMAND_USER ?? baseUser;
+const ondemandPass = process.env.HUAWEI_ONDEMAND_PASSWORD ?? basePass;
+
+const backupUser = process.env.HUAWEI_BACKUP_USER ?? baseUser;
+const backupPass = process.env.HUAWEI_BACKUP_PASSWORD ?? basePass;
+
+export const huaweiMain = new HuaweiService({ userName: baseUser, systemCode: basePass, label: 'MAIN' });
+export const huaweiAlarm = new HuaweiService({ userName: alarmUser, systemCode: alarmPass, label: 'ALARM' });
+export const huaweiOnDemand = new HuaweiService({ userName: ondemandUser, systemCode: ondemandPass, label: 'ONDEMAND' });
+export const huaweiBackup = new HuaweiService({ userName: backupUser, systemCode: backupPass, label: 'BACKUP' });
+
+export const huaweiService = huaweiMain;
 export { HuaweiService };
