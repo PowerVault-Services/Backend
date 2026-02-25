@@ -70,6 +70,7 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 This document describes the current backend API for:
 - Homepage module (`/api/homepage`)
 - Monitoring module (`/api/monitoring`)
+- Alarm module (`/api/alarms`)
 - Stock module (`/api/stock`)
 
 ## 1) Base Configuration
@@ -350,6 +351,178 @@ Success response:
 Errors:
 - `400` invalid `inverterId`
 - `400` invalid `range`
+
+### 3.6 Alarm APIs (`/api/alarms`)
+---
+#### 3.6.1 GET `/api/alarms` (List + Search + Pagination)
+
+ใช้สำหรับหน้า **Monitoring - Alarm** และส่วนที่ต้องการรายการ alarm แบบค้นหาได้
+
+##### Query params
+
+- `tab` (optional, default `active`) : `active | historical`
+- `page` (optional, default `1`)
+- `pageSize` (optional, default `20`, min `10`, max `100`)
+- `siteId` (optional) : number
+- `inverterId` (optional) : number
+- `severity` (optional) : number
+- `q` (optional) : search by `alarmName` (contains, case-insensitive)
+- `alarmId` (optional) : Huawei alarmId (ค้นจาก `raw.alarmId`)
+- `sn` (optional) : inverter serial number (backend จะ map เป็น `inverterId` ให้)
+- `from` (optional) : ISO datetime (UTC แนะนำ) filter โดย `occurredAt >= from`
+- `to` (optional) : ISO datetime (UTC แนะนำ) filter โดย `occurredAt <= to`
+
+Severity mapping:
+- `1` = critical
+- `2` = major
+- `3` = minor
+- `4` = warning
+
+##### Postman examples
+
+1) ยิงดู **Active Alarms** (หน้าหลักของ Alarm page)
+
+Method: `GET`  
+URL:
+```text
+http://localhost:3000/api/alarms?tab=active&page=1&pageSize=10
+```
+
+ใน Postman:
+- Method → `GET`
+
+ถ้าใช้ JWT:
+- ไปที่แท็บ Authorization → เลือก `Bearer Token` → ใส่ token
+
+หรือใส่ header ตรง ๆ:
+```text
+Key: Authorization
+Value: Bearer <your_token>
+```
+
+Success response:
+```json
+{
+  "success": true,
+  "data": {
+    "list": [
+      {
+        "id": 1,
+        "severity": 1,
+        "plantName": "Solar Farm A",
+        "deviceName": "INV-1",
+        "alarmName": "Grid Fault",
+        "occurredAt": "2026-02-26T01:10:00.000Z",
+        "clearedAt": null,
+        "status": "ACTIVE",
+        "raw": {
+          "alarmId": "12345",
+          "devName": "INV-1"
+        }
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "pageSize": 10,
+      "total": 1,
+      "totalPages": 1
+    }
+  }
+}
+```
+
+2) ยิง **Historical Alarms**
+
+```text
+http://localhost:3000/api/alarms?tab=historical&page=1&pageSize=10
+```
+
+> หมายเหตุ: “historical” จะมีข้อมูลก็ต่อเมื่อ backend เคยเห็น alarm เป็น ACTIVE แล้ว  
+> และในรอบ sync ถัด ๆ มา ระบบ mark cleared ให้ (จะมี `clearedAt`)
+
+3) ค้นหาตาม severity (เช่น Critical = 1)
+
+```text
+http://localhost:3000/api/alarms?tab=active&severity=1
+```
+
+4) ค้นหาตาม Alarm ID (ช่อง Alarm ID ใน UI)
+
+```text
+http://localhost:3000/api/alarms?alarmId=12345
+```
+
+5) ค้นหาตาม SN (Device SN ใน UI)
+
+```text
+http://localhost:3000/api/alarms?sn=6T2179041405
+```
+
+6) ค้นหาตามช่วงเวลา (Occurrence time)
+
+```text
+http://localhost:3000/api/alarms?from=2026-02-01T00:00:00Z&to=2026-02-28T23:59:59Z
+```
+
+> ถ้าระบบ sync ย้อนหลังแค่ X วัน (เช่น 7 วัน) แต่คุณยิง query ช่วงเวลานอกนั้น → จะว่างเป็นปกติ  
+> ให้เช็คค่า env `HUAWEI_ALARM_LOOKBACK_DAYS`
+
+---
+
+#### 3.6.2 GET `/api/alarms/export` (Export CSV)
+
+ใช้กับปุ่ม **Export file** ในหน้า Monitoring - Alarm  
+จะได้ไฟล์ `CSV` กลับมา (สูงสุด 50,000 rows ต่อครั้ง)
+
+Method: `GET`  
+URL:
+```text
+http://localhost:3000/api/alarms/export?tab=active
+```
+
+รองรับ query params ชุดเดียวกับ `/api/alarms` (เช่น `severity`, `siteId`, `sn`, `from/to` ฯลฯ)
+
+ใน Postman:
+- กด Send
+- จะได้ CSV กลับมา
+- Save Response → Save to file
+
+---
+
+##### ถ้า Postman ยิงแล้วได้ 401
+
+แปลว่า:
+- token หมดอายุ
+- หรือยังไม่ได้ login
+
+ให้ยิง login endpoint ก่อน เช่น:
+```text
+POST /api/auth/login
+```
+แล้วเอา access token มาใส่ใน Authorization
+
+---
+
+##### ถ้าได้ 200 แต่ data ว่าง
+
+เป็นไปได้ว่า:
+- ยังไม่มี alarm ใน DB (`Alarm` table)
+- cron alarm sync ยังไม่ทำงาน
+- Huawei API ยังไม่ถูกเรียก / credential ผิด
+- หรือ filter แคบเกินไป (เช่นยิงช่วงเวลาเก่ากว่า lookback)
+
+นักพัฒนาไม่ควรเชื่อ UI — เชื่อ DB ด้วย  
+ลองเช็คใน database ว่ามี row ในตาราง `Alarm` จริงไหม:
+```sql
+select count(*) from "Alarm";
+select count(*) from "Alarm" where "clearedAt" is null;      -- active
+select count(*) from "Alarm" where "clearedAt" is not null;  -- historical
+```
+
+---
+
+
+
 - `400` invalid `metric`
 
 ---
