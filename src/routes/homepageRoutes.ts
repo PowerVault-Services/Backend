@@ -59,17 +59,36 @@ homepageRoutes.get('/summary', async (_req, res) => {
       else disconnected++;
     }
 
-    // 2) Active alarms (ยังไม่มี sync) -> placeholder
+    // 2) Active alarms (จาก DB ที่ cron sync มา)
+    const active = await prisma.alarm.findMany({
+      where: { status: 'ACTIVE', clearedAt: null },
+      select: { severity: true },
+      take: 500000,
+    });
+
     const alarms = {
-      critical: 0,
-      major: 0,
-      minor: 0,
-      warning: 0,
-      supported: false, // บอก FE ว่ายังไม่พร้อม
+      // mapping: 4=critical, 3=major, 2=minor, 1=warning
+      critical: active.filter((a) => Number(a.severity) === 4).length,
+      major: active.filter((a) => Number(a.severity) === 3).length,
+      minor: active.filter((a) => Number(a.severity) === 2).length,
+      warning: active.filter((a) => Number(a.severity) === 1).length,
+      supported: true,
     };
 
-    // 3) Notification alarms list (ยังไม่มี sync) -> placeholder
-    const notifications: any[] = [];
+    // 3) Notification alarms list: latest 5 active alarms
+    const latest = await prisma.alarm.findMany({
+      where: { status: 'ACTIVE', clearedAt: null },
+      orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+      take: 5,
+      include: { site: true, inverter: true },
+    });
+    const notifications = latest.map((a) => ({
+      plantName: a.site?.name ?? null,
+      detail: a.name,
+      severity: a.severity,
+      occurredAt: a.occurredAt,
+      inverterName: a.inverter?.name ?? null,
+    }));
 
     res.json({
       success: true,
@@ -149,9 +168,7 @@ homepageRoutes.get('/plants', async (req, res) => {
     const energyMap = new Map<number, number>();
 	    for (const r of energyRows) energyMap.set(r.siteId, safeNum(r.energyKWh));
 
-    // total yield: ตอนนี้คุณยังไม่ได้เก็บเป็น site-level
-    // เราจะคำนวณแบบ “รวม totalEnergy ล่าสุดของแต่ละ inverter” (ถ้ามี)
-    // (ถ้าไม่มี field นี้ก็จะได้ 0)
+    // total yield
     const latestSnaps = await prisma.inverterKpiSnapshot.findMany({
       where: { inverter: { siteId: { in: siteIds } } },
       orderBy: [{ ts: 'desc' }],
@@ -159,7 +176,7 @@ homepageRoutes.get('/plants', async (req, res) => {
       take: 20000,
     });
 
-    // เลือก snapshot ล่าสุดต่อ inverter (เอาอันแรกที่เจอเพราะ order desc)
+    // เลือก snapshot ล่าสุดต่อ inverter 
     const latestTotalByInv = new Map<number, number>();
     for (const s of latestSnaps) {
       if (!latestTotalByInv.has(s.inverterId) && s.totalEnergy != null) {
@@ -170,12 +187,7 @@ homepageRoutes.get('/plants', async (req, res) => {
     // map inverterId -> siteId
     const invIdToSiteId = new Map<number, number>();
     for (const inv of invs) {
-      // inverter.id ไม่ได้ select มา ต้องหาอีกรอบถ้าต้องการละเอียดมาก
-      // ทางออก minimal: ไม่ใช้ invIdToSiteId (คำนวณ total yield แบบ 0 ไปก่อน)
     }
-
-    // ใน mode minimal: totalYieldKWh จะเป็น 0 จนกว่าจะทำ phase 2 (เก็บ site-level total yield)
-    // ถ้าคุณต้องการเปิด totalYield แบบคำนวณจริง ให้ผมปรับ select inverter.id แล้วรวมจาก latestTotalByInv ได้
     const list = sites.map((s) => {
       const invList = invBySite.get(s.id) ?? [];
       // activePower ใน DB เก็บเป็น kW แล้ว (อ้างอิงจากค่าที่เห็น เช่น 8.266)
