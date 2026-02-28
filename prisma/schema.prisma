@@ -18,10 +18,21 @@ enum Role {
   CLEANING_TEAM
 }
 
+enum ProjectStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+}
+
+enum LayoutType {
+  PV_LAYOUT
+  PV_STRING_LAYOUT
+}
 enum JobType {
   CLEANING
   SERVICE
   INSPECTION
+  OM
 }
 
 enum JobStatus {
@@ -70,6 +81,30 @@ model Site {
   capacityKWp Float
   plantCode   String  @unique
 
+  // -------- Client Data (PowerVault Thailand / Service) --------
+  projectStatus ProjectStatus @default(ACTIVE)
+  warrantyStart DateTime?
+  warrantyEnd   DateTime?
+
+  companyName          String?
+  ecpPpa               String?
+  projectTypeText      String?
+  freeOmText           String?
+  warrantyOutputPct    Float?
+  codDate              DateTime?
+
+  panelBrand           String?
+  panelModel           String?
+  panelWatt            Float?
+  inverterCount        Int?
+  inverterBrand        String?
+  siteEngineer         String?
+  responsiblePerson1   String?
+  responsiblePerson2   String?
+  remark               String?
+
+  siteImageUrl String?
+
   ownerId Int?
   owner   User? @relation("SiteOwner", fields: [ownerId], references: [id])
 
@@ -81,6 +116,14 @@ model Site {
   jobs          Job[]
   dailyEnergies SiteDailyEnergy[]
   alarms        Alarm[]
+
+  warrantySupplierItems SiteWarrantySupplierItem[]
+  warrantyCustomerItems SiteWarrantyCustomerItem[]
+  layouts               SiteLayout[]
+  forecastMonthly       SiteForecastMonthly[]
+  forecastYearly        SiteForecastYearly[]
+  otherRows             SiteOtherRow[]
+  serviceEntries        ServiceEntry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -457,4 +500,133 @@ model InspectionJob {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+
+model SiteWarrantySupplierItem {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  // e.g. "Solar Panels", "Inverter & Monitoring System"
+  category String
+  // e.g. "Product Warranty", "Linear Power Warranty"
+  itemName String
+
+  supplierName String?
+  productName  String?
+  quantity     Int?
+  startWarranty DateTime?
+  endWarranty   DateTime?
+  warrantyYears Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId, category])
+}
+
+
+model SiteWarrantyCustomerItem {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  category String
+  itemName String
+  warrantyYears Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId, category])
+}
+
+
+model SiteLayout {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  type LayoutType
+  fileUrl String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, type])
+}
+
+
+model SiteForecastMonthly {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  month Int
+  globalKwhM2 Float?
+  eGridKwh Float?
+  prRatio Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, month])
+  @@index([siteId, month])
+}
+
+
+model SiteForecastYearly {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  year Int
+  degradationPct Float?
+  annualProductionKwh Float?
+  warrantyEnergyOutputKwh Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, year])
+  @@index([siteId, year])
+}
+
+
+model SiteOtherRow {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  status String?
+  description String?
+  remark String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId])
+}
+
+
+model ServiceEntry {
+  id Int @id @default(autoincrement())
+
+  siteId Int
+  site   Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  job JobType
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId, job])
 }
