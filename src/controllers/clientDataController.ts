@@ -172,10 +172,21 @@ export async function createProject(req: Request, res: Response) {
 
   const plantCode = String(body.plantCode ?? body.projectNo ?? '').trim();
   const name = String(body.name ?? body.projectName ?? '').trim();
-  const capacityKWp = toNumber(body.capacityKWp ?? body.systemSizeKWp);
+  // UI payload uses `capacityKwp` (lowercase p) while our DB field is `capacityKWp`.
+  // Accept both to keep frontend + backend in sync.
+  const capacityKWp = toNumber(
+    body.capacityKWp ??
+      body.capacityKwp ??
+      body.systemSizeKWp ??
+      body.systemSizeKwp,
+  );
   if (!plantCode) return res.status(400).json({ success: false, message: 'plantCode (projectNo) is required' });
   if (!name) return res.status(400).json({ success: false, message: 'name (projectName) is required' });
-  if (capacityKWp === null) return res.status(400).json({ success: false, message: 'capacityKWp (systemSizeKWp) is required' });
+  if (capacityKWp === null) {
+    return res
+      .status(400)
+      .json({ success: false, message: 'capacityKWp (capacityKwp / systemSizeKWp) is required' });
+  }
 
   const projectStatus = String(body.projectStatus ?? body.status ?? 'ACTIVE').toUpperCase();
   const statusVal = Object.values(ProjectStatus).includes(projectStatus as any)
@@ -214,10 +225,28 @@ export async function createProject(req: Request, res: Response) {
         remark: body.remark ?? null,
         siteImageUrl: body.siteImageUrl ?? null,
       },
-      select: { id: true, plantCode: true, name: true },
+      select: {
+        id: true,
+        plantCode: true,
+        name: true,
+        capacityKWp: true,
+        warrantyEnd: true,
+        projectStatus: true,
+      },
     });
 
-    res.json({ success: true, data: created });
+    // Return the same shape as the table row so UI can append without an extra GET.
+    res.json({
+      success: true,
+      data: {
+        siteId: created.id,
+        projectNo: created.plantCode,
+        projectName: created.name,
+        systemSizeKWp: created.capacityKWp,
+        endWarranty: created.warrantyEnd,
+        status: created.projectStatus,
+      },
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err?.message ?? 'Create project failed' });
   }
@@ -240,7 +269,13 @@ export async function updateProject(req: Request, res: Response) {
       data: {
         plantCode: body.plantCode ?? body.projectNo ?? undefined,
         name: body.name ?? body.projectName ?? undefined,
-        capacityKWp: toNumber(body.capacityKWp ?? body.systemSizeKWp) ?? undefined,
+        capacityKWp:
+          toNumber(
+            body.capacityKWp ??
+              body.capacityKwp ??
+              body.systemSizeKWp ??
+              body.systemSizeKwp,
+          ) ?? undefined,
         address: body.address ?? undefined,
         latitude: toNumber(body.latitude) ?? undefined,
         longitude: toNumber(body.longitude) ?? undefined,
@@ -267,10 +302,27 @@ export async function updateProject(req: Request, res: Response) {
         remark: body.remark ?? undefined,
         siteImageUrl: body.siteImageUrl ?? undefined,
       },
-      select: { id: true, plantCode: true, name: true },
+      select: {
+        id: true,
+        plantCode: true,
+        name: true,
+        capacityKWp: true,
+        warrantyEnd: true,
+        projectStatus: true,
+      },
     });
 
-    res.json({ success: true, data: updated });
+    res.json({
+      success: true,
+      data: {
+        siteId: updated.id,
+        projectNo: updated.plantCode,
+        projectName: updated.name,
+        systemSizeKWp: updated.capacityKWp,
+        endWarranty: updated.warrantyEnd,
+        status: updated.projectStatus,
+      },
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err?.message ?? 'Update project failed' });
   }

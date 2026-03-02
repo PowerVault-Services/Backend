@@ -81,7 +81,7 @@ model Site {
   capacityKWp Float
   plantCode   String  @unique
 
-  // -------- Client Data (PowerVault Thailand / Service) --------
+  // -------- Client Data --------
   projectStatus ProjectStatus @default(ACTIVE)
   warrantyStart DateTime?
   warrantyEnd   DateTime?
@@ -111,6 +111,7 @@ model Site {
   pvModuleCount Int?
   contactPhone  String?
   contactEmail  String?
+  warrantyEnd DateTime?
 
   inverters     Inverter[]
   jobs          Job[]
