@@ -361,6 +361,22 @@ class HuaweiService {
     this.handleFailCodeFromBody('getDevRealKpi', res.data);
     return res.data;
   }
+
+  /**
+   * Generic helper for calling any Huawei Northbound endpoint.
+   * Useful for report/PR KPI APIs that are not wrapped yet.
+   */
+  public async postRaw<T = any>(endpoint: string, body: any): Promise<T> {
+    await this.ensureLoggedIn();
+
+    // keep stats consistent even if endpoint isn't listed in stats keys
+    this.stats.totalRequests += 1;
+    if (this.debug) console.log(`📡 [${this.label}] POST ${endpoint}`, body);
+
+    const res = await this.client.post(endpoint, body);
+    this.handleFailCodeFromBody(endpoint, res.data);
+    return res.data as T;
+  }
   
     // ---------- Endpoint: getAlarmList ----------
   public async getAlarmList(params: {

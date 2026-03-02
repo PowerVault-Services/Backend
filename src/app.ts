@@ -16,6 +16,7 @@ import inspectionRoutes from './routes/inspectionRoutes';
 import serviceRoutes from './routes/serviceRoutes';
 import alarmRoutes from './routes/alarmRoutes';
 import clientDataRoutes from './routes/clientDataRoutes';
+import reportRoutes from './routes/reportRoutes';
 
 const app = express();
 app.use(cors());
@@ -31,6 +32,7 @@ app.use('/api/inspection', inspectionRoutes);
 app.use('/api/service', serviceRoutes);
 app.use('/api/alarms', alarmRoutes);
 app.use('/api/client-data', clientDataRoutes);
+app.use('/api/reports', reportRoutes);
 
 app.get('/', (req: Request, res: Response) => {
   res.send('Hello! Solar Energy Backend is Running 🚀');
