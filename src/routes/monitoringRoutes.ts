@@ -88,6 +88,8 @@
         name: inverter.name,
         model: inverter.model,
         serialNumber: inverter.serialNumber,
+        softwareVersion: (inverter as any).softwareVersion ?? null,
+        deviceReplacementRecord: (inverter as any).deviceReplacementRecord ?? null,
         stationCode: inverter.stationCode,
         site: {
           id: inverter.site.id,

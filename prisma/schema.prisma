@@ -111,7 +111,6 @@ model Site {
   pvModuleCount Int?
   contactPhone  String?
   contactEmail  String?
-  warrantyEnd DateTime?
 
   inverters     Inverter[]
   jobs          Job[]

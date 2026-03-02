@@ -13,13 +13,11 @@ async function main() {
     console.log(`📡 Found ${stations.length} stations from Huawei.`);
 
     for (const station of stations) {
-      // 2. บันทึก Plant ลง Database
-      // หมายเหตุ: เช็ค field ใน JSON จริงอีกที (บางที Huawei ส่ง plantCode หรือ stationCode)
       const plantCode = station.plantCode || station.stationCode; 
       
       const site = await prisma.site.upsert({
         where: { plantCode: plantCode },
-        update: {}, // ถ้ามีแล้วไม่ต้องแก้
+        update: {}, 
         create: {
           plantCode: plantCode,
           name: station.plantName,

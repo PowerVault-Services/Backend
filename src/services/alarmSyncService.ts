@@ -1,5 +1,6 @@
 import prisma from '../config/prisma';
-import { huaweiAlarm } from './huaweiService';
+import { huaweiAlarm, huaweiBackup, huaweiOnDemand, HuaweiService } from './huaweiService';
+import { pickAlarmClient } from './huaweiPool';
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -60,10 +61,13 @@ export async function syncActiveAlarms() {
 
   const batches = chunk(stationCodes, 100);
 
-  for (const batch of batches) {
-    console.log(`🔁 [ALARM] Sync alarm batch: ${batch.length} plants (first=${batch[0]})`);
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
+    const client: HuaweiService = pickAlarmClient(i);
 
-    const res = await huaweiAlarm.getAlarmList({
+    console.log(`🔁 [${(client as any).label ?? 'ALARM'}] Sync alarm batch: ${batch.length} plants (first=${batch[0]})`);
+
+    const res = await client.getAlarmList({
       stationCodes: batch,
       beginTime,
       endTime,
@@ -139,4 +143,79 @@ export async function syncActiveAlarms() {
   });
 
   return { ok: true, fetched: totalFetched, upserted: totalUpserted, cleared: cleared.count };
+}
+
+/**
+ * ON-DEMAND: sync alarms for specific plants (short lookback) using ONDEMAND account.
+ * Used by frontend when opening Monitoring pages.
+ */
+export async function syncAlarmsForStationsOnDemand(stationCodes: string[], lookbackHours = 24) {
+  if (!stationCodes?.length) return { ok: true, fetched: 0, upserted: 0 };
+
+  const now = Date.now();
+  const beginTime = now - lookbackHours * 60 * 60 * 1000;
+  const endTime = now;
+
+  const sites = await prisma.site.findMany({ where: { plantCode: { in: stationCodes } }, select: { id: true, plantCode: true, name: true } });
+  const siteMap = new Map<string, { id: number; name: string }>();
+  for (const s of sites) siteMap.set(s.plantCode, { id: s.id, name: s.name });
+
+  const invs = await prisma.inverter.findMany({ where: { stationCode: { in: stationCodes } }, select: { id: true, serialNumber: true, siteId: true } });
+  const invBySn = new Map<string, { id: number; siteId: number }>();
+  for (const inv of invs) invBySn.set(inv.serialNumber, { id: inv.id, siteId: inv.siteId });
+
+  const client = huaweiOnDemand;
+  console.log(`⚡ [ONDEMAND] Refresh alarms for plants=${stationCodes.length} (first=${stationCodes[0]})`);
+
+  const batches = chunk(stationCodes, 100);
+  let fetched = 0;
+  let upserted = 0;
+
+  for (const batch of batches) {
+    const res = await client.getAlarmList({ stationCodes: batch, beginTime, endTime, language: 'en_US', levels: '1,2,3,4' });
+    if (!res?.success) continue;
+
+    const list: any[] = res?.data ?? [];
+    fetched += list.length;
+
+    for (const a of list) {
+      const key = makeHuaweiAlarmKey(a);
+      const stationCode = String(a?.stationCode ?? '');
+      const site = siteMap.get(stationCode);
+
+      const esn = a?.esnCode ? String(a.esnCode) : null;
+      const inv = esn ? invBySn.get(esn) : null;
+
+      const occurredAt = toDate(a?.raiseTime);
+      const severity = a?.lev != null ? Number(a.lev) : null;
+
+      await prisma.alarm.upsert({
+        where: { huaweiAlarmId: key },
+        create: {
+          huaweiAlarmId: key,
+          siteId: site?.id,
+          inverterId: inv?.id,
+          name: a?.alarmName ?? null,
+          severity: severity ?? null,
+          status: 'ACTIVE',
+          occurredAt,
+          clearedAt: null,
+          raw: a,
+        },
+        update: {
+          siteId: site?.id ?? undefined,
+          inverterId: inv?.id ?? undefined,
+          name: a?.alarmName ?? undefined,
+          severity: severity ?? undefined,
+          status: 'ACTIVE',
+          occurredAt: occurredAt ?? undefined,
+          clearedAt: null,
+          raw: a,
+        },
+      });
+      upserted += 1;
+    }
+  }
+
+  return { ok: true, fetched, upserted };
 }

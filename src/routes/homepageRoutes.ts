@@ -6,8 +6,6 @@ export const homepageRoutes = Router();
 function calcPlantStatus(inverters: { status: string | null; lastSyncAt: Date | null }[]) {
   if (!inverters || inverters.length === 0) return 'Disconnected';
 
-  // อย่าตัด Disconnected ด้วย threshold เวลา เพราะ cron อาจ sync ทีละ plant
-  // ถ้ายังไม่เคย sync เลย (lastSyncAt = null ทุกตัว) ค่อยถือว่า disconnected
   const neverSyncedAll = inverters.every((inv) => !inv.lastSyncAt);
   if (neverSyncedAll) return 'Disconnected';
 
@@ -28,7 +26,7 @@ function safeNum(n: any) {
  */
 homepageRoutes.get('/summary', async (_req, res) => {
   try {
-    // 1) Plant status counts (derive จาก inverter)
+    // 1) Plant status counts 
     const sites = await prisma.site.findMany({
       select: { id: true, plantCode: true, name: true },
       take: 5000,

@@ -414,3 +414,29 @@ export const huaweiBackup = new HuaweiService({ userName: backupUser, systemCode
 
 export const huaweiService = huaweiMain;
 export { HuaweiService };
+
+export async function callWithFailover<T>(
+  primary: HuaweiService,
+  backup: HuaweiService,
+  fn: (svc: HuaweiService) => Promise<T>,
+  opts?: { tag?: string }
+): Promise<T> {
+  const tag = opts?.tag ? ` ${opts.tag}` : '';
+  try {
+    const r: any = await fn(primary);
+    const failCode = Number(r?.failCode);
+    const shouldFailover = r?.success === false && (failCode === 407 || failCode === 403 || failCode === 429);
+    if (!shouldFailover) return r as T;
+
+    console.warn(`⚠️ [FAILOVER]${tag} primary returned failCode=${failCode}. Switching to BACKUP...`);
+    return (await fn(backup)) as T;
+  } catch (err: any) {
+    const status = err?.response?.status;
+    const failCode = Number(err?.response?.data?.failCode);
+    const isRateLimit = status === 407 || status === 403 || status === 429 || failCode === 407 || failCode === 403 || failCode === 429;
+    if (!isRateLimit) throw err;
+
+    console.warn(`⚠️ [FAILOVER]${tag} primary error status=${status ?? '-'} failCode=${failCode ?? '-'} -> BACKUP`);
+    return (await fn(backup)) as T;
+  }
+}

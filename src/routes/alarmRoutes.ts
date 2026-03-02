@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import prisma from '../config/prisma';
+import { syncAlarmsForStationsOnDemand } from '../services/alarmSyncService';
 
 const router = Router();
 
@@ -11,6 +12,20 @@ router.get('/', async (req, res) => {
 
   const siteId = req.query.siteId ? Number(req.query.siteId) : null;
   const inverterId = req.query.inverterId ? Number(req.query.inverterId) : null;
+  // optional: on-demand alarm refresh for this site/inverter
+  if (String(req.query.refresh ?? '') === '1') {
+    try {
+      if (Number.isFinite(siteId as any) && siteId) {
+        const s = await prisma.site.findUnique({ where: { id: siteId }, select: { plantCode: true } });
+        if (s?.plantCode) await syncAlarmsForStationsOnDemand([s.plantCode], 24);
+      } else if (Number.isFinite(inverterId as any) && inverterId) {
+        const inv = await prisma.inverter.findUnique({ where: { id: inverterId }, select: { stationCode: true } });
+        if (inv?.stationCode) await syncAlarmsForStationsOnDemand([inv.stationCode], 24);
+      }
+    } catch (e: any) {
+      console.warn('⚠️ ONDEMAND alarm refresh failed:', e?.message ?? e);
+    }
+  }
   const severity = req.query.severity ? Number(req.query.severity) : null;
   const alarmId = String(req.query.alarmId ?? '').trim();
   const sn = String(req.query.sn ?? '').trim();

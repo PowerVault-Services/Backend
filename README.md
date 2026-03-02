@@ -1019,3 +1019,48 @@ Fields:
 
 ถ้าเจอ `MulterError: Unexpected field` = ส่งชื่อ field ไม่ตรงกับที่ backend รอรับ
 
+---
+
+##  Client Data APIs (`/api/client-data`)
+
+โมดูลนี้ใช้สำหรับจัดการข้อมูลฝั่ง **PowerVault (Thailand)** และ **PowerVault Service** (ตาราง/แท็บข้อมูล project, warranty, layout, forecast, other และ service entries)
+
+### 5.1 PowerVault (Thailand) - Projects
+- GET `/api/client-data/thailand/projects`
+  - query: `projectNo`, `projectName`, `systemSizeKWp`, `endWarrantyBefore`, `status` (ACTIVE/INACTIVE/MAINTENANCE), `page`, `pageSize`
+- POST `/api/client-data/thailand/projects`
+- PUT `/api/client-data/thailand/projects/:siteId`
+- DELETE `/api/client-data/thailand/projects/:siteId`
+
+### 5.2 PowerVault Service - Entries
+- GET `/api/client-data/service/entries`
+- POST `/api/client-data/service/entries`
+- PUT `/api/client-data/service/entries/:entryId`
+- DELETE `/api/client-data/service/entries/:entryId`
+
+### 5.3 Project Detail (Tabs)
+- GET `/api/client-data/projects/:siteId`
+
+**Warranty**
+- POST `/api/client-data/projects/:siteId/warranty/supplier`
+- PUT `/api/client-data/warranty/supplier/:itemId`
+- DELETE `/api/client-data/warranty/supplier/:itemId`
+
+- POST `/api/client-data/projects/:siteId/warranty/customer`
+- PUT `/api/client-data/warranty/customer/:itemId`
+- DELETE `/api/client-data/warranty/customer/:itemId`
+
+**Layouts (อัปโหลดไฟล์)**
+- POST `/api/client-data/projects/:siteId/layouts/:type`
+  - `type` = `PV_LAYOUT` หรือ `PV_STRING_LAYOUT`
+  - ส่งเป็น `multipart/form-data` โดย field ชื่อ `file`
+  - ไฟล์จะถูกเสิร์ฟผ่าน `/uploads/<filename>`
+
+**Forecast**
+- PUT `/api/client-data/projects/:siteId/forecast/pvsyst` (รายเดือน)
+- PUT `/api/client-data/projects/:siteId/forecast/warranty-energy` (รายปี)
+
+**Other**
+- POST `/api/client-data/projects/:siteId/other`
+- PUT `/api/client-data/other/:rowId`
+- DELETE `/api/client-data/other/:rowId`
