@@ -1,25 +1,39 @@
-# Frontend API Documentation
+# Solar Backend (Frontend API)
 
+Backend นี้เป็น Express + Prisma + PostgreSQL และมี API สำหรับหน้า FE หลายโมดูล (homepage, monitoring, stock, jobs, report center, client data)
 
-## install&run
+---
+
+## Quick start (Install & Run)
+
+### Prerequisites
+
+- Node.js (แนะนำ >= 18)
+- Docker Desktop / Docker Engine
+
+### Run locally
 
 ```bash
-cd solar-backend
 npm install
 
 # start postgres
 docker compose up -d
 
-# สร้างตาราง
-npx prisma generate
+# create/update database schema
+npx prisma migrate dev
+
+# seed (optional)
+npx prisma db seed
 
 # run dev
 npm run dev
 ```
 
+Default server: `http://localhost:3000`
+
 ---
 
-## ตั้งค่า .env ที่สำคัญ
+## Environment variables (.env)
 
 ### Database
 
@@ -35,13 +49,15 @@ HUAWEI_USER="pvscada"
 HUAWEI_PASSWORD="Scada1234!"
 ```
 
-### Email (ส่งออก Gmail จริง)
+### JWT (Login)
 
-โปรเจกต์นี้ใช้ SMTP (nodemailer) — ถ้าอยากส่งผ่าน Gmail:
+```env
+JWT_SECRET="your_secret_here"
+```
 
-1) เปิด 2-Step Verification ใน Gmail
-2) สร้าง **App Password** (Mail)
-3) ใส่ env ประมาณนี้:
+> NOTE: ปัจจุบัน middleware auth มีอยู่ แต่ route ส่วนใหญ่ “ยังไม่ได้บังคับ” ใช้ token
+
+### Email (SMTP / Gmail)
 
 ```env
 MAIL_HOST="smtp.gmail.com"
@@ -53,97 +69,140 @@ MAIL_FROM_NAME="PowerVault Service"
 MAIL_FROM_EMAIL="yourgmail@gmail.com"
 ```
 
-ถ้าเจอ error `ECONNREFUSED 127.0.0.1:587` แปลว่า env ยังชี้ไป host ฝั่ง local (เช่น mailhog) หรือ service smtp ไม่ได้รัน
+---
+
+## Uploads (ไฟล์แนบ)
+
+- ไฟล์ที่อัปโหลดจะถูกเก็บไว้ที่ `uploads/`
+- ถูกเสิร์ฟเป็น static ผ่าน `GET /uploads/<filename>`
+- ทุก endpoint ที่เป็นไฟล์ต้องส่ง `multipart/form-data`
+- ชื่อ field ของไฟล์ “ต้องตรงตามที่กำหนดในแต่ละ endpoint” ไม่งั้นจะเจอ `MulterError: Unexpected field`
 
 ---
 
-## 4) Uploads (ไฟล์แนบ)
+## API Conventions
 
-ไฟล์ที่อัปโหลดจะถูกเก็บไว้ในโฟลเดอร์ `uploads/` และถูกเสิร์ฟผ่าน path `/uploads/...`
+### Base URL
 
-ข้อสำคัญใน Postman/FE:
-- ต้องส่งเป็น `multipart/form-data`
-- **Field name ต้องตรงกับ route** (ดูตารางใน docs)
+- Local: `http://localhost:3000`
+- ทุก path ด้านล่างเป็น path เต็ม (ขึ้นด้วย `/api/...`)
 
----
+### Response styles (ตามโค้ดปัจจุบัน)
 
-This document describes the current backend API for:
-- Homepage module (`/api/homepage`)
-- Monitoring module (`/api/monitoring`)
-- Alarm module (`/api/alarms`)
-- Stock module (`/api/stock`)
+โค้ดตอนนี้มี 2 style หลัก:
 
-## 1) Base Configuration
--
-### Response shape note
+1) ส่วนใหญ่ (homepage/stock/jobs/reports/client-data) คืน:
 
-There are 2 response styles in current code:
-
-1. `homepage` and `stock` mostly return:
 ```json
-{
-  "success": true,
-  "data": {}
-}
+{ "success": true, "data": {} }
 ```
 
-2. `monitoring` returns:
+2) Monitoring module คืน:
+
 ```json
-{
-  "data": {}
-}
+{ "data": {} }
 ```
 
-Error payloads are not fully unified across all modules yet.
+> Error payload บางจุดเป็น `{ success:false, message }` และบางจุดเป็น `{ error: "..." }` (ยังไม่ได้ unify)
+
+### Common HTTP errors
+
+- `400` invalid input / missing required fields
+- `404` entity not found
+- `500` internal error
 
 ---
 
-## 2) Homepage APIs (`/api/homepage`)
+## Auth APIs (`/api/auth`)
 
-### 2.1 GET `/api/homepage/summary`
+### POST `/api/auth/login`
 
-Use for dashboard pie/chart summary.
+**Description:** Login และรับ JWT token
 
-Query params: none
+**Auth:** None
 
-Success response:
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "username": "admin", "password": "password" }
+```
+
+**Response 200 (example):**
+
 ```json
 {
-  "success": true,
-  "data": {
-    "plantStatus": {
-      "normal": 3,
-      "faulty": 1,
-      "disconnected": 2
-    },
-    "activeAlarms": {
-      "critical": 0,
-      "major": 0,
-      "minor": 0,
-      "warning": 0,
-      "supported": false
-    },
-    "notificationAlarms": []
+  "message": "Login successful",
+  "token": "<jwt>",
+  "user": {
+    "id": 1,
+    "username": "admin",
+    "role": "ADMIN",
+    "firstName": "Somchai"
   }
 }
 ```
 
-Notes:
-- `activeAlarms` and `notificationAlarms` are currently placeholder values.
-- `supported: false` means alarm sync is not fully enabled yet.
+**Errors:**
+
+- `401` `{ "message": "Invalid username or password" }`
 
 ---
 
-### 2.2 GET `/api/homepage/plants`
+## Homepage APIs (`/api/homepage`)
 
-Use for homepage plant table.
+### GET `/api/homepage/summary`
 
-Query params:
+**Description:** Summary สำหรับ dashboard (plant status + active alarms + notification alarms)
+
+**Auth:** None
+
+**Query params:** none
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "plantStatus": { "normal": 3, "faulty": 1, "disconnected": 2 },
+    "activeAlarms": {
+      "critical": 2,
+      "major": 1,
+      "minor": 0,
+      "warning": 5,
+      "supported": true
+    },
+    "notificationAlarms": [
+      {
+        "plantName": "Solar Farm A",
+        "detail": "Grid Fault",
+        "severity": 4,
+        "occurredAt": "2026-02-26T01:10:00.000Z",
+        "inverterName": "INV-1"
+      }
+    ]
+  }
+}
+```
+
+> NOTE: severity ใน DB ใช้ตัวเลข และถูกแปลงเป็นกลุ่ม (critical/major/minor/warning) ฝั่ง backend
+
+### GET `/api/homepage/plants`
+
+**Description:** List plants สำหรับตารางหน้า homepage
+
+**Auth:** None
+
+**Query params:**
+
 - `q` (optional): search by `name` or `plantCode`
 - `page` (optional, default `1`)
 - `pageSize` (optional, default `20`, min `10`, max `100`)
 
-Success response:
+**Response 200 (example):**
+
 ```json
 {
   "success": true,
@@ -166,28 +225,23 @@ Success response:
         "lastUpdatedAt": "2026-02-03T01:00:00.000Z"
       }
     ],
-    "pagination": {
-      "page": 1,
-      "pageSize": 20,
-      "total": 1,
-      "totalPages": 1
-    }
+    "pagination": { "page": 1, "pageSize": 20, "total": 1, "totalPages": 1 }
   }
 }
 ```
 
-Notes:
-- `gridConnectionDate`, `optimizerQuantity`, `totalYieldKWh`, `performanceRatio` are currently `null` placeholders.
-
 ---
 
-## 3) Monitoring APIs (`/api/monitoring`)
+## Monitoring APIs (`/api/monitoring`)
 
-### 3.1 GET `/api/monitoring/sites`
+### GET `/api/monitoring/sites`
 
-Use to list all sites for monitoring screens.
+**Description:** List sites สำหรับหน้า monitoring
 
-Success response:
+**Auth:** None
+
+**Response 200 (example):**
+
 ```json
 {
   "data": [
@@ -205,25 +259,22 @@ Success response:
 }
 ```
 
----
+### GET `/api/monitoring/sites/:siteId/overview`
 
-### 3.2 GET `/api/monitoring/sites/:siteId/overview`
+**Description:** Site overview (site info + inverter list + energy series ล่าสุด ~7 วัน)
 
-Use for site overview page (site info + inverter list + recent daily energy).
+**Auth:** None
 
-Path params:
+**Path params:**
+
 - `siteId` (required, number)
 
-Success response:
+**Response 200 (example):**
+
 ```json
 {
   "data": {
-    "site": {
-      "id": 1,
-      "plantCode": "PLANT-001",
-      "name": "Solar Farm A",
-      "capacityKWp": 500
-    },
+    "site": { "id": 1, "plantCode": "PLANT-001", "name": "Solar Farm A", "capacityKWp": 500 },
     "inverters": [
       {
         "id": 10,
@@ -236,31 +287,29 @@ Success response:
         "lastSyncAt": "2026-02-03T01:00:00.000Z"
       }
     ],
-    "energySeries": [
-      {
-        "date": "2026-02-01T00:00:00.000Z",
-        "yieldKWh": 613.5
-      }
-    ],
+    "energySeries": [{ "date": "2026-02-01T00:00:00.000Z", "energyKWh": 613.5 }],
     "lastUpdatedAt": "2026-02-03T01:05:00.000Z"
   }
 }
 ```
 
-Errors:
-- `400` invalid `siteId`
-- `404` site not found
+**Errors:**
 
----
+- `400` `{ "error": "Invalid siteId" }`
+- `404` `{ "error": "Site not found" }`
 
-### 3.3 GET `/api/monitoring/inverters/:inverterId`
+### GET `/api/monitoring/inverters/:inverterId`
 
-Use for inverter detail header/realtime summary.
+**Description:** Inverter detail header/realtime summary
 
-Path params:
+**Auth:** None
+
+**Path params:**
+
 - `inverterId` (required, number)
 
-Success response:
+**Response 200 (example):**
+
 ```json
 {
   "data": {
@@ -268,12 +317,10 @@ Success response:
     "name": "INV-1",
     "model": "SUN2000",
     "serialNumber": "SN-ABC",
+    "softwareVersion": null,
+    "deviceReplacementRecord": null,
     "stationCode": "ST-001",
-    "site": {
-      "id": 1,
-      "name": "Solar Farm A",
-      "plantCode": "PLANT-001"
-    },
+    "site": { "id": 1, "name": "Solar Farm A", "plantCode": "PLANT-001" },
     "realtime": {
       "activePower": 8.2,
       "dayEnergy": 34.5,
@@ -284,57 +331,50 @@ Success response:
 }
 ```
 
-Errors:
-- `400` invalid `inverterId`
-- `404` inverter not found
+### GET `/api/monitoring/inverters/:inverterId/strings/latest`
 
----
+**Description:** Latest string snapshot
 
-### 3.4 GET `/api/monitoring/inverters/:inverterId/strings/latest`
+**Auth:** None
 
-Use for latest string table.
+**Path params:**
 
-Path params:
 - `inverterId` (required, number)
 
-Success response:
+**Response 200 (example):**
+
 ```json
 {
   "data": {
     "ts": "2026-02-03T01:00:00.000Z",
-    "strings": [
-      { "stringNo": 1, "voltage": 450.2, "current": 9.5, "status": "Normal" }
-    ]
+    "strings": [{ "stringNo": 1, "voltage": 450.2, "current": 9.5, "status": "Normal" }]
   }
 }
 ```
 
-If no snapshot exists:
+**Response 200 (no snapshot yet):**
+
 ```json
-{
-  "data": {
-    "ts": null,
-    "strings": []
-  }
-}
+{ "data": { "ts": null, "strings": [] } }
 ```
 
----
+### GET `/api/monitoring/inverters/:inverterId/history`
 
-### 3.5 GET `/api/monitoring/inverters/:inverterId/history`
+**Description:** Series data สำหรับ line chart
 
-Use for line charts.
+**Auth:** None
 
-Path params:
+**Path params:**
+
 - `inverterId` (required, number)
 
-Query params:
-- `metric` (optional, default `activePower`)
-  - allowed: `activePower`, `dayEnergy`, `temperature`, `powerFactor`
-- `range` (optional, default `day`)
-  - allowed: `day`, `week`, `month`
+**Query params:**
 
-Success response:
+- `metric` (optional, default `activePower`): `activePower | dayEnergy | temperature | powerFactor`
+- `range` (optional, default `day`): `day | week | month`
+
+**Response 200 (example):**
+
 ```json
 {
   "data": {
@@ -348,59 +388,120 @@ Success response:
 }
 ```
 
-Errors:
-- `400` invalid `inverterId`
-- `400` invalid `range`
+**Errors:**
 
-### 3.6 Alarm APIs (`/api/alarms`)
+- `400` `{ "error": "Invalid metric" }`
+- `400` `{ "error": "Invalid range" }`
+
+### GET `/api/monitoring/pr`
+
+**Description:** PR page (Irradiation / Production / Performance Ratio) — Actual from Huawei + Forecast from DB
+
+**Auth:** None
+
+**Query params:**
+
+- `siteId` (required): number
+- `granularity` (optional, default `month`): `day | month | year`
+- `collectTime` (optional): millisecond timestamp (Huawei key)
+- `endDate` (optional): ISO date (fallback for `day` if no `collectTime`)
+- `year` (optional): number (fallback for `month/year` if no `collectTime`)
+
+**Response 200 (example: `granularity=month`):**
+
+```json
+{
+  "data": {
+    "siteId": 1,
+    "granularity": "month",
+    "year": 2026,
+    "collectTime": 1769878800000,
+    "rows": [
+      {
+        "month": 1,
+        "irradiation": { "actual": 5.381, "forecast": 5.1, "varPct": 5.51 },
+        "production": { "actual": 2444.89, "forecast": 2500, "varPct": -2.2 },
+        "pr": { "actual": 45.451, "forecast": 48, "varPct": -5.31 }
+      }
+    ]
+  }
+}
+```
+
+**Response 200 (example: `granularity=day`):**
+
+```json
+{
+  "data": {
+    "siteId": 1,
+    "granularity": "day",
+    "collectTime": 1769878800000,
+    "rows": [
+      {
+        "date": "2026-02-01",
+        "irradiation": { "actual": 5.381, "forecast": null, "varPct": null },
+        "production": { "actual": 2444.89, "forecast": null, "varPct": null },
+        "pr": { "actual": 45.451, "forecast": null, "varPct": null }
+      }
+    ]
+  }
+}
+```
+
+**Response 200 (example: `granularity=year`):**
+
+```json
+{
+  "data": {
+    "siteId": 1,
+    "granularity": "year",
+    "collectTime": 1769878800000,
+    "forecast": { "irradiation": 60.1, "production": 25000, "pr": 48 },
+    "rows": [
+      {
+        "year": 2026,
+        "irradiation": { "actual": 58.9, "forecast": 60.1, "varPct": -2.0 },
+        "production": { "actual": 24500, "forecast": 25000, "varPct": -2.0 },
+        "pr": { "actual": 47.1, "forecast": 48, "varPct": -1.88 }
+      }
+    ]
+  }
+}
+```
+
+**Errors:**
+
+- `400` `{ "error": "Invalid siteId" }`
+- `400` `{ "error": "Invalid granularity" }`
+- `404` `{ "error": "Site not found" }`
+
 ---
-#### 3.6.1 GET `/api/alarms` (List + Search + Pagination)
 
-ใช้สำหรับหน้า **Monitoring - Alarm** และส่วนที่ต้องการรายการ alarm แบบค้นหาได้
+## Alarm APIs (`/api/alarms`)
 
-##### Query params
+### GET `/api/alarms`
 
-- `tab` (optional, default `active`) : `active | historical`
+**Description:** List alarms (Active/Historical) + search + pagination
+
+**Auth:** None
+
+**Query params:**
+
+- `tab` (optional, default `active`): `active | historical`
 - `page` (optional, default `1`)
 - `pageSize` (optional, default `20`, min `10`, max `100`)
-- `siteId` (optional) : number
-- `inverterId` (optional) : number
-- `severity` (optional) : number
-- `q` (optional) : search by `alarmName` (contains, case-insensitive)
-- `alarmId` (optional) : Huawei alarmId (ค้นจาก `raw.alarmId`)
-- `sn` (optional) : inverter serial number (backend จะ map เป็น `inverterId` ให้)
-- `from` (optional) : ISO datetime (UTC แนะนำ) filter โดย `occurredAt >= from`
-- `to` (optional) : ISO datetime (UTC แนะนำ) filter โดย `occurredAt <= to`
+- `siteId` (optional): number
+- `inverterId` (optional): number
+- `severity` (optional): number
+- `q` (optional): search by alarm name
+- `alarmId` (optional): match `raw.alarmId`
+- `sn` (optional): inverter serialNumber (backend จะ map เป็น `inverterId` ให้)
+- `from` (optional): ISO datetime filter `occurredAt >= from`
+- `to` (optional): ISO datetime filter `occurredAt <= to`
+- `refresh` (optional): ถ้าเป็น `1` จะพยายาม sync alarm on-demand (siteId หรือ inverterId ต้องส่งมาด้วย)
 
-Severity mapping:
-- `1` = critical
-- `2` = major
-- `3` = minor
-- `4` = warning
+**Response 200 (example):**
 
-##### Postman examples
-
-1) ยิงดู **Active Alarms** (หน้าหลักของ Alarm page)
-
-Method: `GET`  
-URL:
-```text
-http://localhost:3000/api/alarms?tab=active&page=1&pageSize=10
-```
-
-ใน Postman:
-- Method → `GET`
-
-ถ้าใช้ JWT:
-- ไปที่แท็บ Authorization → เลือก `Bearer Token` → ใส่ token
-
-หรือใส่ header ตรง ๆ:
-```text
-Key: Authorization
-Value: Bearer <your_token>
-```
-
-Success response:
 ```json
 {
   "success": true,
@@ -408,291 +509,100 @@ Success response:
     "list": [
       {
         "id": 1,
-        "severity": 1,
+        "severity": 4,
         "plantName": "Solar Farm A",
         "deviceName": "INV-1",
         "alarmName": "Grid Fault",
         "occurredAt": "2026-02-26T01:10:00.000Z",
         "clearedAt": null,
         "status": "ACTIVE",
-        "raw": {
-          "alarmId": "12345",
-          "devName": "INV-1"
-        }
+        "raw": { "alarmId": "12345", "devName": "INV-1" }
       }
     ],
-    "pagination": {
-      "page": 1,
-      "pageSize": 10,
-      "total": 1,
-      "totalPages": 1
-    }
+    "pagination": { "page": 1, "pageSize": 10, "total": 1, "totalPages": 1 }
   }
 }
 ```
 
-2) ยิง **Historical Alarms**
+### GET `/api/alarms/export`
 
-```text
-http://localhost:3000/api/alarms?tab=historical&page=1&pageSize=10
-```
+**Description:** Export alarms เป็น CSV (สูงสุด 50,000 rows)
 
-> หมายเหตุ: “historical” จะมีข้อมูลก็ต่อเมื่อ backend เคยเห็น alarm เป็น ACTIVE แล้ว  
-> และในรอบ sync ถัด ๆ มา ระบบ mark cleared ให้ (จะมี `clearedAt`)
+**Auth:** None
 
-3) ค้นหาตาม severity (เช่น Critical = 1)
+**Query params:** เหมือน `/api/alarms`
 
-```text
-http://localhost:3000/api/alarms?tab=active&severity=1
-```
-
-4) ค้นหาตาม Alarm ID (ช่อง Alarm ID ใน UI)
-
-```text
-http://localhost:3000/api/alarms?alarmId=12345
-```
-
-5) ค้นหาตาม SN (Device SN ใน UI)
-
-```text
-http://localhost:3000/api/alarms?sn=6T2179041405
-```
-
-6) ค้นหาตามช่วงเวลา (Occurrence time)
-
-```text
-http://localhost:3000/api/alarms?from=2026-02-01T00:00:00Z&to=2026-02-28T23:59:59Z
-```
-
-> ถ้าระบบ sync ย้อนหลังแค่ X วัน (เช่น 7 วัน) แต่คุณยิง query ช่วงเวลานอกนั้น → จะว่างเป็นปกติ  
-> ให้เช็คค่า env `HUAWEI_ALARM_LOOKBACK_DAYS`
+**Response 200:** `text/csv` พร้อม `Content-Disposition: attachment`
 
 ---
 
-#### 3.6.2 GET `/api/alarms/export` (Export CSV)
+## Stock APIs (`/api/stock`)
 
-ใช้กับปุ่ม **Export file** ในหน้า Monitoring - Alarm  
-จะได้ไฟล์ `CSV` กลับมา (สูงสุด 50,000 rows ต่อครั้ง)
+### GET `/api/stock/meta`
 
-Method: `GET`  
-URL:
-```text
-http://localhost:3000/api/alarms/export?tab=active
-```
+**Description:** Dropdown source (categories, units, active products)
 
-รองรับ query params ชุดเดียวกับ `/api/alarms` (เช่น `severity`, `siteId`, `sn`, `from/to` ฯลฯ)
+**Auth:** None
 
-ใน Postman:
-- กด Send
-- จะได้ CSV กลับมา
-- Save Response → Save to file
+**Response 200 (example):**
 
----
-
-##### ถ้า Postman ยิงแล้วได้ 401
-
-แปลว่า:
-- token หมดอายุ
-- หรือยังไม่ได้ login
-
-ให้ยิง login endpoint ก่อน เช่น:
-```text
-POST /api/auth/login
-```
-แล้วเอา access token มาใส่ใน Authorization
-
----
-
-##### ถ้าได้ 200 แต่ data ว่าง
-
-เป็นไปได้ว่า:
-- ยังไม่มี alarm ใน DB (`Alarm` table)
-- cron alarm sync ยังไม่ทำงาน
-- Huawei API ยังไม่ถูกเรียก / credential ผิด
-- หรือ filter แคบเกินไป (เช่นยิงช่วงเวลาเก่ากว่า lookback)
-
-นักพัฒนาไม่ควรเชื่อ UI — เชื่อ DB ด้วย  
-ลองเช็คใน database ว่ามี row ในตาราง `Alarm` จริงไหม:
-```sql
-select count(*) from "Alarm";
-select count(*) from "Alarm" where "clearedAt" is null;      -- active
-select count(*) from "Alarm" where "clearedAt" is not null;  -- historical
-```
-
----
-
-
-
-- `400` invalid `metric`
-
----
-
-## 4) Stock APIs (`/api/stock`)
-
-### 4.1 Recommended frontend mapping by page
-
-- All Stock page:
-  - `GET /api/stock/meta`
-  - `GET /api/stock/summary`
-- Add Product modal:
-  - `GET /api/stock/meta` (dropdown source)
-  - `POST /api/stock/products`
-- Stock In page:
-  - `GET /api/stock/meta` or `GET /api/stock/products`
-  - `GET /api/stock/in`
-  - `POST /api/stock/in`
-- Stock Out page:
-  - `GET /api/stock/meta` or `GET /api/stock/products?availableOnly=true`
-  - `GET /api/stock/out`
-  - `POST /api/stock/out`
-
----
-
-### 4.2 GET `/api/stock/meta`
-
-Returns category/unit/product dropdown data.
-
-Query params:
-- `includeInactive` (optional: `true|false`, default `false`)
-
-Success response:
 ```json
 {
   "success": true,
   "data": {
     "categories": [{ "id": 1, "name": "Spare Parts" }],
     "units": [{ "id": 1, "name": "pcs" }],
-    "products": [
-      {
-        "id": 1,
-        "sku": "SKU-001",
-        "name": "MC4 Connector",
-        "categoryId": 1,
-        "category": "Spare Parts",
-        "unitId": 1,
-        "unit": "pcs",
-        "inQty": 20,
-        "outQty": 5,
-        "onHand": 15,
-        "isActive": true
-      }
-    ]
+    "products": [{ "id": 1, "sku": "SKU-001", "name": "MC4 Connector", "categoryId": 1, "unitId": 1 }]
   }
 }
 ```
 
----
+### POST `/api/stock/products`
 
-### 4.3 Category master
+**Description:** Create product
 
-#### GET `/api/stock/categories`
-#### POST `/api/stock/categories`
-Body:
+**Auth:** None
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (required):**
+
 ```json
-{ "name": "Spare Parts" }
+{ "sku": "SKU-001", "name": "MC4 Connector", "categoryId": 1, "unitId": 1 }
 ```
 
-#### PATCH `/api/stock/categories/:id`
-Body:
-```json
-{ "name": "Updated Name" }
-```
+**Response 200 (example):**
 
-#### DELETE `/api/stock/categories/:id`
-
-Notes:
-- DELETE fails with `400` if category is used by products.
-
----
-
-### 4.4 Unit master
-
-#### GET `/api/stock/units`
-#### POST `/api/stock/units`
-Body:
-```json
-{ "name": "pcs" }
-```
-
-#### PATCH `/api/stock/units/:id`
-Body:
-```json
-{ "name": "box" }
-```
-
-#### DELETE `/api/stock/units/:id`
-
-Notes:
-- DELETE fails with `400` if unit is used by products.
-
----
-
-### 4.5 Products
-
-#### GET `/api/stock/products`
-
-Query params (all optional):
-- `q`, `sku`, `name`
-- `productId`, `categoryId`, `unitId`
-- `includeInactive` (`true|false`, default `false`)
-- `availableOnly` (`true|false`, default `false`)
-
-Response item:
 ```json
 {
-  "productId": 1,
-  "sku": "SKU-001",
-  "categoryId": 1,
-  "category": "Spare Parts",
-  "name": "MC4 Connector",
-  "unitId": 1,
-  "unit": "pcs",
-  "inQty": 20,
-  "outQty": 5,
-  "onHand": 15,
-  "isActive": true
+  "success": true,
+  "data": {
+    "id": 1,
+    "sku": "SKU-001",
+    "name": "MC4 Connector",
+    "categoryId": 1,
+    "unitId": 1,
+    "isActive": true
+  }
 }
 ```
 
-#### POST `/api/stock/products`
+### GET `/api/stock/summary`
 
-Required body:
-```json
-{
-  "sku": "SKU-001",
-  "name": "MC4 Connector",
-  "categoryId": 1,
-  "unitId": 1
-}
-```
+**Description:** Summary คงเหลือ (All Stock)
 
-Optional body:
-- `isActive` (`true|false`, default `true`)
+**Auth:** None
 
-#### PATCH `/api/stock/products/:id`
+**Query params:**
 
-At least one field required:
-- `sku`, `name`, `categoryId`, `unitId`, `isActive`
+- `q` (optional): search by sku/name
+- `categoryId` (optional)
+- `unitId` (optional)
+- `page` (optional, default `1`)
+- `pageSize` (optional, default `20`, min `10`, max `100`)
 
----
+**Response 200 (example):**
 
-### 4.6 GET `/api/stock/summary`
-
-Use for All Stock table.
-
-Query params:
-- Pagination:
-  - `page` (default `1`)
-  - `pageSize` (default `20`, max `100`)
-- Product filters:
-  - `q`, `sku`, `name`, `productId`, `categoryId`, `unitId`
-  - `includeInactive` (`true|false`, default `false`)
-- Numeric filters:
-  - `inQtyMin`, `inQtyMax`
-  - `outQtyMin`, `outQtyMax`
-  - `onHandMin`, `onHandMax`
-
-Success response:
 ```json
 {
   "success": true,
@@ -701,155 +611,264 @@ Success response:
       {
         "productId": 1,
         "sku": "SKU-001",
-        "categoryId": 1,
         "category": "Spare Parts",
         "name": "MC4 Connector",
-        "unitId": 1,
         "unit": "pcs",
         "inQty": 20,
         "outQty": 5,
-        "onHand": 15,
-        "isActive": true
+        "onHand": 15
       }
     ],
-    "pagination": {
-      "page": 1,
-      "pageSize": 20,
-      "total": 1,
-      "totalPages": 1
-    }
+    "pagination": { "page": 1, "pageSize": 20, "total": 1, "totalPages": 1 }
   }
 }
 ```
 
----
+### GET `/api/stock/in`
 
-### 4.7 Stock In
+**Description:** List Stock IN transactions
 
-#### GET `/api/stock/in`
+**Auth:** None
 
-Use for Stock In list page.
+**Query params:**
 
-Query params:
-- Pagination: `page`, `pageSize`
-- Product filters: `q`, `sku`, `name`, `productId`, `categoryId`, `unitId`, `includeInactive`
-- Transaction filters:
-  - `dateFrom`, `dateTo`
-  - `quantityMin`, `quantityMax`
-  - `project`, `receiver`, `vendor`, `insuranceCompany`, `insuranceNo`, `note`
+- `page` (optional, default `1`)
+- `pageSize` (optional, default `20`)
+- Filters (optional): `q`, `categoryId`, `unitId`, `productId`, `dateFrom`, `dateTo`
 
-Response list item:
+**Response 200 (example):**
+
 ```json
 {
-  "id": 10,
-  "type": "IN",
-  "txDate": "2026-02-03T01:00:00.000Z",
-  "productId": 1,
-  "sku": "SKU-001",
-  "categoryId": 1,
-  "category": "Spare Parts",
-  "productName": "MC4 Connector",
-  "unitId": 1,
-  "unit": "pcs",
-  "quantity": 20,
-  "inQty": 20,
-  "outQty": 0,
-  "onHand": 15,
-  "project": "Project A",
-  "receiver": "Somchai",
-  "vendor": "Supplier X",
-  "insuranceCompany": "Insure Co",
-  "insuranceNo": "INS-001",
-  "note": "Initial stock in",
-  "createdAt": "2026-02-03T01:00:00.000Z",
-  "updatedAt": "2026-02-03T01:00:00.000Z"
+  "success": true,
+  "data": {
+    "list": [
+      {
+        "id": 10,
+        "txDate": "2026-02-03T01:00:00.000Z",
+        "sku": "SKU-001",
+        "category": "Spare Parts",
+        "productName": "MC4 Connector",
+        "unit": "pcs",
+        "quantity": 20,
+        "project": "Project A",
+        "receiver": "Somchai",
+        "vendor": "Supplier X",
+        "insuranceCompany": "Insure Co",
+        "insuranceNo": "INS-001",
+        "note": "Initial stock in"
+      }
+    ],
+    "pagination": { "page": 1, "pageSize": 20, "total": 1, "totalPages": 1 }
+  }
 }
 ```
 
-#### POST `/api/stock/in`
+### POST `/api/stock/in`
 
-Required body:
+**Description:** Create Stock IN transaction
+
+**Auth:** None
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (required):**
+
+```json
+{ "productId": 1, "quantity": 20 }
+```
+
+**Request body (optional fields):** `txDate`, `project`, `receiver`, `vendor`, `insuranceCompany`, `insuranceNo`, `note`
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "id": 999, "type": "IN", "productId": 1, "quantity": 20, "txDate": "2026-02-03T01:00:00.000Z" } }
+```
+
+### GET `/api/stock/out`
+
+**Description:** List Stock OUT transactions
+
+**Auth:** None
+
+**Query params:** เหมือน `/api/stock/in`
+
+**Response 200 (example):**
+
 ```json
 {
-  "productId": 1,
-  "quantity": 20
+  "success": true,
+  "data": {
+    "list": [
+      {
+        "id": 11,
+        "txDate": "2026-02-03T02:00:00.000Z",
+        "sku": "SKU-001",
+        "category": "Spare Parts",
+        "productName": "MC4 Connector",
+        "unit": "pcs",
+        "quantity": 5,
+        "project": "Project A",
+        "receiver": "Somchai",
+        "vendor": "Supplier X",
+        "insuranceCompany": "Insure Co",
+        "insuranceNo": "INS-001",
+        "note": "Stock out"
+      }
+    ],
+    "pagination": { "page": 1, "pageSize": 20, "total": 1, "totalPages": 1 }
+  }
 }
 ```
 
-Optional body:
-- `txDate`, `project`, `receiver`, `vendor`, `insuranceCompany`, `insuranceNo`, `note`, `jobId`
+### POST `/api/stock/out`
+
+**Description:** Create Stock OUT transaction (มี validation กันจ่ายออกเกินคงเหลือ)
+
+**Auth:** None
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (required):**
+
+```json
+{ "productId": 1, "quantity": 5 }
+```
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "id": 1000, "type": "OUT", "productId": 1, "quantity": 5, "txDate": "2026-02-03T01:00:00.000Z" } }
+```
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "insufficient stock: onHand=<number>" }`
+
+### Category master
+
+#### GET `/api/stock/categories`
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": [{ "id": 1, "name": "Spare Parts" }] }
+```
+
+#### POST `/api/stock/categories`
+
+**Request body (example):**
+
+```json
+{ "name": "Spare Parts" }
+```
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "id": 1, "name": "Spare Parts" } }
+```
+
+#### PATCH `/api/stock/categories/:id`
+
+**Request body (example):**
+
+```json
+{ "name": "Updated Name" }
+```
+
+#### DELETE `/api/stock/categories/:id`
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "category is in use by products" }`
+
+### Unit master
+
+#### GET `/api/stock/units`
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": [{ "id": 1, "name": "pcs" }] }
+```
+
+#### POST `/api/stock/units`
+
+**Request body (example):**
+
+```json
+{ "name": "pcs" }
+```
+
+#### PATCH `/api/stock/units/:id`
+
+**Request body (example):**
+
+```json
+{ "name": "box" }
+```
+
+#### DELETE `/api/stock/units/:id`
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "unit is in use by products" }`
 
 ---
 
-### 4.8 Stock Out
+## Cleaning / Inspection / Service (Job Flows)
 
-#### GET `/api/stock/out`
+แนวคิดหลักเหมือนกัน:
 
-Same query model and response shape as Stock In, but:
-- `type` is `OUT`
-- `inQty` is `0`
-- `outQty` is transaction quantity
+1) FE เรียก `GET .../projects` เพื่อ dropdown + auto-fill
+2) `POST .../step1` เพื่อ create/update draft job (ได้ `jobId`)
+3) `GET .../job/:jobId` เพื่อโหลดข้อมูลทั้งก้อน
+4) Step2 draft/send (email)
+5) Step3 upload/ฟอร์ม (ขึ้นกับโมดูล)
+6) Cleaning/Service มี generate report + download + send report
 
-#### POST `/api/stock/out`
+### Cleaning APIs (`/api/cleaning`)
 
-Required body:
+#### GET `/api/cleaning/projects`
+
+**Response 200 (example):**
+
 ```json
 {
-  "productId": 1,
-  "quantity": 5
+  "success": true,
+  "data": [
+    {
+      "siteId": 1,
+      "plantCode": "PLANT-001",
+      "projectName": "Solar Farm A",
+      "address": "Bangkok",
+      "systemSizeKWp": 500,
+      "pvModuleEA": null
+    }
+  ]
 }
 ```
 
-Optional body:
-- `txDate`, `project`, `receiver`, `vendor`, `insuranceCompany`, `insuranceNo`, `note`, `jobId`
+#### POST `/api/cleaning/step1`
 
-Important validation:
-- Returns `400` when `quantity > onHand` with message:
-  - `insufficient stock: onHand=<number>`
+**Headers:** `Content-Type: application/json`
 
----
+**Request body (create example):**
 
-## 5) Common Error Cases (Frontend Handling)
-
-- `400` validation error:
-  - invalid IDs
-  - invalid date/range
-  - missing required fields
-- `404` not found:
-  - product/site/inverter not found
-- `409` duplicate value:
-  - duplicate unique fields (for example category name, unit name, or product SKU)
-- `500` internal server error
-
-Recommended frontend handling:
-- If HTTP status >= 400, read both:
-  - `message` (stock/homepage)
-  - `error` (monitoring)
-
----
-
-# 6) Cleaning / Inspection / Service (Job Flows)
-
-ทั้ง 3 โมดูลมีแนวคิดเหมือนกัน:
-
-1) FE เรียก `GET .../projects` เพื่อให้ผู้ใช้เลือก Project Name
-2) เมื่อเลือกแล้ว FE เอาข้อมูลที่ได้มา **เติมช่องสีเทา (auto-fill)** ทันที เช่น Location, System Size (kWp)
-3) Step1: สร้าง/อัปเดต Draft job
-4) Step2: ร่างอีเมล + แนบไฟล์ + กด send ส่งจริงผ่าน Gmail SMTP
-5) Step3: อัปโหลดไฟล์หลักฐาน/รายงาน (แต่ละโมดูลไม่เหมือนกัน)
-6) Step4/5: สร้าง report (บางโมดูล) + ส่งอีเมลแนบ report
-
-> NOTE: Endpoint พวกนี้ “ใช้ DB เป็นหลัก” (Site/Job/CleaningJob/InspectionJob/ServiceJob) ไม่ได้ยิง Huawei ตอนเลือก project เพื่อลด rate limit
-
-## 6.1 Cleaning APIs (`/api/cleaning`)
-
-### 6.1.1 GET `/api/cleaning/projects`
-ใช้ทำ dropdown + auto-fill
-
-### 6.1.2 POST `/api/cleaning/step1`
-**Content-Type:** `application/json`
-
-**Body (create):**
 ```json
 {
   "siteId": 1,
@@ -863,204 +882,824 @@ Recommended frontend handling:
 }
 ```
 
-**Response:** `{ success: true, data: { jobId, jobNo } }`
+**Request body (update example):** ใส่ `jobId` เพื่อ update draft เดิม
 
-### 6.1.3 POST `/api/cleaning/step2/draft`
-**Content-Type:** `multipart/form-data`
-
-Fields:
-- `jobId` (text)
-- `to` (text)
-- `subject` (text)
-- `body` (text / html)
-- `files` (file) ✅ **ชื่อ field ต้องเป็น `files`**
-
-### 6.1.4 POST `/api/cleaning/step2/send`
-**Content-Type:** `application/json`
 ```json
-{ "jobId": 1 }
+{ "jobId": 123, "siteId": 1, "workDate": "2026-02-16" }
 ```
 
-### 6.1.5 POST `/api/cleaning/step3/evidence`
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "jobId": 123, "jobNo": "CLN-20260303-000001" } }
+```
+
+#### GET `/api/cleaning/job/:jobId`
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "job": { "id": 123, "jobNo": "CLN-..." }, "cleaning": { "jobId": 123 } } }
+```
+
+#### POST `/api/cleaning/step2/draft`
+
 **Content-Type:** `multipart/form-data`
 
-Fields:
-- `jobId` (text)
-- `labelType` (text) เช่น `BEFORE` / `AFTER` / `CERTIFICATE` / `LAYOUT`
-- `files` (file) ✅ field = `files`
+**Form fields:** `jobId` (required), `to`, `subject`, `body`
 
-### 6.1.6 POST `/api/cleaning/step3/checklist`
-**Content-Type:** `application/json`
+**Files:** `files` (file[], max 10)
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+#### POST `/api/cleaning/step2/send`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "jobId": 123 }
+```
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+#### POST `/api/cleaning/step3/evidence`
+
+**Content-Type:** `multipart/form-data`
+
+**Form fields:**
+
+- `jobId` (required)
+- `labelType` (optional): `BEFORE | AFTER | CERTIFICATE | LAYOUT | ...`
+
+**Files:** `files` (file[], max 30)
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+#### POST `/api/cleaning/step3/checklist`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
 ```json
 {
-  "jobId": 1,
+  "jobId": 123,
   "checklistJson": "[{\"item\":\"...\",\"ok\":true}]",
   "step3SummaryNote": "สรุปผล..."
 }
 ```
 
-### 6.1.7 POST `/api/cleaning/step4/generate`
-**Content-Type:** `application/json`
+**Response 200 (example):**
+
 ```json
-{ "jobId": 1 }
+{ "success": true }
 ```
 
-### 6.1.8 GET `/api/cleaning/step4/download/:jobId`
-ดาวน์โหลด report ที่สร้างแล้ว
+#### POST `/api/cleaning/step4/generate`
 
-### 6.1.9 POST `/api/cleaning/step5/send`
-**Content-Type:** `application/json`
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
 ```json
-{ "jobId": 1, "to": "...", "subject": "...", "body": "..." }
+{ "jobId": 123 }
+```
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": { "reportUrl": "/uploads/report.pdf", "download": "/api/cleaning/step4/download/123" }
+}
+```
+
+#### GET `/api/cleaning/step4/download/:jobId`
+
+**Description:** Redirect ไปไฟล์ report จริง
+
+**Response 302:** redirect to `/uploads/...pdf`
+
+#### POST `/api/cleaning/step5/send`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "jobId": 123, "to": "customer@example.com", "subject": "Report", "body": "<p>See attached</p>" }
+```
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+### Inspection APIs (`/api/inspection`)
+
+#### GET `/api/inspection/projects`
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "siteId": 1,
+      "plantCode": "PLANT-001",
+      "projectName": "Solar Farm A",
+      "address": "Bangkok",
+      "systemSizeKWp": 500,
+      "pvModuleEA": null
+    }
+  ]
+}
+```
+
+#### POST `/api/inspection/step1`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "siteId": 1, "workDate": "2026-02-15", "workTimeText": "10:00" }
+```
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "jobId": 555, "jobNo": "INSP-20260303-000001" } }
+```
+
+#### GET `/api/inspection/job/:jobId`
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "job": { "id": 555, "jobNo": "INSP-..." }, "inspection": { "jobId": 555 } } }
+```
+
+#### POST `/api/inspection/step2/draft`
+
+**Content-Type:** `multipart/form-data`
+
+**Form fields:** `jobId` (required), `to` (required), `subject` (required), `body` (required)
+
+**Files:** `attachments` (file[], max 20)
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+#### POST `/api/inspection/step2/send`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "jobId": 555 }
+```
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+> NOTE: ถ้าบางไฟล์แนบหายใน `uploads/` อาจมี `warning.missing` กลับมา
+
+#### POST `/api/inspection/step3/draft`
+
+**Content-Type:** `multipart/form-data`
+
+**Form fields:** `jobId` (required), `to` (required), `subject` (required), `body` (required)
+
+**File:** `report` (file, single)
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+#### POST `/api/inspection/step3/send`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "jobId": 555 }
+```
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+### Service APIs (`/api/service`)
+
+#### GET `/api/service/projects`
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "siteId": 1,
+      "plantCode": "PLANT-001",
+      "projectName": "Solar Farm A",
+      "address": "Bangkok",
+      "systemSizeKWp": 500,
+      "pvModuleEA": 1200,
+      "contactPhone": "0812345678",
+      "contactEmail": "customer@example.com"
+    }
+  ]
+}
+```
+
+#### POST `/api/service/step1`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "siteId": 1, "workDate": "2026-02-15", "workTimeText": "10:00", "note": "..." }
+```
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "jobId": 777, "jobNo": "SRV-20260303-000001" } }
+```
+
+#### GET `/api/service/job/:jobId`
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "job": {
+      "id": 777,
+      "jobNo": "SRV-20260303-000001",
+      "title": "Service - Solar Farm A",
+      "type": "SERVICE",
+      "status": "DRAFT"
+    },
+    "service": {
+      "jobId": 777,
+      "projectName": "Solar Farm A",
+      "systemSizeKWp": 500,
+      "workTimeText": "10:00",
+      "note": "..."
+    }
+  }
+}
+```
+
+#### POST `/api/service/step2/draft`
+
+**Content-Type:** `multipart/form-data`
+
+**Form fields:** `jobId`, `to`, `subject`, `body`
+
+**Files:** `attachments` (file[], max 20)
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+#### POST `/api/service/step2/send`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "jobId": 777 }
+```
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+#### POST `/api/service/step3/draft`
+
+**Content-Type:** `multipart/form-data`
+
+**Form fields:**
+
+- `jobId` (required)
+- `metaJson` (optional): JSON string
+
+**Files:**
+
+- `serviceReport` (file, single)
+- `evidence` (file[], max 30)
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+#### POST `/api/service/step4/generate`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "jobId": 777 }
+```
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "reportUrl": "/uploads/report.pdf", "download": "/api/service/step4/download/777" } }
+```
+
+#### GET `/api/service/step4/download/:jobId`
+
+**Response 302:** redirect to `/uploads/...pdf`
+
+#### POST `/api/service/step5/send`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "jobId": 777, "to": "customer@example.com", "subject": "Service report", "body": "<p>See attached</p>" }
+```
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
 ```
 
 ---
 
-## 6.2 Inspection APIs (`/api/inspection`)
+## Report Center APIs (`/api/reports`)
 
-### 6.2.1 GET `/api/inspection/projects`
-ใช้ทำ dropdown + auto-fill
+### GET `/api/reports`
 
-### 6.2.2 POST `/api/inspection/step1`
-**Content-Type:** `application/json`
-Body เหมือน cleaning (แต่เป็น inspection)
+**Description:** List report documents (คืนเฉพาะ job ที่มี report แล้ว)
 
-### 6.2.3 POST `/api/inspection/step2/draft`
-**Content-Type:** `multipart/form-data`
+**Auth:** None
 
-Fields:
-- `jobId` (text)
-- `to` (text)
-- `subject` (text)
-- `body` (text / html)
-- `attachments` (file) ✅ field = `attachments`
+**Query params (optional):**
 
-### 6.2.4 POST `/api/inspection/step2/send`
-**Content-Type:** `application/json`
+- `siteId`: number
+- `startMonth`: `YYYY-MM`
+- `endMonth`: `YYYY-MM`
+
+**Response 200 (example):**
+
 ```json
-{ "jobId": 1 }
-```
-
-### 6.2.5 POST `/api/inspection/step3/draft`
-**Content-Type:** `multipart/form-data`
-
-Fields:
-- `jobId` (text)
-- `to` (text)
-- `subject` (text)
-- `body` (text / html)
-- `report` (file) ✅ field = `report`
-
-### 6.2.6 POST `/api/inspection/step3/send`
-**Content-Type:** `application/json`
-```json
-{ "jobId": 1 }
+{
+  "success": true,
+  "data": {
+    "list": [
+      {
+        "id": 123,
+        "jobNo": "CLN-20260303-000001",
+        "title": "Cleaning - Solar Farm A",
+        "type": "CLEANING",
+        "status": "DRAFT",
+        "site": { "id": 1, "name": "Solar Farm A" },
+        "createdAt": "2026-03-03T01:00:00.000Z",
+        "reportCreatedAt": "2026-03-03T02:00:00.000Z",
+        "previewUrl": "/uploads/report.pdf",
+        "downloadUrl": "/uploads/report.pdf"
+      }
+    ]
+  }
+}
 ```
 
 ---
 
-## 6.3 Service APIs (`/api/service`)
+## Client Data APIs (`/api/client-data`)
 
-### 6.3.1 GET `/api/service/projects`
-ใช้ทำ dropdown + auto-fill
+โมดูลนี้ใช้จัดการข้อมูลฝั่ง PowerVault (Thailand) และ PowerVault Service (projects, warranty, layouts, forecast, other, service entries)
 
-### 6.3.2 POST `/api/service/step1`
-**Content-Type:** `application/json`
-Body เหมือน cleaning (มี field เพิ่มบางตัว เช่น serviceType/remark แล้วแต่ UI)
+### PowerVault (Thailand) - Projects
 
-### 6.3.3 POST `/api/service/step2/draft`
+#### GET `/api/client-data/thailand/projects`
+
+**Query params (optional):**
+
+- `projectNo` (contains)
+- `projectName` (contains)
+- `systemSizeKWp` (exact)
+- `endWarrantyBefore` (ISO date)
+- `status` (`ACTIVE | INACTIVE | MAINTENANCE`)
+- `page` (default `1`)
+- `pageSize` (default `10`)
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "page": 1,
+    "pageSize": 10,
+    "total": 1,
+    "items": [
+      {
+        "siteId": 1,
+        "projectNo": "PLANT-001",
+        "projectName": "Solar Farm A",
+        "systemSizeKWp": 500,
+        "endWarranty": "2028-12-31T00:00:00.000Z",
+        "status": "ACTIVE"
+      }
+    ]
+  }
+}
+```
+
+#### POST `/api/client-data/thailand/projects`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{
+  "plantCode": "PLANT-002",
+  "name": "Solar Farm B",
+  "capacityKWp": 750,
+  "projectStatus": "ACTIVE",
+  "address": "Bangkok",
+  "pvModuleEA": 1200,
+  "contactPhone": "0812345678",
+  "contactEmail": "customer@example.com",
+  "warrantyEnd": "2028-12-31"
+}
+```
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "siteId": 2,
+    "projectNo": "PLANT-002",
+    "projectName": "Solar Farm B",
+    "systemSizeKWp": 750,
+    "endWarranty": "2028-12-31T00:00:00.000Z",
+    "status": "ACTIVE"
+  }
+}
+```
+
+#### PUT `/api/client-data/thailand/projects/:siteId`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):** (ส่งเฉพาะ field ที่อยากแก้)
+
+```json
+{ "projectName": "Solar Farm B (Updated)", "status": "MAINTENANCE" }
+```
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "siteId": 2,
+    "projectNo": "PLANT-002",
+    "projectName": "Solar Farm B (Updated)",
+    "systemSizeKWp": 750,
+    "endWarranty": "2028-12-31T00:00:00.000Z",
+    "status": "MAINTENANCE"
+  }
+}
+```
+
+#### DELETE `/api/client-data/thailand/projects/:siteId`
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+### PowerVault Service - Entries
+
+#### GET `/api/client-data/service/entries`
+
+**Query params (optional):**
+
+- `projectNo`, `projectName`, `systemSizeKWp`
+- `job` (`SERVICE | CLEANING | INSPECTION | OM`)
+- `page`, `pageSize`
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "page": 1,
+    "pageSize": 10,
+    "total": 1,
+    "items": [
+      {
+        "entryId": 100,
+        "siteId": 1,
+        "projectNo": "PLANT-001",
+        "projectName": "Solar Farm A",
+        "systemSizeKWp": 500,
+        "job": "SERVICE",
+        "description": "Replace inverter fan",
+        "createdAt": "2026-03-03T01:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+#### POST `/api/client-data/service/entries`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "siteId": 1, "job": "SERVICE", "description": "Replace inverter fan" }
+```
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "id": 100, "siteId": 1, "job": "SERVICE", "description": "Replace inverter fan" } }
+```
+
+#### PUT `/api/client-data/service/entries/:entryId`
+
+**Request body (example):**
+
+```json
+{ "description": "Replace inverter fan (done)" }
+```
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 100,
+    "siteId": 1,
+    "job": "SERVICE",
+    "description": "Replace inverter fan (done)"
+  }
+}
+```
+
+#### DELETE `/api/client-data/service/entries/:entryId`
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+### Project Detail (Tabs)
+
+#### GET `/api/client-data/projects/:siteId`
+
+**Description:** ดึงข้อมูล project + ทุก tab (warranty/layouts/forecast/other/serviceEntries)
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "plantCode": "PLANT-001",
+    "name": "Solar Farm A",
+    "capacityKWp": 500,
+    "warrantySupplierItems": [],
+    "warrantyCustomerItems": [],
+    "layouts": [],
+    "forecastMonthly": [],
+    "forecastYearly": [],
+    "otherRows": [],
+    "serviceEntries": []
+  }
+}
+```
+
+### Warranty
+
+#### POST `/api/client-data/projects/:siteId/warranty/supplier`
+
+**Request body (example):**
+
+```json
+{
+  "category": "INVERTER",
+  "itemName": "Inverter",
+  "supplierName": "Huawei",
+  "productName": "SUN2000",
+  "quantity": 10,
+  "startWarranty": "2026-01-01",
+  "endWarranty": "2031-01-01",
+  "warrantyYears": 5
+}
+```
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 10,
+    "siteId": 1,
+    "category": "INVERTER",
+    "itemName": "Inverter",
+    "supplierName": "Huawei",
+    "productName": "SUN2000",
+    "quantity": 10,
+    "startWarranty": "2026-01-01",
+    "endWarranty": "2031-01-01",
+    "warrantyYears": 5
+  }
+}
+```
+
+#### PUT `/api/client-data/warranty/supplier/:itemId`
+
+**Request body (example):**
+
+```json
+{ "supplierName": "Huawei (TH)", "warrantyYears": 6 }
+```
+
+#### DELETE `/api/client-data/warranty/supplier/:itemId`
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+#### POST `/api/client-data/projects/:siteId/warranty/customer`
+
+**Request body (example):**
+
+```json
+{ "category": "SYSTEM", "itemName": "System warranty", "warrantyYears": 1 }
+```
+
+#### PUT `/api/client-data/warranty/customer/:itemId`
+
+**Request body (example):**
+
+```json
+{ "warrantyYears": 2 }
+```
+
+#### DELETE `/api/client-data/warranty/customer/:itemId`
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+### Layouts (Upload)
+
+#### POST `/api/client-data/projects/:siteId/layouts/:type`
+
 **Content-Type:** `multipart/form-data`
 
-Fields:
-- `jobId` (text)
-- `to` (text)
-- `subject` (text)
-- `body` (text / html)
-- `files` (file) ✅ field = `files`
+**Path params:** `type` = `PV_LAYOUT` หรือ `PV_STRING_LAYOUT`
 
-### 6.3.4 POST `/api/service/step2/send`
-**Content-Type:** `application/json`
+**File field:** `file` (single)
+
+**Response 200 (example):**
+
 ```json
-{ "jobId": 1 }
+{ "success": true, "data": { "id": 1, "siteId": 1, "type": "PV_LAYOUT", "fileUrl": "/uploads/layout.pdf" } }
 ```
 
-### 6.3.5 POST `/api/service/step3/draft`
-**Content-Type:** `multipart/form-data`
+### Forecast
 
-Fields:
-- `jobId` (text)
-- `serviceReport` (file) ✅ field = `serviceReport`
-- `evidence` (file) ✅ field = `evidence`
+#### PUT `/api/client-data/projects/:siteId/forecast/pvsyst`
 
-### 6.3.6 POST `/api/service/step4/generate`
-**Content-Type:** `application/json`
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
 ```json
-{ "jobId": 1 }
+{
+  "rows": [
+    { "month": 1, "globalKwhM2": 5.1, "eGridKwh": 2500, "prRatio": 48 },
+    { "month": 2, "globalKwhM2": 5.3, "eGridKwh": 2400, "prRatio": 47 }
+  ]
+}
 ```
 
-### 6.3.7 GET `/api/service/step4/download/:jobId`
-ดาวน์โหลด report ที่สร้างแล้ว
+**Response 200 (example):**
 
-### 6.3.8 POST `/api/service/step5/send`
-**Content-Type:** `application/json`
 ```json
-{ "jobId": 1, "to": "...", "subject": "...", "body": "..." }
+{ "success": true }
 ```
 
----
+#### PUT `/api/client-data/projects/:siteId/forecast/warranty-energy`
 
-## 6.4 Postman tips (เรื่องไฟล์แนบ)
+**Request body (example):**
 
-ใน Postman:
+```json
+{ "rows": [{ "year": 2026, "warrantyEnergyKwh": 123456 }] }
+```
 
-- เลือก **Body → form-data**
-- Key ที่เป็นไฟล์ ให้เลือกชนิดเป็น **File** แล้วกดเลือกไฟล์จากเครื่อง
-- Key ต้องตรงกับ route (เช่น `files` / `attachments` / `report` / `serviceReport` / `evidence`)
+**Response 200 (example):**
 
-ถ้าเจอ `MulterError: Unexpected field` = ส่งชื่อ field ไม่ตรงกับที่ backend รอรับ
+```json
+{ "success": true }
+```
 
----
+### Other tab
 
-##  Client Data APIs (`/api/client-data`)
+#### POST `/api/client-data/projects/:siteId/other`
 
-โมดูลนี้ใช้สำหรับจัดการข้อมูลฝั่ง **PowerVault (Thailand)** และ **PowerVault Service** (ตาราง/แท็บข้อมูล project, warranty, layout, forecast, other และ service entries)
+**Request body (example):**
 
-### 5.1 PowerVault (Thailand) - Projects
-- GET `/api/client-data/thailand/projects`
-  - query: `projectNo`, `projectName`, `systemSizeKWp`, `endWarrantyBefore`, `status` (ACTIVE/INACTIVE/MAINTENANCE), `page`, `pageSize`
-- POST `/api/client-data/thailand/projects`
-- PUT `/api/client-data/thailand/projects/:siteId`
-- DELETE `/api/client-data/thailand/projects/:siteId`
+```json
+{ "title": "Note", "value": "Some text", "remark": "..." }
+```
 
-### 5.2 PowerVault Service - Entries
-- GET `/api/client-data/service/entries`
-- POST `/api/client-data/service/entries`
-- PUT `/api/client-data/service/entries/:entryId`
-- DELETE `/api/client-data/service/entries/:entryId`
+**Response 200 (example):**
 
-### 5.3 Project Detail (Tabs)
-- GET `/api/client-data/projects/:siteId`
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "siteId": 1,
+    "title": "Note",
+    "value": "Some text",
+    "remark": "..."
+  }
+}
+```
 
-**Warranty**
-- POST `/api/client-data/projects/:siteId/warranty/supplier`
-- PUT `/api/client-data/warranty/supplier/:itemId`
-- DELETE `/api/client-data/warranty/supplier/:itemId`
+#### PUT `/api/client-data/other/:rowId`
 
-- POST `/api/client-data/projects/:siteId/warranty/customer`
-- PUT `/api/client-data/warranty/customer/:itemId`
-- DELETE `/api/client-data/warranty/customer/:itemId`
+**Request body (example):**
 
-**Layouts (อัปโหลดไฟล์)**
-- POST `/api/client-data/projects/:siteId/layouts/:type`
-  - `type` = `PV_LAYOUT` หรือ `PV_STRING_LAYOUT`
-  - ส่งเป็น `multipart/form-data` โดย field ชื่อ `file`
-  - ไฟล์จะถูกเสิร์ฟผ่าน `/uploads/<filename>`
+```json
+{ "value": "Updated" }
+```
 
-**Forecast**
-- PUT `/api/client-data/projects/:siteId/forecast/pvsyst` (รายเดือน)
-- PUT `/api/client-data/projects/:siteId/forecast/warranty-energy` (รายปี)
+#### DELETE `/api/client-data/other/:rowId`
 
-**Other**
-- POST `/api/client-data/projects/:siteId/other`
-- PUT `/api/client-data/other/:rowId`
-- DELETE `/api/client-data/other/:rowId`
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
