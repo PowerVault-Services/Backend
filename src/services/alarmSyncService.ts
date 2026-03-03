@@ -33,7 +33,11 @@ function makeHuaweiAlarmKey(a: any) {
 
 export async function syncActiveAlarms() {
   const now = Date.now();
-  const lookbackDays = Number(process.env.HUAWEI_ALARM_LOOKBACK_DAYS ?? 365);
+  // Huawei/FusionSolar often limits alarm query windows. A very large lookback can return
+  // no data or fail silently depending on tenant settings.
+  // Default to 30 days and hard-cap to 30 days for safety.
+  const lookbackDaysEnv = Number(process.env.HUAWEI_ALARM_LOOKBACK_DAYS ?? 30);
+  const lookbackDays = Number.isFinite(lookbackDaysEnv) ? Math.min(Math.max(1, lookbackDaysEnv), 30) : 30;
   const beginTime = now - lookbackDays * 24 * 60 * 60 * 1000;
   const endTime = now;
 
@@ -75,7 +79,14 @@ export async function syncActiveAlarms() {
       levels: '1,2,3,4',
     });
 
-    if (!res?.success) continue;
+    if (!res?.success) {
+      // make it visible in logs when Huawei refuses the time window / token / etc.
+      console.warn(`⚠️ [ALARM] Huawei getAlarmList failed (batchSize=${batch.length})`, {
+        failCode: (res as any)?.failCode,
+        message: (res as any)?.message,
+      });
+      continue;
+    }
 
     const list: any[] = res?.data ?? [];
     totalFetched += list.length;

@@ -323,7 +323,56 @@ If no snapshot exists:
 
 ---
 
-### 3.5 GET `/api/monitoring/inverters/:inverterId/history`
+### 3.5 GET `/api/monitoring/inverters/:inverterId/strings/history`
+
+Use for Historical Information graph (PV string current over time).
+
+Path params:
+- `inverterId` (required, number)
+
+Query params:
+- `date` (optional): `YYYY-MM-DD` (interpreted as user's local date window)
+- `tzOffsetMinutes` (optional, default `0`): same semantics as JS `Date.getTimezoneOffset()`
+- `range` (optional, default `day`): used when `date` is not provided
+  - allowed: `day`, `week`, `month`
+- `stringNo` (optional): number 1..20 (fetch only one string)
+- `includeDisconnected` (optional, default `false`): include status `Disconnected`
+
+Success response:
+```json
+{
+  "data": {
+    "inverterId": 10,
+    "date": "2026-03-03",
+    "tzOffsetMinutes": -420,
+    "range": null,
+    "from": "2026-03-02T17:00:00.000Z",
+    "to": "2026-03-03T17:00:00.000Z",
+    "stringNo": null,
+    "includeDisconnected": false,
+    "seriesByString": [
+      {
+        "stringNo": 1,
+        "points": [
+          { "t": "2026-03-03T00:00:00.000Z", "current": 3.02, "voltage": 725, "status": "Normal" },
+          { "t": "2026-03-03T00:05:00.000Z", "current": 0.0, "voltage": 725, "status": "Lost" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Errors:
+- `400` invalid `inverterId`
+- `400` invalid `date`
+- `400` invalid `tzOffsetMinutes`
+- `400` invalid `stringNo`
+- `400` invalid `range`
+
+---
+
+### 3.6 GET `/api/monitoring/inverters/:inverterId/history`
 
 Use for line charts.
 

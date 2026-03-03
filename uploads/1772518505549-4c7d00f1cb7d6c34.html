@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <title>Clickjacking Test</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 30px;
+    }
+
+    h1 { color: #e94560; margin-bottom: 6px; font-size: 1.6rem; }
+    .subtitle { color: #aaa; font-size: 0.9rem; margin-bottom: 20px; }
+
+    .status-box {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      padding: 14px 24px;
+      margin-bottom: 20px;
+      text-align: center;
+      width: 700px;
+    }
+    .status-box span { font-weight: bold; color: #f5a623; }
+
+    .frame-container {
+      position: relative;
+      width: 700px;
+      height: 500px;
+      border: 2px dashed #e94560;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    /* Overlay ปุ่มหลอก */
+    .decoy-btn {
+      position: absolute;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      background: #e94560;
+      color: white;
+      padding: 14px 32px;
+      font-size: 1.1rem;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      pointer-events: none; /* ให้ click ทะลุไปที่ iframe */
+      opacity: 0.85;
+    }
+
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      opacity: 0.01; /* ทำให้แทบมองไม่เห็น = clickjacking scenario */
+    }
+
+    .controls {
+      margin-top: 16px;
+      display: flex;
+      gap: 12px;
+    }
+
+    .controls button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: bold;
+    }
+
+    .btn-show { background: #0f3460; color: #eee; }
+    .btn-show:hover { background: #1a5276; }
+    .btn-hide { background: #e94560; color: white; }
+    .btn-hide:hover { background: #c0392b; }
+
+    .result {
+      margin-top: 16px;
+      padding: 12px 20px;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      display: none;
+      width: 700px;
+      text-align: center;
+    }
+    .result.vulnerable { background: #4a0000; border: 1px solid #e94560; color: #ff6b6b; display: block; }
+    .result.safe { background: #003300; border: 1px solid #27ae60; color: #58d68d; display: block; }
+
+    .label {
+      position: absolute;
+      top: 8px;
+      left: 12px;
+      font-size: 0.75rem;
+      color: #e94560;
+      z-index: 20;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🎯 Clickjacking Test</h1>
+  <p class="subtitle">Pentest Tool — สำหรับทดสอบ X-Frame-Options / CSP frame-ancestors</p>
+
+  <div class="status-box">
+    Target: <span>http://localhost:5173/classroom/#//</span><br>
+    <small>กด "แสดง iframe" เพื่อดูว่าเว็บ target โหลดใน frame ได้ไหม</small>
+  </div>
+
+  <div class="frame-container" id="frameBox">
+    <div class="label">[ iframe: target site ]</div>
+    <div class="decoy-btn" id="decoyBtn">🎁 คลิกรับของรางวัล!</div>
+    <iframe id="targetFrame" src="about:blank" title="target"></iframe>
+  </div>
+
+  <div class="controls">
+    <button class="btn-show" onclick="loadFrame()">▶ แสดง iframe (opacity สูง)</button>
+    <button class="btn-hide" onclick="hideFrame()">👁 Clickjacking Mode (opacity ต่ำ)</button>
+    <button class="btn-show" onclick="checkResult()">✅ ตรวจผล</button>
+  </div>
+
+  <div class="result" id="resultBox"></div>
+
+  <script>
+    const TARGET = "http://localhost:5173/classroom/#/";
+    const frame = document.getElementById("targetFrame");
+    const resultBox = document.getElementById("resultBox");
+
+    function loadFrame() {
+      frame.src = TARGET;
+      frame.style.opacity = "1";
+      document.getElementById("decoyBtn").style.display = "none";
+      resultBox.className = "result";
+    }
+
+    function hideFrame() {
+      frame.src = TARGET;
+      frame.style.opacity = "0.01";
+      document.getElementById("decoyBtn").style.display = "block";
+    }
+
+    function checkResult() {
+      // ถ้า iframe โหลดได้ → vulnerable
+      try {
+        // พยายาม access contentDocument (same-origin เท่านั้น)
+        const doc = frame.contentDocument;
+        if (frame.src !== "about:blank" && frame.src !== "") {
+          resultBox.textContent = "⚠️ VULNERABLE: เว็บ target โหลดใน iframe ได้! ไม่มี X-Frame-Options หรือ CSP frame-ancestors — ควรรายงานเป็น Clickjacking finding";
+          resultBox.className = "result vulnerable";
+        }
+      } catch(e) {
+        resultBox.textContent = "✅ SAFE: ไม่สามารถโหลดใน iframe ได้ (blocked by X-Frame-Options หรือ CSP)";
+        resultBox.className = "result safe";
+      }
+    }
+
+    // Auto-detect ถ้า frame blocked
+    frame.addEventListener("load", () => {
+      if (frame.src !== "about:blank") {
+        resultBox.textContent = "⚠️ VULNERABLE: iframe โหลดสำเร็จ! เว็บไม่ได้ป้องกัน Clickjacking";
+        resultBox.className = "result vulnerable";
+      }
+    });
+
+    frame.addEventListener("error", () => {
+      resultBox.textContent = "✅ SAFE: iframe ถูก block — เว็บมีการป้องกัน Clickjacking";
+      resultBox.className = "result safe";
+    });
+  </script>
+
+</body>
+</html>

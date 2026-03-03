@@ -341,7 +341,6 @@
     res.json({ data: { ts: snap.ts, strings } });
   });
 
-
   router.get('/inverters/:inverterId/history', async (req, res) => {
     const inverterId = Number(req.params.inverterId);
     const metric = String(req.query.metric ?? 'activePower');
@@ -376,5 +375,116 @@
     const series = rows.map((r: any) => ({ t: r.ts, v: r[metric] }));
     res.json({ data: { metric, range, series } });
   });
+
+	// Historical PV string current (for Historical Information graph)
+	// GET /api/monitoring/inverters/:inverterId/strings/history
+	// Query:
+	//  - date=YYYY-MM-DD (optional) : if provided, returns that local day window (needs tzOffsetMinutes)
+	//  - tzOffsetMinutes (optional, default 0): same semantics as JS Date.getTimezoneOffset()
+	//  - range=day|week|month (optional, default day): used when date is not provided
+	//  - stringNo (optional): fetch only one PV string series
+	//  - includeDisconnected=true (optional): include "Disconnected" points (default false)
+	router.get('/inverters/:inverterId/strings/history', async (req, res) => {
+		const inverterId = Number(req.params.inverterId);
+		if (!Number.isFinite(inverterId)) return res.status(400).json({ error: 'Invalid inverterId' });
+
+		const dateStr = req.query.date != null ? String(req.query.date) : null;
+		const range = String(req.query.range ?? 'day');
+		const tzOffsetMinutesRaw = req.query.tzOffsetMinutes != null ? Number(req.query.tzOffsetMinutes) : 0;
+		if (!Number.isFinite(tzOffsetMinutesRaw)) return res.status(400).json({ error: 'Invalid tzOffsetMinutes' });
+		const tzOffsetMinutes = Math.trunc(tzOffsetMinutesRaw);
+
+		const stringNo = req.query.stringNo != null ? Number(req.query.stringNo) : null;
+		if (req.query.stringNo != null && !Number.isFinite(stringNo)) {
+			return res.status(400).json({ error: 'Invalid stringNo' });
+		}
+
+		const includeDisconnected = String(req.query.includeDisconnected ?? 'false').toLowerCase() === 'true';
+
+		let from: Date;
+		let to: Date;
+
+		if (dateStr) {
+			const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(dateStr);
+			if (!m) return res.status(400).json({ error: 'Invalid date (expected YYYY-MM-DD)' });
+			const y = Number(m[1]);
+			const mo = Number(m[2]);
+			const d = Number(m[3]);
+			if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) {
+				return res.status(400).json({ error: 'Invalid date' });
+			}
+
+			// Interpret `date` as the user's local date. Convert local midnight to UTC using tzOffsetMinutes.
+			const baseUtcMs = Date.UTC(y, mo - 1, d, 0, 0, 0, 0);
+			const fromMs = baseUtcMs + tzOffsetMinutes * 60_000;
+			from = new Date(fromMs);
+			to = new Date(fromMs + 24 * 60 * 60 * 1000);
+		} else {
+			const now = new Date();
+			to = now;
+			from = new Date(now);
+			if (range === 'day') from.setHours(now.getHours() - 24);
+			else if (range === 'week') from.setDate(now.getDate() - 7);
+			else if (range === 'month') from.setDate(now.getDate() - 30);
+			else return res.status(400).json({ error: 'Invalid range' });
+		}
+
+		const rows = await prisma.inverterKpiSnapshot.findMany({
+			where: { inverterId, ts: { gte: from, lt: to } },
+			orderBy: { ts: 'asc' },
+			select: {
+				ts: true,
+				strings: {
+					select: { stringNo: true, voltage: true, current: true, status: true },
+					orderBy: { stringNo: 'asc' },
+				},
+			},
+		});
+
+		const seriesMap = new Map<
+			number,
+			{ stringNo: number; points: Array<{ t: Date; current: number | null; voltage: number | null; status: string | null }> }
+		>();
+
+		for (const snap of rows as any[]) {
+			const ts = snap.ts as Date;
+			const strings = Array.isArray(snap.strings) ? snap.strings : [];
+			for (const s of strings) {
+				const n = Number(s.stringNo);
+				if (!Number.isFinite(n)) continue;
+				if (stringNo != null && n !== stringNo) continue;
+				if (!includeDisconnected && String(s.status) === 'Disconnected') continue;
+
+				let bucket = seriesMap.get(n);
+				if (!bucket) {
+					bucket = { stringNo: n, points: [] };
+					seriesMap.set(n, bucket);
+				}
+
+				bucket.points.push({
+					t: ts,
+					current: s.current != null && Number.isFinite(Number(s.current)) ? Number(s.current) : null,
+					voltage: s.voltage != null && Number.isFinite(Number(s.voltage)) ? Number(s.voltage) : null,
+					status: s.status ?? null,
+				});
+			}
+		}
+
+		const seriesByString = Array.from(seriesMap.values()).sort((a, b) => a.stringNo - b.stringNo);
+
+		res.json({
+			data: {
+				inverterId,
+				date: dateStr,
+				tzOffsetMinutes,
+				range: dateStr ? null : range,
+				from,
+				to,
+				stringNo,
+				includeDisconnected,
+				seriesByString,
+			},
+		});
+	});
 
   export default router;

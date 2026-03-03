@@ -393,6 +393,58 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 - `400` `{ "error": "Invalid metric" }`
 - `400` `{ "error": "Invalid range" }`
 
+### GET `/api/monitoring/inverters/:inverterId/strings/history`
+
+**Description:** Historical PV string series (current/voltage) สำหรับกราฟ Historical Information
+
+**Auth:** None
+
+**Path params:**
+
+- `inverterId` (required, number)
+
+**Query params (optional):**
+
+- `date`: `YYYY-MM-DD` (ถ้าส่งมา จะตีความเป็น “วันตามเวลาท้องถิ่นของผู้ใช้” โดยต้องใช้ `tzOffsetMinutes` เพื่อแปลงเป็นช่วงเวลา UTC)
+- `tzOffsetMinutes` (default `0`): semantics เดียวกับ `Date.getTimezoneOffset()`
+- `range` (default `day`): `day | week | month` (ใช้เมื่อไม่ได้ส่ง `date`)
+- `stringNo`: number (ดึงเฉพาะ string เดียว)
+- `includeDisconnected`: `true | false` (default `false`)
+
+**Response 200 (example):**
+
+```json
+{
+  "data": {
+    "inverterId": 10,
+    "date": null,
+    "tzOffsetMinutes": 0,
+    "range": "day",
+    "from": "2026-02-02T01:00:00.000Z",
+    "to": "2026-02-03T01:00:00.000Z",
+    "stringNo": null,
+    "includeDisconnected": false,
+    "seriesByString": [
+      {
+        "stringNo": 1,
+        "points": [
+          { "t": "2026-02-03T00:00:00.000Z", "current": 9.5, "voltage": 450.2, "status": "Normal" },
+          { "t": "2026-02-03T00:05:00.000Z", "current": 9.7, "voltage": 451.0, "status": "Normal" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Errors:**
+
+- `400` `{ "error": "Invalid inverterId" }`
+- `400` `{ "error": "Invalid date (expected YYYY-MM-DD)" }`
+- `400` `{ "error": "Invalid tzOffsetMinutes" }`
+- `400` `{ "error": "Invalid range" }`
+- `400` `{ "error": "Invalid stringNo" }`
+
 ### GET `/api/monitoring/pr`
 
 **Description:** PR page (Irradiation / Production / Performance Ratio) — Actual from Huawei + Forecast from DB
@@ -498,7 +550,10 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 - `sn` (optional): inverter serialNumber (backend จะ map เป็น `inverterId` ให้)
 - `from` (optional): ISO datetime filter `occurredAt >= from`
 - `to` (optional): ISO datetime filter `occurredAt <= to`
-- `refresh` (optional): ถ้าเป็น `1` จะพยายาม sync alarm on-demand (siteId หรือ inverterId ต้องส่งมาด้วย)
+- `refresh` (optional):
+  - `1` = พยายาม sync alarm on-demand (ต้องส่ง `siteId` หรือ `inverterId` มาด้วย)
+  - `0` = ปิด auto-refresh (กรณี `tab=active` และมี `siteId`/`inverterId`)
+- `includeDeleted` (optional): ถ้าเป็น `1` จะรวม alarm ที่ถูก soft-delete (default ซ่อน)
 
 **Response 200 (example):**
 
@@ -510,12 +565,22 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
       {
         "id": 1,
         "severity": 4,
+        "severityText": "Critical",
         "plantName": "Solar Farm A",
+        "deviceType": "SUN2000",
+        "deviceTypeId": 1,
         "deviceName": "INV-1",
         "alarmName": "Grid Fault",
+        "alarmId": "12345",
+        "sn": "SN-ABC",
         "occurredAt": "2026-02-26T01:10:00.000Z",
+        "occurrenceTime": "2026-02-26T01:10:00.000Z",
         "clearedAt": null,
         "status": "ACTIVE",
+        "acknowledgedAt": null,
+        "acknowledgedBy": null,
+        "deletedAt": null,
+        "operation": { "viewDetails": true, "acknowledge": true, "delete": true },
         "raw": { "alarmId": "12345", "devName": "INV-1" }
       }
     ],
@@ -524,13 +589,113 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 }
 ```
 
+### GET `/api/alarms/:id`
+
+**Description:** Alarm details (ใช้สำหรับหน้า View Details)
+
+**Auth:** None
+
+**Path params:**
+
+- `id` (required, number)
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "severity": 4,
+    "severityText": "Critical",
+    "plantName": "Solar Farm A",
+    "plantCode": "PLANT-001",
+    "inverterId": 10,
+    "inverterName": "INV-1",
+    "deviceType": "SUN2000",
+    "deviceTypeId": 1,
+    "deviceName": "INV-1",
+    "sn": "SN-ABC",
+    "alarmName": "Grid Fault",
+    "alarmId": "12345",
+    "occurredAt": "2026-02-26T01:10:00.000Z",
+    "occurrenceTime": "2026-02-26T01:10:00.000Z",
+    "clearedAt": null,
+    "status": "ACTIVE",
+    "acknowledgedAt": null,
+    "acknowledgedBy": null,
+    "deletedAt": null,
+    "deletedBy": null,
+    "raw": { "alarmId": "12345", "devName": "INV-1" }
+  }
+}
+```
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "Invalid id" }`
+- `404` `{ "success": false, "message": "Alarm not found" }`
+
+### POST `/api/alarms/:id/acknowledge`
+
+**Description:** Acknowledge alarm (เขียน `_meta.acknowledgedAt/acknowledgedBy` ลงใน `raw`)
+
+**Auth:** None (ถ้ามี auth middleware จะใช้ `req.user` เป็น `acknowledgedBy`, ถ้าไม่มีจะเป็น `system`)
+
+**Request body:** none
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "acknowledgedAt": "2026-03-03T01:10:00.000Z",
+    "acknowledgedBy": "system"
+  }
+}
+```
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "Invalid id" }`
+- `404` `{ "success": false, "message": "Alarm not found" }`
+- `409` `{ "success": false, "message": "Alarm already deleted" }`
+
+### DELETE `/api/alarms/:id`
+
+**Description:** Soft-delete alarm (เขียน `_meta.deletedAt/deletedBy` ลงใน `raw`) — list จะซ่อนโดย default
+
+**Auth:** None (ถ้ามี auth middleware จะใช้ `req.user` เป็น `deletedBy`, ถ้าไม่มีจะเป็น `system`)
+
+**Request body:** none
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "deletedAt": "2026-03-03T01:12:00.000Z",
+    "deletedBy": "system"
+  }
+}
+```
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "Invalid id" }`
+- `404` `{ "success": false, "message": "Alarm not found" }`
+
 ### GET `/api/alarms/export`
 
 **Description:** Export alarms เป็น CSV (สูงสุด 50,000 rows)
 
 **Auth:** None
 
-**Query params:** เหมือน `/api/alarms`
+**Query params:** เหมือน `/api/alarms` (ยกเว้น `refresh`, `includeDeleted`)
 
 **Response 200:** `text/csv` พร้อม `Content-Disposition: attachment`
 
@@ -778,6 +943,12 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 { "name": "Updated Name" }
 ```
 
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "id": 1, "name": "Updated Name" } }
+```
+
 #### DELETE `/api/stock/categories/:id`
 
 **Response 200 (example):**
@@ -808,12 +979,24 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 { "name": "pcs" }
 ```
 
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "id": 1, "name": "pcs" } }
+```
+
 #### PATCH `/api/stock/units/:id`
 
 **Request body (example):**
 
 ```json
 { "name": "box" }
+```
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "id": 1, "name": "box" } }
 ```
 
 #### DELETE `/api/stock/units/:id`
