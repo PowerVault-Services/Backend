@@ -30,9 +30,16 @@ export async function listProjects(req: Request, res: Response) {
       }
     : {};
 
+  const page = Math.max(1, Number(req.query.page ?? 1));
+  const pageSize = Math.min(5000, Math.max(1, Number(req.query.pageSize ?? 1000)));
+  const skip = (page - 1) * pageSize;
+
+  const total = await prisma.site.count({ where });
+
   const sites = await prisma.site.findMany({
     where,
-    take: 50,
+    skip,
+    take: pageSize,
     orderBy: { name: 'asc' },
     select: {
       id: true,
@@ -48,6 +55,12 @@ export async function listProjects(req: Request, res: Response) {
 
   res.json({
     success: true,
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+    },
     data: sites.map((s) => ({
       siteId: s.id,
       plantCode: s.plantCode,

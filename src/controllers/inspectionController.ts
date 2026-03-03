@@ -40,22 +40,46 @@ export async function listProjects(req: Request, res: Response) {
     ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { plantCode: { contains: q, mode: 'insensitive' } }] }
     : {};
 
+  const page = Math.max(1, Number(req.query.page ?? 1));
+  const pageSize = Math.min(5000, Math.max(1, Number(req.query.pageSize ?? 1000)));
+  const skip = (page - 1) * pageSize;
+
+  const total = await prisma.site.count({ where });
+
   const sites = await prisma.site.findMany({
     where,
-    take: 50,
+    skip,
+    take: pageSize,
     orderBy: { name: 'asc' },
-    select: { id: true, name: true, plantCode: true, address: true, capacityKWp: true },
+    select: {
+      id: true,
+      name: true,
+      plantCode: true,
+      address: true,
+      capacityKWp: true,
+      pvModuleCount: true,
+      contactPhone: true,
+      contactEmail: true,
+    },
   });
 
   res.json({
     success: true,
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+    },
     data: sites.map((s) => ({
       siteId: s.id,
       plantCode: s.plantCode,
       projectName: s.name,
       address: s.address,
       systemSizeKWp: s.capacityKWp,
-      pvModuleEA: null,
+      pvModuleEA: s.pvModuleCount ?? null,
+      contactPhone: s.contactPhone ?? null,
+      contactEmail: s.contactEmail ?? null,
     })),
   });
 }
