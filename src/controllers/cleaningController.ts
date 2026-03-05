@@ -78,6 +78,91 @@ export async function listProjects(req: Request, res: Response) {
 }
 
 /**
+ * GET /api/cleaning/jobs
+ * ใช้สำหรับหน้า HomeCleaning เพื่อแสดงรายการ Cleaning Job ที่ถูกสร้างแล้วทั้งหมด
+ * รองรับ filter/pagination เบื้องต้น (ให้ FE เอาไปผูกกับช่อง Search ได้)
+ */
+export async function listCleaningJobs(req: Request, res: Response) {
+  try {
+    const page = Math.max(1, Number(req.query.page ?? 1));
+    const pageSize = Math.min(100, Math.max(10, Number(req.query.pageSize ?? 20)));
+    const skip = (page - 1) * pageSize;
+
+    const jobNo = String(req.query.jobNo ?? '').trim();
+    const projectType = String(req.query.projectType ?? '').trim();
+    const projectName = String(req.query.projectName ?? '').trim();
+    const status = String(req.query.status ?? '').trim();
+    const contractor = String(req.query.contractor ?? '').trim();
+
+    const systemSizeKWp = toNum(req.query.systemSizeKWp);
+    const pvModuleEA = toNum(req.query.pvModuleEA);
+
+    // date อาจส่งมาเป็น YYYY-MM-DD
+    const dateStr = String(req.query.date ?? '').trim();
+    const date = dateStr ? new Date(dateStr) : null;
+    if (date) date.setHours(0, 0, 0, 0);
+
+    const whereJob: any = { type: JobType.CLEANING };
+    if (jobNo) whereJob.jobNo = { contains: jobNo, mode: 'insensitive' };
+    if (projectType) whereJob.projectType = { contains: projectType, mode: 'insensitive' };
+    if (contractor) whereJob.contractor = { contains: contractor, mode: 'insensitive' };
+    if (status) whereJob.status = status as any;
+
+    const whereCleaning: any = {};
+    if (projectName) whereCleaning.projectName = { contains: projectName, mode: 'insensitive' };
+    if (systemSizeKWp != null) whereCleaning.systemSizeKWp = systemSizeKWp;
+    if (pvModuleEA != null) whereCleaning.pvModuleEA = pvModuleEA;
+    if (date) whereCleaning.workDate = date;
+
+    const [total, rows] = await Promise.all([
+      prisma.job.count({
+        where: {
+          ...whereJob,
+          cleaningJob: Object.keys(whereCleaning).length ? { is: whereCleaning } : undefined,
+        },
+      }),
+      prisma.job.findMany({
+        where: {
+          ...whereJob,
+          cleaningJob: Object.keys(whereCleaning).length ? { is: whereCleaning } : undefined,
+        },
+        orderBy: [{ createdAt: 'desc' }],
+        skip,
+        take: pageSize,
+        include: {
+          cleaningJob: true,
+          site: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+      data: rows.map((j) => ({
+        jobId: j.id,
+        jobNo: j.jobNo,
+        projectType: j.projectType ?? j.cleaningJob?.projectType ?? null,
+        projectName: j.cleaningJob?.projectName ?? j.site?.name ?? null,
+        systemSizeKWp: j.cleaningJob?.systemSizeKWp ?? null,
+        pvModuleEA: j.cleaningJob?.pvModuleEA ?? null,
+        date: j.cleaningJob?.workDate ?? null,
+        time: j.cleaningJob?.workTimeText ?? null,
+        contractor: j.contractor ?? null,
+        status: j.status,
+      })),
+    });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e?.message ?? 'Internal error' });
+  }
+}
+
+/**
  * POST /api/cleaning/step1
  * body: { siteId, projectType, ... }
  * สร้าง Job (DRAFT) + CleaningJob หรือ update ถ้ามี jobId ส่งมา
@@ -362,34 +447,53 @@ export async function generateReport(req: Request, res: Response) {
       filePath: path.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
     }));
 
-  // 2) Evidence groups (รูปก่อน/หลัง)
-  const beforeImgs = attachments
-    .filter(a => a.fileType === 'STEP3_BEFORE')
-    .map(a => ({
-      label: 'ก่อนทำความสะอาด',
-      filePath: path.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
-    }));
+  // 2) Evidence groups (Step3.1)
+  // NOTE: ฝั่งหน้าเว็บ Step3.1 มีหัวข้อย่อยหลายแบบ (ก่อน/ขณะ/หลัง - ล้างแผง / ทำความสะอาดห้องอินเวอร์เตอร์ ฯลฯ)
+  // แต่ก่อนหน้านี้ report จัดกลุ่มแค่ BEFORE/AFTER ทำให้ "ข้อความใต้รูป" และ "หัวข้อในรายงาน" ไม่ตรงกับหน้าเว็บ
+  // แก้โดย map fileType -> หัวข้อรายงาน + label ใต้รูป ให้ตรงกับหัวข้อบนหน้าเว็บ
 
-  const afterImgs = attachments
-    .filter(a => a.fileType === 'STEP3_AFTER')
-    .map(a => ({
-      label: 'หลังทำความสะอาด',
-      filePath: path.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
-    }));
+  const evidenceLabelMap: Record<string, { groupTitle: string; label: string }> = {
+    // === ตามหน้าเว็บ Step3.1 (Cleaning) ===
+    STEP3_BEFORE_PANEL: { groupTitle: 'ก่อน - ล้างแผง', label: 'ก่อน - ล้างแผง' },
+    STEP3_DURING_PANEL: { groupTitle: 'ขณะ - ล้างแผง', label: 'ขณะ - ล้างแผง' },
+    STEP3_AFTER_PANEL: { groupTitle: 'หลัง - ล้างแผง', label: 'หลัง - ล้างแผง' },
 
-  // อื่นๆ
-  const otherImgs = attachments
-    .filter(a => String(a.fileType ?? '').startsWith('STEP3_') && !['STEP3_BEFORE', 'STEP3_AFTER', 'STEP3_CERTIFICATE', 'STEP3_LAYOUT'].includes(String(a.fileType)))
-    .map(a => ({
-      label: a.fileType ?? 'EVIDENCE',
-      filePath: path.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
-    }));
+    STEP3_BEFORE_INVERTER: { groupTitle: 'ก่อน - ทำความสะอาดห้องอินเวอร์เตอร์', label: 'ก่อน - ทำความสะอาดห้องอินเวอร์เตอร์' },
+    STEP3_DURING_INVERTER: { groupTitle: 'ขณะ - ทำความสะอาดห้องอินเวอร์เตอร์', label: 'ขณะ - ทำความสะอาดห้องอินเวอร์เตอร์' },
+    STEP3_AFTER_INVERTER: { groupTitle: 'หลัง - ทำความสะอาดห้องอินเวอร์เตอร์', label: 'หลัง - ทำความสะอาดห้องอินเวอร์เตอร์' },
 
-  const evidenceGroups = [
-    ...(beforeImgs.length ? [{ title: 'รูปภาพก่อนทำความสะอาด', images: beforeImgs }] : []),
-    ...(afterImgs.length ? [{ title: 'รูปภาพหลังทำความสะอาด', images: afterImgs }] : []),
-    ...(otherImgs.length ? [{ title: 'รูปภาพ/หลักฐานอื่นๆ', images: otherImgs }] : []),
-  ];
+    STEP3_ZONE_WORK: { groupTitle: 'รูปโซนของการทำงาน', label: 'รูปโซนของการทำงาน' },
+    STEP3_ZONE_CHECKLIST: { groupTitle: 'รูปโซนของการทำ Check List', label: 'รูปโซนของการทำ Check List' },
+
+    // === รองรับของเดิม (เก่า) ===
+    STEP3_BEFORE: { groupTitle: 'ก่อนทำความสะอาด', label: 'ก่อนทำความสะอาด' },
+    STEP3_AFTER: { groupTitle: 'หลังทำความสะอาด', label: 'หลังทำความสะอาด' },
+  };
+
+  type Img = { label?: string; filePath: string };
+  const grouped = new Map<string, Img[]>();
+
+  for (const a of attachments) {
+    const ft = String(a.fileType ?? '');
+    if (!ft.startsWith('STEP3_')) continue;
+    if (['STEP3_CERTIFICATE', 'STEP3_LAYOUT'].includes(ft)) continue;
+
+    const mapped = evidenceLabelMap[ft];
+    const groupTitle = mapped?.groupTitle ?? 'รูปภาพ/หลักฐานอื่นๆ';
+
+    const label =
+      mapped?.label
+      // fallback: แสดงชื่อ type แบบอ่านง่ายขึ้นนิดหน่อย
+      ?? ft.replace(/^STEP3_/, '').split('_').join(' ');
+
+    if (!grouped.has(groupTitle)) grouped.set(groupTitle, []);
+    grouped.get(groupTitle)!.push({
+      label,
+      filePath: path.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
+    });
+  }
+
+  const evidenceGroups = Array.from(grouped.entries()).map(([title, images]) => ({ title, images }));
 
   const report = await generateCleaningReportPdf({
     jobNo: job.jobNo,

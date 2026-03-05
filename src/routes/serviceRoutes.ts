@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import {
   listProjects,
+  listServiceJobs,
   createDraftStep1,
   getServiceJob,
   saveStep2Draft,
@@ -18,6 +19,9 @@ const router = Router();
 
 // Step1: dropdown project + auto fill
 router.get('/projects', listProjects);
+
+// Homepage list
+router.get('/jobs', listServiceJobs);
 
 // create/update step1 -> ได้ jobId กลับไป
 router.post('/step1', createDraftStep1);

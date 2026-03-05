@@ -1028,11 +1028,18 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 
 #### GET `/api/cleaning/projects`
 
+**Query params (optional):**
+
+- `q`: search by `projectName` / `plantCode`
+- `page` (default `1`)
+- `pageSize` (default `1000`, capped at `500`)
+
 **Response 200 (example):**
 
 ```json
 {
   "success": true,
+  "pagination": { "page": 1, "pageSize": 1000, "total": 1, "totalPages": 1 },
   "data": [
     {
       "siteId": 1,
@@ -1040,7 +1047,49 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
       "projectName": "Solar Farm A",
       "address": "Bangkok",
       "systemSizeKWp": 500,
-      "pvModuleEA": null
+      "pvModuleEA": 1200,
+      "contactPhone": "0812345678",
+      "contactEmail": "customer@example.com"
+    }
+  ]
+}
+```
+
+#### GET `/api/cleaning/jobs`
+
+**Description:** List Cleaning jobs สำหรับหน้า HomeCleaning
+
+**Query params (optional):**
+
+- `page` (default `1`)
+- `pageSize` (default `20`, min `10`, max `100`)
+- `jobNo` (contains)
+- `projectType` (contains)
+- `projectName` (contains)
+- `systemSizeKWp` (exact)
+- `pvModuleEA` (exact)
+- `contractor` (contains)
+- `status` (exact)
+- `date`: `YYYY-MM-DD` (match work date)
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "pagination": { "page": 1, "pageSize": 20, "total": 1, "totalPages": 1 },
+  "data": [
+    {
+      "jobId": 123,
+      "jobNo": "CLN-20260303-000001",
+      "projectType": "งาน",
+      "projectName": "Solar Farm A",
+      "systemSizeKWp": 500,
+      "pvModuleEA": 1200,
+      "date": "2026-03-03T00:00:00.000Z",
+      "time": "10:00",
+      "contractor": "Vendor X",
+      "status": "DRAFT"
     }
   ]
 }
@@ -1089,7 +1138,10 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 
 **Content-Type:** `multipart/form-data`
 
-**Form fields:** `jobId` (required), `to`, `subject`, `body`
+**Form fields:**
+
+- `jobId` (required)
+- `to`, `subject`, `body` (optional: save draft; แต่ต้องมีครบก่อนเรียก `/step2/send`)
 
 **Files:** `files` (file[], max 10)
 
@@ -1122,7 +1174,11 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 **Form fields:**
 
 - `jobId` (required)
-- `labelType` (optional): `BEFORE | AFTER | CERTIFICATE | LAYOUT | ...`
+- `labelType` (optional):
+  - เอกสารหน้าเต็ม: `CERTIFICATE` | `LAYOUT`
+  - รูปตามหัวข้อหน้าเว็บ Step3.1: `BEFORE_PANEL` | `DURING_PANEL` | `AFTER_PANEL` | `BEFORE_INVERTER` | `DURING_INVERTER` | `AFTER_INVERTER` | `ZONE_WORK` | `ZONE_CHECKLIST`
+  - รองรับของเดิม (เก่า): `BEFORE` | `AFTER`
+  - ถ้าไม่ส่งมา จะถือเป็น `EVIDENCE`
 
 **Files:** `files` (file[], max 30)
 
@@ -1197,11 +1253,18 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 
 #### GET `/api/inspection/projects`
 
+**Query params (optional):**
+
+- `q`: search by `projectName` / `plantCode`
+- `page` (default `1`)
+- `pageSize` (default `1000`, capped at `500`)
+
 **Response 200 (example):**
 
 ```json
 {
   "success": true,
+  "pagination": { "page": 1, "pageSize": 1000, "total": 1, "totalPages": 1 },
   "data": [
     {
       "siteId": 1,
@@ -1209,7 +1272,47 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
       "projectName": "Solar Farm A",
       "address": "Bangkok",
       "systemSizeKWp": 500,
-      "pvModuleEA": null
+      "pvModuleEA": 1200,
+      "contactPhone": "0812345678",
+      "contactEmail": "customer@example.com"
+    }
+  ]
+}
+```
+
+#### GET `/api/inspection/jobs`
+
+**Description:** List Inspection jobs สำหรับหน้า HomeInspection
+
+**Query params (optional):**
+
+- `page` (default `1`)
+- `pageSize` (default `20`, min `10`, max `100`)
+- `jobNo` (contains)
+- `projectType` (contains)
+- `projectName` (contains)
+- `systemSizeKWp` (exact)
+- `pvModuleEA` (exact)
+- `status` (exact)
+- `date`: `YYYY-MM-DD` (match work date)
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "pagination": { "page": 1, "pageSize": 20, "total": 1, "totalPages": 1 },
+  "data": [
+    {
+      "jobId": 555,
+      "jobNo": "INSP-20260303-000001",
+      "projectType": "งาน",
+      "projectName": "Solar Farm A",
+      "systemSizeKWp": 500,
+      "pvModuleEA": 1200,
+      "date": "2026-03-03T00:00:00.000Z",
+      "time": "10:00",
+      "status": "DRAFT"
     }
   ]
 }
@@ -1269,7 +1372,17 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 { "success": true }
 ```
 
-> NOTE: ถ้าบางไฟล์แนบหายใน `uploads/` อาจมี `warning.missing` กลับมา
+> NOTE: ถ้าบางไฟล์แนบหายใน `uploads/` อาจมี `warning` กลับมา เช่น
+
+```json
+{
+  "success": true,
+  "warning": {
+    "message": "บางไฟล์แนบไม่พบในโฟลเดอร์ uploads จึงไม่ถูกแนบ",
+    "missing": ["uploads/xxx.pdf"]
+  }
+}
+```
 
 #### POST `/api/inspection/step3/draft`
 
@@ -1277,7 +1390,7 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 
 **Form fields:** `jobId` (required), `to` (required), `subject` (required), `body` (required)
 
-**File:** `report` (file, single)
+**File:** `report` (file, single, optional ใน draft; แต่ต้องมี report ก่อนเรียก `/step3/send`)
 
 **Response 200 (example):**
 
@@ -1305,11 +1418,18 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 
 #### GET `/api/service/projects`
 
+**Query params (optional):**
+
+- `q`: search by `projectName` / `plantCode`
+- `page` (default `1`)
+- `pageSize` (default `1000`, capped at `500`)
+
 **Response 200 (example):**
 
 ```json
 {
   "success": true,
+  "pagination": { "page": 1, "pageSize": 1000, "total": 1, "totalPages": 1 },
   "data": [
     {
       "siteId": 1,
@@ -1320,6 +1440,45 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
       "pvModuleEA": 1200,
       "contactPhone": "0812345678",
       "contactEmail": "customer@example.com"
+    }
+  ]
+}
+```
+
+#### GET `/api/service/jobs`
+
+**Description:** List Service jobs สำหรับหน้า HomeService
+
+**Query params (optional):**
+
+- `page` (default `1`)
+- `pageSize` (default `20`, min `10`, max `100`)
+- `jobNo` (contains)
+- `projectType` (contains)
+- `projectName` (contains)
+- `systemSizeKWp` (exact)
+- `pvModuleEA` (exact)
+- `status` (exact)
+- `service` (contains; currently match บาง field เช่น note)
+- `date`: `YYYY-MM-DD` (match work date)
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "pagination": { "page": 1, "pageSize": 20, "total": 1, "totalPages": 1 },
+  "data": [
+    {
+      "jobId": 777,
+      "jobNo": "SRV-20260303-000001",
+      "projectType": "งาน",
+      "projectName": "Solar Farm A",
+      "systemSizeKWp": 500,
+      "pvModuleEA": 1200,
+      "date": "2026-03-03T00:00:00.000Z",
+      "time": "10:00",
+      "status": "DRAFT"
     }
   ]
 }
@@ -1371,7 +1530,10 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 
 **Content-Type:** `multipart/form-data`
 
-**Form fields:** `jobId`, `to`, `subject`, `body`
+**Form fields:**
+
+- `jobId` (required)
+- `to`, `subject`, `body` (optional: save draft; แต่ต้องมีครบก่อนเรียก `/step2/send`)
 
 **Files:** `attachments` (file[], max 20)
 

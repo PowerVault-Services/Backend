@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import {
   listProjects,
+  listInspectionJobs,
   createDraftStep1,
   getInspectionJob,
   saveStep2Draft,
@@ -16,6 +17,9 @@ import { upload } from '../middlewares/upload';
 const router = Router();
 
 router.get('/projects', listProjects);
+
+// Homepage list
+router.get('/jobs', listInspectionJobs);
 
 router.post('/step1', createDraftStep1);
 router.get('/job/:jobId', getInspectionJob);

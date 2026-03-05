@@ -75,6 +75,94 @@ export async function listProjects(req: Request, res: Response) {
 }
 
 /**
+ * GET /api/service/jobs
+ * ใช้สำหรับหน้า HomeService เพื่อแสดงรายการ Service Job ที่ถูกสร้างแล้ว
+ */
+export async function listServiceJobs(req: Request, res: Response) {
+  try {
+    const page = Math.max(1, Number(req.query.page ?? 1));
+    const pageSize = Math.min(100, Math.max(10, Number(req.query.pageSize ?? 20)));
+    const skip = (page - 1) * pageSize;
+
+    const jobNo = String(req.query.jobNo ?? '').trim();
+    const projectType = String(req.query.projectType ?? '').trim();
+    const projectName = String(req.query.projectName ?? '').trim();
+    const status = String(req.query.status ?? '').trim();
+    const service = String(req.query.service ?? '').trim();
+
+    const systemSizeKWp = Number.isFinite(Number(req.query.systemSizeKWp)) ? Number(req.query.systemSizeKWp) : null;
+    const pvModuleEA = Number.isFinite(Number(req.query.pvModuleEA)) ? Number(req.query.pvModuleEA) : null;
+
+    const dateStr = String(req.query.date ?? '').trim();
+    const date = dateStr ? new Date(dateStr) : null;
+    if (date) date.setHours(0, 0, 0, 0);
+
+    const whereJob: any = { type: JobType.SERVICE };
+    if (jobNo) whereJob.jobNo = { contains: jobNo, mode: 'insensitive' };
+    if (projectType) whereJob.projectType = { contains: projectType, mode: 'insensitive' };
+    if (status) whereJob.status = status as any;
+
+    const whereSvc: any = {};
+    if (projectName) whereSvc.projectName = { contains: projectName, mode: 'insensitive' };
+    if (systemSizeKWp != null) whereSvc.systemSizeKWp = systemSizeKWp;
+    if (pvModuleEA != null) whereSvc.pvModuleEA = pvModuleEA;
+    if (date) whereSvc.workDate = date;
+    if (service) {
+      // step3Meta อาจเก็บ field serviceType/serviceName ได้หลายแบบ
+      // ถ้าไม่มี ก็ปล่อยผ่าน
+      whereSvc.OR = [
+        { note: { contains: service, mode: 'insensitive' } },
+      ];
+    }
+
+    const [total, rows] = await Promise.all([
+      prisma.job.count({
+        where: {
+          ...whereJob,
+          serviceJob: Object.keys(whereSvc).length ? { is: whereSvc } : undefined,
+        },
+      }),
+      prisma.job.findMany({
+        where: {
+          ...whereJob,
+          serviceJob: Object.keys(whereSvc).length ? { is: whereSvc } : undefined,
+        },
+        orderBy: [{ createdAt: 'desc' }],
+        skip,
+        take: pageSize,
+        include: {
+          serviceJob: true,
+          site: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+      data: rows.map((j) => ({
+        jobId: j.id,
+        jobNo: j.jobNo,
+        projectType: j.projectType ?? j.serviceJob?.projectType ?? null,
+        projectName: j.serviceJob?.projectName ?? j.site?.name ?? null,
+        systemSizeKWp: j.serviceJob?.systemSizeKWp ?? null,
+        pvModuleEA: j.serviceJob?.pvModuleEA ?? null,
+        date: j.serviceJob?.workDate ?? null,
+        time: j.serviceJob?.workTimeText ?? null,
+        status: j.status,
+      })),
+    });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e?.message ?? 'Internal error' });
+  }
+}
+
+/**
  * POST /api/service/step1
  * body: { jobId?, siteId, projectType?, contactPhone?, contactEmail?, workDate?, workTimeText?, customerName?, note? }
  */
