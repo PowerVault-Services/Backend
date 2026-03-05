@@ -6,6 +6,13 @@ import { generateCleaningReportPdf } from '../services/reportService';
 
 const prisma = new PrismaClient();
 
+async function bumpJobStep(jobId: number, next: number) {
+  const job = await prisma.job.findUnique({ where: { id: jobId }, select: { step: true } });
+  if (!job) return;
+  const step = Math.max(job.step ?? 1, next);
+  await prisma.job.update({ where: { id: jobId }, data: { step, status: JobStatus.DRAFT } });
+}
+
 function toNum(v: any) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -195,6 +202,7 @@ export async function createDraftStep1(req: Request, res: Response) {
         title: `Cleaning - ${site.name}`,
         type: JobType.CLEANING,
         status: JobStatus.DRAFT,
+        step: 1,
         scheduledDate: dt,
         siteId: site.id,
         createdById: 1, // TODO: ต่อ auth แล้วเอาจาก token
@@ -231,6 +239,7 @@ export async function createDraftStep1(req: Request, res: Response) {
       scheduledDate: dt,
       siteId: site.id,
       title: `Cleaning - ${site.name}`,
+      step: 1,
     },
   });
 
@@ -316,6 +325,8 @@ export async function saveStep2Draft(req: Request, res: Response) {
     },
   });
 
+  await bumpJobStep(jobId, 2);
+
   res.json({ success: true });
 }
 
@@ -392,6 +403,8 @@ export async function uploadEvidence(req: Request, res: Response) {
       },
     });
   }
+
+  await bumpJobStep(jobId, 3);
   res.json({ success: true });
 }
 
@@ -408,6 +421,8 @@ export async function saveChecklist(req: Request, res: Response) {
       step3SummaryNote: step3SummaryNote ?? null,
     },
   });
+
+  await bumpJobStep(id, 3);
 
   res.json({ success: true });
 }
@@ -519,7 +534,32 @@ export async function generateReport(req: Request, res: Response) {
     data: { jobId: id, fileUrl: report.fileUrl, fileType: 'REPORT' },
   });
 
+  await bumpJobStep(id, 4);
+
   res.json({ success: true, data: { reportUrl: report.fileUrl, download: `/api/cleaning/step4/download/${id}` } });
+}
+
+/**
+ * POST /api/cleaning/step5/draft
+ * body: { jobId, to, subject, body }
+ * เก็บข้อความอีเมล step5 ไว้ก่อน (ยังไม่ส่ง)
+ */
+export async function saveStep5Draft(req: Request, res: Response) {
+  const { jobId, to, subject, body } = req.body ?? {};
+  const id = Number(jobId);
+  if (!id) return res.status(400).json({ success: false, message: 'jobId is required' });
+
+  await prisma.cleaningJob.update({
+    where: { jobId: id },
+    data: {
+      step5EmailTo: to ? String(to) : null,
+      step5EmailSubject: subject ? String(subject) : null,
+      step5EmailBody: body ? String(body) : null,
+    },
+  });
+
+  await bumpJobStep(id, 5);
+  res.json({ success: true });
 }
 
 /** GET /api/cleaning/step4/download/:jobId -> redirect ไปไฟล์ report */

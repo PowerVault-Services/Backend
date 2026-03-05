@@ -6,6 +6,13 @@ import { generateServiceReportPdf } from '../services/reportService';
 
 const prisma = new PrismaClient();
 
+async function bumpJobStep(jobId: number, next: number) {
+  const job = await prisma.job.findUnique({ where: { id: jobId }, select: { step: true } });
+  if (!job) return;
+  const step = Math.max(job.step ?? 1, next);
+  await prisma.job.update({ where: { id: jobId }, data: { step, status: JobStatus.DRAFT } });
+}
+
 function makeJobNo() {
   const d = new Date();
   const y = d.getFullYear();
@@ -194,6 +201,7 @@ export async function createDraftStep1(req: Request, res: Response) {
         title: `Service - ${site.name}`,
         type: JobType.SERVICE,
         status: JobStatus.DRAFT,
+        step: 1,
         scheduledDate: dt,
         siteId: site.id,
         createdById: 1, // TODO: auth
@@ -230,6 +238,7 @@ export async function createDraftStep1(req: Request, res: Response) {
       scheduledDate: dt,
       siteId: site.id,
       title: `Service - ${site.name}`,
+      step: 1,
     },
   });
 
@@ -321,6 +330,8 @@ export async function saveStep2Draft(req: Request, res: Response) {
       step2EmailBody: body || null,
     },
   });
+
+  await bumpJobStep(jobId, 2);
 
   res.json({ success: true });
 }
@@ -497,6 +508,8 @@ export async function saveStep3Draft(req: Request, res: Response) {
     },
   });
 
+  await bumpJobStep(jobId, 3);
+
   res.json({ success: true });
 }
 
@@ -565,10 +578,35 @@ export async function generateReport(req: Request, res: Response) {
     data: { jobId: id, fileUrl: report.fileUrl, fileType: 'REPORT' },
   });
 
+  await bumpJobStep(id, 4);
+
   res.json({
     success: true,
     data: { reportUrl: report.fileUrl, download: `/api/service/step4/download/${id}` },
   });
+}
+
+/**
+ * POST /api/service/step5/draft
+ * body: { jobId, to, subject, body }
+ * เก็บข้อความอีเมล step5 ไว้ก่อน (ยังไม่ส่ง)
+ */
+export async function saveStep5Draft(req: Request, res: Response) {
+  const { jobId, to, subject, body } = req.body ?? {};
+  const id = Number(jobId);
+  if (!id) return res.status(400).json({ success: false, message: 'jobId is required' });
+
+  await prisma.serviceJob.update({
+    where: { jobId: id },
+    data: {
+      step5EmailTo: to ? String(to) : null,
+      step5EmailSubject: subject ? String(subject) : null,
+      step5EmailBody: body ? String(body) : null,
+    },
+  });
+
+  await bumpJobStep(id, 5);
+  res.json({ success: true });
 }
 
 /** GET /api/service/step4/download/:jobId */

@@ -1024,6 +1024,80 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 5) Step3 upload/ฟอร์ม (ขึ้นกับโมดูล)
 6) Cleaning/Service มี generate report + download + send report
 
+> NOTE (Draft): ปัจจุบันมี 2 แนวทางการ “save draft”
+>
+> - **Save ข้อมูลของ step นั้น ๆ**: เรียก endpoint ของ step นั้น (เช่น `/step2/draft`, `/step3/checklist`) เพื่อเก็บรายละเอียด + ไฟล์แนบ
+>   - Endpoint ของ step จะ bump `job.step` อัตโนมัติ (ไม่ถอยหลัง) และ set `job.status = DRAFT`
+> - **Save progress (ปุ่ม Save Draft มุมขวาบน)**: เรียก `/api/drafts/save` เพื่ออัปเดตแค่ว่า draft ค้างอยู่ step ไหน (ไม่ validate ว่าข้อมูลครบ)
+
+### Draft / Resume APIs (`/api/drafts`)
+
+#### POST `/api/drafts/save`
+
+**Description:** Save progress ของ draft (อัปเดต `job.step`/`job.status`)
+
+**Headers:** `Content-Type: application/json`
+
+**Request body:**
+
+```json
+{ "jobId": 777, "step": 3 }
+```
+
+**Behavior:**
+
+- `step` จะถูก clamp ตามประเภทงาน (เช่น INSPECTION max=3, CLEANING/SERVICE max=5)
+- ระบบจะ update แบบ “ไม่ถอยหลัง” โดยใช้ `max(currentStep, step)`
+- set `job.status = DRAFT`
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 777,
+    "jobNo": "SRV-20260303-000001",
+    "type": "SERVICE",
+    "status": "DRAFT",
+    "step": 3,
+    "updatedAt": "2026-03-06T01:00:00.000Z"
+  }
+}
+```
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "jobId is required" }`
+- `404` `{ "success": false, "message": "Job not found" }`
+
+#### GET `/api/drafts`
+
+**Description:** List draft jobs (status = `DRAFT`) เพื่อ resume งานที่ค้าง
+
+**Query params (optional):**
+
+- `jobType`: `CLEANING | SERVICE | INSPECTION`
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "jobId": 777,
+      "jobNo": "SRV-20260303-000001",
+      "jobType": "SERVICE",
+      "step": 3,
+      "siteId": 1,
+      "projectName": "Solar Farm A",
+      "updatedAt": "2026-03-06T01:00:00.000Z"
+    }
+  ]
+}
+```
+
 ### Cleaning APIs (`/api/cleaning`)
 
 #### GET `/api/cleaning/projects`
@@ -1167,6 +1241,10 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 { "success": true }
 ```
 
+**Errors:**
+
+- `400` `{ "success": false, "message": "Email draft incomplete" }`
+
 #### POST `/api/cleaning/step3/evidence`
 
 **Content-Type:** `multipart/form-data`
@@ -1233,6 +1311,26 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 
 **Response 302:** redirect to `/uploads/...pdf`
 
+#### POST `/api/cleaning/step5/draft`
+
+**Description:** Save draft ข้อความอีเมลส่ง report (Step5) — ยังไม่ส่ง
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "jobId": 123, "to": "customer@example.com", "subject": "Report", "body": "<p>See attached</p>" }
+```
+
+> NOTE: `to/subject/body` เป็น optional ใน draft แต่ต้องครบก่อนเรียก `/step5/send`
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
 #### POST `/api/cleaning/step5/send`
 
 **Headers:** `Content-Type: application/json`
@@ -1248,6 +1346,10 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 ```json
 { "success": true }
 ```
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "Report not generated" }`
 
 ### Inspection APIs (`/api/inspection`)
 
@@ -1346,7 +1448,10 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 
 **Content-Type:** `multipart/form-data`
 
-**Form fields:** `jobId` (required), `to` (required), `subject` (required), `body` (required)
+**Form fields:**
+
+- `jobId` (required)
+- `to`, `subject`, `body` (optional: save draft; แต่ต้องมีครบก่อนเรียก `/step2/send`)
 
 **Files:** `attachments` (file[], max 20)
 
@@ -1388,7 +1493,10 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 
 **Content-Type:** `multipart/form-data`
 
-**Form fields:** `jobId` (required), `to` (required), `subject` (required), `body` (required)
+**Form fields:**
+
+- `jobId` (required)
+- `to`, `subject`, `body` (optional: save draft; แต่ต้องมีครบก่อนเรียก `/step3/send`)
 
 **File:** `report` (file, single, optional ใน draft; แต่ต้องมี report ก่อนเรียก `/step3/send`)
 
@@ -1568,6 +1676,13 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 - `jobId` (required)
 - `metaJson` (optional): JSON string
 
+> NOTE: `metaJson` จะถูกเก็บลง `serviceJob.step3Meta` และ backend จะพยายาม sync รายการจ่าย Stock (OUT) จาก meta ด้วย
+>
+> - รองรับ field array หลายชื่อ (เช่น `stockItems`, `items`, `products`, `stockUsage`, `usedStock`)
+> - แต่ละ item ควรมี `{ productId, quantity }`
+> - ถ้า quantity เกินคงเหลือ จะตอบ `400` เช่น `{ "success": false, "message": "insufficient stock for productId=1: onHand=10" }`
+> - การเรียกซ้ำจะลบรายการ OUT เดิมที่สร้างจาก Step3 แล้วสร้างใหม่ (กันซ้ำ)
+
 **Files:**
 
 - `serviceReport` (file, single)
@@ -1599,6 +1714,26 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 
 **Response 302:** redirect to `/uploads/...pdf`
 
+#### POST `/api/service/step5/draft`
+
+**Description:** Save draft ข้อความอีเมลส่ง report (Step5) — ยังไม่ส่ง
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "jobId": 777, "to": "customer@example.com", "subject": "Service report", "body": "<p>See attached</p>" }
+```
+
+> NOTE: `to/subject/body` เป็น optional ใน draft แต่ต้องครบก่อนเรียก `/step5/send`
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
 #### POST `/api/service/step5/send`
 
 **Headers:** `Content-Type: application/json`
@@ -1614,6 +1749,10 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 ```json
 { "success": true }
 ```
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "Report not generated" }`
 
 ---
 

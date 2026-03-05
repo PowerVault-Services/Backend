@@ -6,6 +6,13 @@ import fs from 'fs';
 
 const prisma = new PrismaClient();
 
+async function bumpJobStep(jobId: number, next: number) {
+  const job = await prisma.job.findUnique({ where: { id: jobId }, select: { step: true } });
+  if (!job) return;
+  const step = Math.max(job.step ?? 1, next);
+  await prisma.job.update({ where: { id: jobId }, data: { step, status: JobStatus.DRAFT } });
+}
+
 function makeJobNo() {
   const d = new Date();
   const y = d.getFullYear();
@@ -185,6 +192,7 @@ export async function createDraftStep1(req: Request, res: Response) {
         title: `Inspection - ${site.name}`,
         type: JobType.INSPECTION,
         status: JobStatus.DRAFT,
+        step: 1,
         scheduledDate: dt,
         siteId: site.id,
         createdById: 1, // TODO auth
@@ -216,7 +224,7 @@ export async function createDraftStep1(req: Request, res: Response) {
 
   await prisma.job.update({
     where: { id: j.id },
-    data: { scheduledDate: dt, siteId: site.id, title: `Inspection - ${site.name}` },
+    data: { scheduledDate: dt, siteId: site.id, title: `Inspection - ${site.name}`, step: 1 },
   });
 
   await prisma.inspectionJob.upsert({
@@ -277,13 +285,6 @@ export async function saveStep2Draft(req: Request, res: Response) {
   const body = pickTextField(req.body, 'body'); // อย่า trim html มากไป
 
   if (!jobId) return res.status(400).json({ success: false, message: 'jobId is required' });
-  if (!to || !subject || !body) {
-    return res.status(400).json({
-      success: false,
-      message: 'Draft ต้องมี to / subject / body',
-      debug: { to: !!to, subject: !!subject, body: !!body, keys: Object.keys(req.body ?? {}) },
-    });
-  }
 
   const files = (req.files as Express.Multer.File[]) ?? [];
   for (const f of files) {
@@ -301,16 +302,18 @@ export async function saveStep2Draft(req: Request, res: Response) {
     where: { jobId },
     create: {
       jobId,
-      step2EmailTo: to,
-      step2EmailSubject: subject,
-      step2EmailBody: body,
+      step2EmailTo: to || null,
+      step2EmailSubject: subject || null,
+      step2EmailBody: body || null,
     },
     update: {
-      step2EmailTo: to,
-      step2EmailSubject: subject,
-      step2EmailBody: body,
+      step2EmailTo: to || null,
+      step2EmailSubject: subject || null,
+      step2EmailBody: body || null,
     },
   });
+
+  await bumpJobStep(jobId, 2);
 
   res.json({ success: true });
 }
@@ -403,9 +406,6 @@ export async function saveStep3Draft(req: Request, res: Response) {
   const body = pickTextField(req.body, 'body');
 
   if (!jobId) return res.status(400).json({ success: false, message: 'jobId is required' });
-  if (!to || !subject || !body) {
-    return res.status(400).json({ success: false, message: 'Draft ต้องมี to / subject / body' });
-  }
 
   const file = (req.file as Express.Multer.File) ?? null;
   if (file) {
@@ -421,18 +421,20 @@ export async function saveStep3Draft(req: Request, res: Response) {
         jobId,
         reportFileUrl: fileUrl,
         reportCreatedAt: new Date(),
-        step3EmailTo: to,
-        step3EmailSubject: subject,
-        step3EmailBody: body,
+        step3EmailTo: to || null,
+        step3EmailSubject: subject || null,
+        step3EmailBody: body || null,
       },
       update: {
         reportFileUrl: fileUrl,
         reportCreatedAt: new Date(),
-        step3EmailTo: to,
-        step3EmailSubject: subject,
-        step3EmailBody: body,
+        step3EmailTo: to || null,
+        step3EmailSubject: subject || null,
+        step3EmailBody: body || null,
       },
     });
+
+    await bumpJobStep(jobId, 3);
 
     return res.json({ success: true });
   }
@@ -440,9 +442,11 @@ export async function saveStep3Draft(req: Request, res: Response) {
   // ไม่มีไฟล์ ก็เซฟเฉพาะ draft
   await prisma.inspectionJob.upsert({
     where: { jobId },
-    create: { jobId, step3EmailTo: to, step3EmailSubject: subject, step3EmailBody: body },
-    update: { step3EmailTo: to, step3EmailSubject: subject, step3EmailBody: body },
+    create: { jobId, step3EmailTo: to || null, step3EmailSubject: subject || null, step3EmailBody: body || null },
+    update: { step3EmailTo: to || null, step3EmailSubject: subject || null, step3EmailBody: body || null },
   });
+
+  await bumpJobStep(jobId, 3);
 
   res.json({ success: true });
 }

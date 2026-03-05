@@ -9,6 +9,7 @@ import {
   uploadEvidence,
   saveChecklist,
   generateReport,
+  saveStep5Draft,
   sendStep5Email,
   downloadReportRedirect,
 } from '../controllers/cleaningController';
@@ -43,6 +44,7 @@ router.post('/step4/generate', generateReport);
 router.get('/step4/download/:jobId', downloadReportRedirect);
 
 // Step5: send report email
+router.post('/step5/draft', saveStep5Draft);
 router.post('/step5/send', sendStep5Email);
 
 export default router;

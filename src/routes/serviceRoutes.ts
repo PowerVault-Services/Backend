@@ -10,6 +10,7 @@ import {
   saveStep3Draft,
   generateReport,
   downloadReportRedirect,
+  saveStep5Draft,
   sendStep5Email,
 } from '../controllers/serviceController';
 
@@ -52,6 +53,7 @@ router.post('/step4/generate', generateReport);
 router.get('/step4/download/:jobId', downloadReportRedirect);
 
 // Step5: send report email
+router.post('/step5/draft', saveStep5Draft);
 router.post('/step5/send', sendStep5Email);
 
 export default router;
