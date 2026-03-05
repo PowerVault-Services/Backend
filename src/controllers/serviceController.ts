@@ -272,7 +272,16 @@ export async function getServiceJob(req: Request, res: Response) {
   const jobId = Number(req.params.jobId);
   const job = await prisma.job.findUnique({
     where: { id: jobId },
-    include: { site: true, attachments: true },
+    include: {
+      site: true,
+      attachments: true,
+      stockUsage: {
+        include: {
+          product: { include: { category: true, unit: true } },
+        },
+        orderBy: { txDate: 'desc' },
+      },
+    },
   });
   if (!job) return res.status(404).json({ success: false, message: 'Job not found' });
 
@@ -416,6 +425,71 @@ export async function saveStep3Draft(req: Request, res: Response) {
     }
   }
 
+  // --------- NEW: sync stock usage (OUT) from meta ---------
+  // เราจะ tag note เพื่อแยกแยะว่าเป็นรายการจ่ายออกจาก Service step3
+  const STOCK_USAGE_TAG = 'SERVICE_STEP3_STOCK_USAGE';
+
+  // try to read items from various shapes to be resilient with frontend changes
+  const readStockItems = (m: any): Array<{ productId: number; quantity: number }> => {
+    if (!m) return [];
+    const candidates = [m.stockItems, m.stock, m.items, m.products, m.stockUsage, m.usedStock].filter(Boolean);
+    const arr = Array.isArray(candidates[0]) ? candidates[0] : Array.isArray(m) ? m : null;
+    const list = Array.isArray(arr) ? arr : [];
+    return list
+      .map((it: any) => ({
+        productId: Number(it?.productId ?? it?.id ?? it?.product_id),
+        quantity: Number(it?.quantity ?? it?.qty ?? it?.amount),
+      }))
+      .filter((it) => Number.isFinite(it.productId) && it.productId > 0 && Number.isFinite(it.quantity) && it.quantity > 0);
+  };
+
+  const stockItems = readStockItems(meta);
+
+  // ลบรายการเดิมที่เคยสร้างจาก step3 เพื่อกันการซ้ำ (ไม่ยุ่งกับรายการที่สร้างจากเมนู Stock โดยตรง)
+  await prisma.stockTransaction.deleteMany({
+    where: {
+      jobId,
+      type: 'OUT' as any,
+      note: { startsWith: STOCK_USAGE_TAG },
+    },
+  });
+
+  if (stockItems.length) {
+    const svc = await prisma.serviceJob.findUnique({ where: { jobId } });
+    const job = await prisma.job.findUnique({ where: { id: jobId }, include: { site: true } });
+
+    for (const it of stockItems) {
+      // onHand check (กันจ่ายออกเกินคงเหลือ)
+      const inAgg = await prisma.stockTransaction.aggregate({
+        where: { productId: it.productId, type: 'IN' as any },
+        _sum: { quantity: true },
+      });
+      const outAgg = await prisma.stockTransaction.aggregate({
+        where: { productId: it.productId, type: 'OUT' as any },
+        _sum: { quantity: true },
+      });
+      const onHand = Number(inAgg._sum.quantity ?? 0) - Number(outAgg._sum.quantity ?? 0);
+      if (it.quantity > onHand) {
+        return res
+          .status(400)
+          .json({ success: false, message: `insufficient stock for productId=${it.productId}: onHand=${onHand}` });
+      }
+
+      await prisma.stockTransaction.create({
+        data: {
+          type: 'OUT' as any,
+          productId: it.productId,
+          quantity: it.quantity as any, // prisma decimal
+          txDate: new Date(),
+          project: svc?.projectName ?? job?.site?.name ?? null,
+          receiver: svc?.customerName ?? null,
+          note: `${STOCK_USAGE_TAG} jobId=${jobId}`,
+          jobId,
+        },
+      });
+    }
+  }
+
   await prisma.serviceJob.update({
     where: { jobId },
     data: {
@@ -435,7 +509,14 @@ export async function generateReport(req: Request, res: Response) {
 
   const job = await prisma.job.findUnique({
     where: { id },
-    include: { site: true, attachments: true },
+    include: {
+      site: true,
+      attachments: true,
+      stockUsage: {
+        include: { product: { include: { category: true, unit: true } } },
+        orderBy: { txDate: 'desc' },
+      },
+    },
   });
   if (!job) return res.status(404).json({ success: false, message: 'Job not found' });
 
@@ -470,6 +551,9 @@ export async function generateReport(req: Request, res: Response) {
     serviceReportFormPath: form ?? null,
     evidencePhotos: evidence,
     meta: service.step3Meta,
+
+    // include stock usage in the report
+    stockUsage: (job.stockUsage ?? []).filter((t: any) => t.type === ('OUT' as any)),
   });
 
   await prisma.serviceJob.update({
