@@ -32,7 +32,6 @@ function makeJobNo() {
 /**
  * GET /api/cleaning/projects
  * ใช้สำหรับ dropdown "Project Name" แล้ว FE จะเลือก -> call detail
- * ดึงจาก DB (Site) ซึ่งถูก sync มาจาก Huawei อยู่แล้ว (ลด rate limit)
  */
 export async function listProjects(req: Request, res: Response) {
   const q = String(req.query.q ?? '').trim();
@@ -139,7 +138,7 @@ export async function listCleaningJobs(req: Request, res: Response) {
         take: pageSize,
         include: {
           cleaningJob: true,
-          site: { select: { name: true } },
+          site: { select: { name: true, pvModuleCount: true } },
         },
       }),
     ]);
@@ -210,22 +209,22 @@ export async function createDraftStep1(req: Request, res: Response) {
       },
     });
 
-    await prisma.cleaningJob.create({
-      data: {
-        jobId: created.id,
-        projectName: site.name,
-        systemSizeKWp: site.capacityKWp,
-        pvModuleEA: null,
-        locationText: site.address ?? null,
-        projectType: projectType ?? null,
-        contactPhone: contactPhone ?? null,
-        contactEmail: contactEmail ?? null,
-        workDate: dt,
-        workTimeText: workTimeText ?? null,
-        customerName: customerName ?? null,
-        note: note ?? null,
-      },
-    });
+  await prisma.cleaningJob.create({
+    data: {
+      jobId: created.id,
+      projectName: site.name,
+      systemSizeKWp: site.capacityKWp,
+      pvModuleEA: site.pvModuleCount ?? null,
+      locationText: site.address ?? null,
+      projectType: projectType ?? null,
+      contactPhone: contactPhone ?? site.contactPhone ?? null,
+      contactEmail: contactEmail ?? site.contactEmail ?? null,
+      workDate: dt,
+      workTimeText: workTimeText ?? null,
+      customerName: customerName ?? null,
+      note: note ?? null,
+    },
+  });
 
     return res.json({ success: true, data: { jobId: created.id, jobNo: created.jobNo } });
   }
@@ -250,10 +249,11 @@ export async function createDraftStep1(req: Request, res: Response) {
       jobId: j.id,
       projectName: site.name,
       systemSizeKWp: site.capacityKWp,
+      pvModuleEA: site.pvModuleCount ?? null,
       locationText: site.address ?? null,
       projectType: projectType ?? null,
-      contactPhone: contactPhone ?? null,
-      contactEmail: contactEmail ?? null,
+      contactPhone: contactPhone ?? site.contactPhone ?? null,
+      contactEmail: contactEmail ?? site.contactEmail ?? null,
       workDate: dt,
       workTimeText: workTimeText ?? null,
       customerName: customerName ?? null,
@@ -262,10 +262,11 @@ export async function createDraftStep1(req: Request, res: Response) {
     update: {
       projectName: site.name,
       systemSizeKWp: site.capacityKWp,
+      pvModuleEA: site.pvModuleCount ?? null,
       locationText: site.address ?? null,
       projectType: projectType ?? null,
-      contactPhone: contactPhone ?? null,
-      contactEmail: contactEmail ?? null,
+      contactPhone: contactPhone ?? site.contactPhone ?? null,
+      contactEmail: contactEmail ?? site.contactEmail ?? null,
       workDate: dt,
       workTimeText: workTimeText ?? null,
       customerName: customerName ?? null,
