@@ -21,6 +21,7 @@ const serviceRoutes_1 = __importDefault(require("./routes/serviceRoutes"));
 const alarmRoutes_1 = __importDefault(require("./routes/alarmRoutes"));
 const clientDataRoutes_1 = __importDefault(require("./routes/clientDataRoutes"));
 const reportRoutes_1 = __importDefault(require("./routes/reportRoutes"));
+const draftRoutes_1 = __importDefault(require("./routes/draftRoutes"));
 const app = (0, express_1.default)();
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
@@ -36,6 +37,7 @@ app.use('/api/service', serviceRoutes_1.default);
 app.use('/api/alarms', alarmRoutes_1.default);
 app.use('/api/client-data', clientDataRoutes_1.default);
 app.use('/api/reports', reportRoutes_1.default);
+app.use('/api/drafts', draftRoutes_1.default);
 app.get('/', (req, res) => {
     res.send('Hello! Solar Energy Backend is Running 🚀');
 });

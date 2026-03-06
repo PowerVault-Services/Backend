@@ -1030,6 +1030,8 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 >   - Endpoint ของ step จะ bump `job.step` อัตโนมัติ (ไม่ถอยหลัง) และ set `job.status = DRAFT`
 > - **Save progress (ปุ่ม Save Draft มุมขวาบน)**: เรียก `/api/drafts/save` เพื่ออัปเดตแค่ว่า draft ค้างอยู่ step ไหน (ไม่ validate ว่าข้อมูลครบ)
 
+> NOTE (Download zip): endpoint ตระกูล `/jobs/download-zip` ใช้คำสั่ง `zip` บนเครื่อง server — ต้องมี `zip` อยู่ใน PATH ไม่งั้นจะได้ `500`.
+
 ### Draft / Resume APIs (`/api/drafts`)
 
 #### POST `/api/drafts/save`
@@ -1169,6 +1171,35 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 }
 ```
 
+#### GET `/api/cleaning/jobs/download-zip`
+
+**Description:** ดาวน์โหลดรายงาน (PDF) ของ Cleaning หลายงานเป็นไฟล์ zip
+
+**Query params:**
+
+- `jobIds` (required): comma-separated เช่น `?jobIds=1,2,3` หรือส่งซ้ำหลายตัว `?jobIds=1&jobIds=2`
+
+**Response 200:** `application/zip` (file download)
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "jobIds is required" }`
+- `404` `{ "success": false, "message": "No report files found for selected cleaning jobs", "skipped": ["..."] }`
+
+#### POST `/api/cleaning/jobs/download-zip`
+
+**Description:** เหมือน GET แต่ส่ง `jobIds` ผ่าน body (เหมาะกับ list ยาว)
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "jobIds": [123, 124, 125] }
+```
+
+**Response 200:** `application/zip` (file download)
+
 #### POST `/api/cleaning/step1`
 
 **Headers:** `Content-Type: application/json`
@@ -1207,6 +1238,31 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 ```json
 { "success": true, "data": { "job": { "id": 123, "jobNo": "CLN-..." }, "cleaning": { "jobId": 123 } } }
 ```
+
+#### PUT `/api/cleaning/job/:jobId`
+
+**Description:** Update draft ของ Step1 (proxy ไปที่ `/api/cleaning/step1` โดยอ้างอิง `jobId` จาก path)
+
+**Headers:** `Content-Type: application/json`
+
+**Request body:** เหมือน `POST /api/cleaning/step1` (ไม่ต้องส่ง `jobId` ก็ได้)
+
+**Response 200:** เหมือน `POST /api/cleaning/step1`
+
+#### DELETE `/api/cleaning/job/:jobId`
+
+**Description:** ลบ Cleaning job แบบ cascade (รวม attachments/report/email logs/stock usage ที่ผูกกับ job)
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "message": "Deleted CLN-20260303-000001" }
+```
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "jobId is required" }`
+- `404` `{ "success": false, "message": "Cleaning job not found" }`
 
 #### POST `/api/cleaning/step2/draft`
 
@@ -1420,6 +1476,35 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 }
 ```
 
+#### GET `/api/inspection/jobs/download-zip`
+
+**Description:** ดาวน์โหลดรายงาน (PDF) ของ Inspection หลายงานเป็นไฟล์ zip
+
+**Query params:**
+
+- `jobIds` (required): comma-separated เช่น `?jobIds=1,2,3` หรือส่งซ้ำหลายตัว `?jobIds=1&jobIds=2`
+
+**Response 200:** `application/zip` (file download)
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "jobIds is required" }`
+- `404` `{ "success": false, "message": "No report files found for selected inspection jobs", "skipped": ["..."] }`
+
+#### POST `/api/inspection/jobs/download-zip`
+
+**Description:** เหมือน GET แต่ส่ง `jobIds` ผ่าน body
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "jobIds": [555, 556] }
+```
+
+**Response 200:** `application/zip` (file download)
+
 #### POST `/api/inspection/step1`
 
 **Headers:** `Content-Type: application/json`
@@ -1443,6 +1528,31 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 ```json
 { "success": true, "data": { "job": { "id": 555, "jobNo": "INSP-..." }, "inspection": { "jobId": 555 } } }
 ```
+
+#### PUT `/api/inspection/job/:jobId`
+
+**Description:** Update draft ของ Step1 (proxy ไปที่ `/api/inspection/step1` โดยอ้างอิง `jobId` จาก path)
+
+**Headers:** `Content-Type: application/json`
+
+**Request body:** เหมือน `POST /api/inspection/step1`
+
+**Response 200:** เหมือน `POST /api/inspection/step1`
+
+#### DELETE `/api/inspection/job/:jobId`
+
+**Description:** ลบ Inspection job แบบ cascade
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "message": "Deleted INSP-20260303-000001" }
+```
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "jobId is required" }`
+- `404` `{ "success": false, "message": "Inspection job not found" }`
 
 #### POST `/api/inspection/step2/draft`
 
@@ -1592,6 +1702,35 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 }
 ```
 
+#### GET `/api/service/jobs/download-zip`
+
+**Description:** ดาวน์โหลดรายงาน (PDF) ของ Service หลายงานเป็นไฟล์ zip
+
+**Query params:**
+
+- `jobIds` (required): comma-separated เช่น `?jobIds=1,2,3` หรือส่งซ้ำหลายตัว `?jobIds=1&jobIds=2`
+
+**Response 200:** `application/zip` (file download)
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "jobIds is required" }`
+- `404` `{ "success": false, "message": "No report files found for selected service jobs", "skipped": ["..."] }`
+
+#### POST `/api/service/jobs/download-zip`
+
+**Description:** เหมือน GET แต่ส่ง `jobIds` ผ่าน body
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{ "jobIds": [777, 778, 779] }
+```
+
+**Response 200:** `application/zip` (file download)
+
 #### POST `/api/service/step1`
 
 **Headers:** `Content-Type: application/json`
@@ -1633,6 +1772,31 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
   }
 }
 ```
+
+#### PUT `/api/service/job/:jobId`
+
+**Description:** Update draft ของ Step1 (proxy ไปที่ `/api/service/step1` โดยอ้างอิง `jobId` จาก path)
+
+**Headers:** `Content-Type: application/json`
+
+**Request body:** เหมือน `POST /api/service/step1`
+
+**Response 200:** เหมือน `POST /api/service/step1`
+
+#### DELETE `/api/service/job/:jobId`
+
+**Description:** ลบ Service job แบบ cascade
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "message": "Deleted SRV-20260303-000001" }
+```
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "jobId is required" }`
+- `404` `{ "success": false, "message": "Service job not found" }`
 
 #### POST `/api/service/step2/draft`
 

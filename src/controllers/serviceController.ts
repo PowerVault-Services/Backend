@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import path from 'path';
 import { sendEmailNow } from '../services/emailService';
 import { generateServiceReportPdf } from '../services/reportService';
+import { collectJobReportFiles, createReportsZip, deleteJobCascade, parseJobIds } from '../utils/jobManagement';
 
 const prisma = new PrismaClient();
 
@@ -661,4 +662,46 @@ export async function sendStep5Email(req: Request, res: Response) {
   });
 
   res.json({ success: true });
+}
+
+
+/** PUT /api/service/job/:jobId */
+export async function updateServiceJob(req: Request, res: Response) {
+  req.body = { ...(req.body ?? {}), jobId: Number(req.params.jobId) };
+  return createDraftStep1(req, res);
+}
+
+/** DELETE /api/service/job/:jobId */
+export async function deleteServiceJob(req: Request, res: Response) {
+  try {
+    const jobId = Number(req.params.jobId);
+    if (!jobId) return res.status(400).json({ success: false, message: 'jobId is required' });
+
+    const result = await deleteJobCascade(prisma, jobId, JobType.SERVICE);
+    if (!result.found) return res.status(404).json({ success: false, message: 'Service job not found' });
+
+    return res.json({ success: true, message: `Deleted ${result.jobNo}` });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, message: e?.message ?? 'Internal error' });
+  }
+}
+
+/** GET/POST /api/service/jobs/download-zip */
+export async function downloadServiceReportsZip(req: Request, res: Response) {
+  try {
+    const jobIds = parseJobIds((req.method === 'GET' ? req.query.jobIds : req.body?.jobIds) as unknown);
+    if (!jobIds.length) return res.status(400).json({ success: false, message: 'jobIds is required' });
+
+    const { files, skipped } = await collectJobReportFiles(prisma, JobType.SERVICE, jobIds);
+    if (!files.length) {
+      return res.status(404).json({ success: false, message: 'No report files found for selected service jobs', skipped });
+    }
+
+    const zip = await createReportsZip({ jobType: JobType.SERVICE, files, skipped });
+    return res.download(zip.outPath, zip.downloadName, async () => {
+      await zip.cleanup();
+    });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, message: e?.message ?? 'Internal error' });
+  }
 }

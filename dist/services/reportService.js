@@ -281,7 +281,66 @@ async function generateServiceReportPdf(data) {
       `;
     })
         .join('\n');
-    const metaText = data.meta ? JSON.stringify(data.meta, null, 2) : '';
+    const scrubMeta = (m) => {
+        if (!m || typeof m !== 'object')
+            return null;
+        const cloned = JSON.parse(JSON.stringify(m));
+        // ไม่แสดงข้อมูลภายในระบบ/ข้อมูลที่เราแสดงแยกเป็นตารางอยู่แล้ว
+        for (const k of ['stockItems', 'stock', 'items', 'products', 'stockUsage', 'usedStock', 'note']) {
+            if (k in cloned)
+                delete cloned[k];
+        }
+        // ถ้าตัดออกแล้วไม่เหลืออะไร ไม่ต้องแสดง "รายละเอียดเพิ่มเติม"
+        if (cloned && typeof cloned === 'object' && !Array.isArray(cloned) && Object.keys(cloned).length === 0) {
+            return null;
+        }
+        return cloned;
+    };
+    const scrubbedMeta = scrubMeta(data.meta);
+    const metaText = scrubbedMeta ? JSON.stringify(scrubbedMeta, null, 2) : '';
+    const stockRows = (data.stockUsage ?? [])
+        .filter(Boolean)
+        .map((t) => {
+        const qty = Number(t.quantity ?? 0);
+        const p = t.product;
+        return {
+            sku: p?.sku ?? '-',
+            category: p?.category?.name ?? '-',
+            name: p?.name ?? '-',
+            unit: p?.unit?.name ?? '-',
+            qty: Number.isFinite(qty) ? qty : 0,
+        };
+    })
+        .filter((r) => r.qty > 0);
+    const stockTableHtml = stockRows.length
+        ? `
+      <div class="section-title">รายการอุปกรณ์/อะไหล่ที่ใช้ (Stock)</div>
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th style="width:26mm;">SKU</th>
+            <th style="width:28mm;">หมวดหมู่</th>
+            <th>ชื่อสินค้า</th>
+            <th style="width:20mm;">หน่วย</th>
+            <th style="width:18mm; text-align:right;">จำนวน</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${stockRows
+            .map((r) => `
+            <tr>
+              <td>${escapeHtml(r.sku)}</td>
+              <td>${escapeHtml(r.category)}</td>
+              <td>${escapeHtml(r.name)}</td>
+              <td>${escapeHtml(r.unit)}</td>
+              <td style="text-align:right;">${escapeHtml(r.qty)}</td>
+            </tr>
+          `)
+            .join('')}
+        </tbody>
+      </table>
+    `
+        : '';
     const html = `<!doctype html>
 <html lang="th">
 <head>
@@ -309,6 +368,9 @@ async function generateServiceReportPdf(data) {
     .fullpage { width:100%; height:260mm; border:1px solid #333; display:flex; align-items:center; justify-content:center; overflow:hidden; }
     .fullpage img { width:100%; height:100%; object-fit:contain; }
     pre { background:#f7f7f7; border:1px solid #ccc; padding:4mm; font-size:12pt; white-space:pre-wrap; }
+    .tbl { width:100%; border-collapse:collapse; font-size:14pt; }
+    .tbl th, .tbl td { border:1px solid #333; padding:1.5mm 2mm; vertical-align:top; }
+    .tbl th { background:#f2f2f2; font-weight:bold; }
   </style>
 </head>
 <body>
@@ -336,6 +398,8 @@ async function generateServiceReportPdf(data) {
       <div class="row"><div class="k">PV Module (ea.):</div><div class="v">${escapeHtml(data.pvModuleEA ?? '-')}</div></div>
       <div class="row"><div class="k">Note:</div><div class="v">${escapeHtml(data.note ?? '-')}</div></div>
     </div>
+
+    ${stockTableHtml}
 
     ${metaText ? `<div class="section-title">รายละเอียดเพิ่มเติม</div><pre>${escapeHtml(metaText)}</pre>` : ''}
   </div>

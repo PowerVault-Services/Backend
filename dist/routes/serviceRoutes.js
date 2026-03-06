@@ -6,10 +6,16 @@ const upload_1 = require("../middlewares/upload");
 const router = (0, express_1.Router)();
 // Step1: dropdown project + auto fill
 router.get('/projects', serviceController_1.listProjects);
+// Homepage list
+router.get('/jobs', serviceController_1.listServiceJobs);
 // create/update step1 -> ได้ jobId กลับไป
 router.post('/step1', serviceController_1.createDraftStep1);
 // load data ทั้งก้อนตาม jobId
 router.get('/job/:jobId', serviceController_1.getServiceJob);
+router.put('/job/:jobId', serviceController_1.updateServiceJob);
+router.delete('/job/:jobId', serviceController_1.deleteServiceJob);
+router.get('/jobs/download-zip', serviceController_1.downloadServiceReportsZip);
+router.post('/jobs/download-zip', serviceController_1.downloadServiceReportsZip);
 // Step2: draft + upload file (attachments)
 router.post('/step2/draft', upload_1.upload.array('attachments', 20), serviceController_1.saveStep2Draft);
 router.post('/step2/send', serviceController_1.sendStep2Email);
@@ -26,5 +32,6 @@ router.post('/step3/draft', upload_1.upload.fields([
 router.post('/step4/generate', serviceController_1.generateReport);
 router.get('/step4/download/:jobId', serviceController_1.downloadReportRedirect);
 // Step5: send report email
+router.post('/step5/draft', serviceController_1.saveStep5Draft);
 router.post('/step5/send', serviceController_1.sendStep5Email);
 exports.default = router;

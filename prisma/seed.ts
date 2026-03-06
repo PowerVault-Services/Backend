@@ -310,278 +310,519 @@ const STOCK_PRODUCTS = [
     "category": "* ยังไม่ได้จัดหมวดหมู่"
   }
 ] as const;
-const PROJECT_EXTRAS = [
+const PROJECT_SITE_IMPORTS = [
   {
     "region": "ตะวันออก",
-    "pvModuleCount": 1980,
     "projectName": "CPN Sriracha",
     "capacityKWp": 999.9,
+    "pvModuleCount": 1980,
     "locationText": "ชลบุรี",
     "contactPhoneRaw": "คุณไก่ 088-6615635\nคุณสุรศักดิ์ 089-3564888",
-    "contactEmailRaw": "jevichai@centralpattana.co.th\nchamnan@lenso.com\nCC : lsi-chanika@lenso.com\nsoravit_y@lenso.com"
+    "contactEmailRaw": "jevichai@centralpattana.co.th\nchamnan@lenso.com\nCC : lsi-chanika@lenso.com\nsoravit_y@lenso.com",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 30.0,
+    "matchedDbName": "Central Sriracha",
+    "matchedDbPlantCode": "NE=50517504",
+    "matchedDbAddress": "39/5 สุขุมวิท 9 Amphoe Si Racha, Chang Wat Chon Buri 20110, Thailand",
+    "reason": "ชื่อ/พื้นที่/ความจุ/อีเมลตรงกันบางส่วน",
+    "top3Candidates": ""
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 2498,
     "projectName": "Robinson สระบุรี",
     "capacityKWp": 999.2,
+    "pvModuleCount": 2498,
     "locationText": "สระบุรี",
     "contactPhoneRaw": "คุณทรงวุฒิ : 098-824-4488",
-    "contactEmailRaw": "to : jusongwuth@central.co.th\ncc : Mallfmsaraburi@central.co.th\nOperationmanagersaraburi@central.co.th\nlsi-chanika@lenso.com\nsoravit_y@lenso.com"
+    "contactEmailRaw": "to : jusongwuth@central.co.th\ncc : Mallfmsaraburi@central.co.th\nOperationmanagersaraburi@central.co.th\nlsi-chanika@lenso.com\nsoravit_y@lenso.com",
+    "matchStatus": "review",
+    "confidence": "low",
+    "matchedDbId": null,
+    "matchedDbName": null,
+    "matchedDbPlantCode": null,
+    "matchedDbAddress": null,
+    "reason": "ยังไม่เจอชื่อ Robinson Saraburi ตรงใน DB; มี TWD Saraburi (Phase 2) อยู่สระบุรีแต่ชื่อไม่ตรง",
+    "top3Candidates": "Robinson Chachoengsao (NE=49761575, 999.6 kWp) | Central Sriracha (NE=50517504, 999.9 kWp) | Robinson Maesot (NE=50659760, 999.58 kWp)"
   },
   {
     "region": "ตะวันออก",
-    "pvModuleCount": 288,
     "projectName": "บริษัท เออาร์ พาราวูด จำกัด",
     "capacityKWp": 200.16,
+    "pvModuleCount": 288,
     "locationText": "ระยอง",
     "contactPhoneRaw": "เบอร์กลางหน้างาน - 0941569151\nคุณมีนารินทร์ - 0949423659",
-    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th"
+    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th",
+    "matchStatus": "review",
+    "confidence": "low",
+    "matchedDbId": null,
+    "matchedDbName": null,
+    "matchedDbPlantCode": null,
+    "matchedDbAddress": null,
+    "reason": "ไม่พบชื่อใกล้เคียงใน DB",
+    "top3Candidates": "Yusen3 (NE=50990427, 199.64 kWp) | Yusen1 (NE=51054402, 199.64 kWp) | Wonderful plastic Ltd. (NE=51317762, 197.16 kWp)"
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 698,
     "projectName": "Toshiba (BOI)",
     "capacityKWp": 380.41,
+    "pvModuleCount": 698,
     "locationText": "นนทบุรี",
     "contactPhoneRaw": "คุณธีรยุทธ 090-985-0166",
-    "contactEmailRaw": "teerayutl@ttei.toshiba.co.th"
+    "contactEmailRaw": "teerayutl@ttei.toshiba.co.th",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 20.0,
+    "matchedDbName": "Toshiba 380.41kW",
+    "matchedDbPlantCode": "NE=50223457",
+    "matchedDbAddress": "129/1 Tiwanon Rd, Tambon Tha Sai, Amphoe Mueang Nonthaburi, Chang Wat Nonthaburi 11000, Thailand",
+    "reason": "ชื่อ/ความจุ/อีเมล/เบอร์โทรตรง",
+    "top3Candidates": ""
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 1640,
     "projectName": "SANDEN INTERCOOL 1",
     "capacityKWp": 1016.8,
+    "pvModuleCount": 1640,
     "locationText": "สิงห์บุรี",
     "contactPhoneRaw": "คุณสุรนาท 0972508424",
-    "contactEmailRaw": "pe_05@sandenintercool.com"
+    "contactEmailRaw": "pe_05@sandenintercool.com",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 154.0,
+    "matchedDbName": "Sanden M1 FAC 6 and 12",
+    "matchedDbPlantCode": "NE=51797784",
+    "matchedDbAddress": "จ.สิงห์บุรีพรหมบุรีบ้านหม้อ104 3 Mu Ban Tra Chu Mu 6 Rd, Ban Mo, Phrom Buri District, Sing Buri 16120, ThailandMetro H & Res Co.,Ltd",
+    "reason": "ความจุและพื้นที่ตรงกัน",
+    "top3Candidates": ""
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 2097,
     "projectName": "SANDEN INTERCOOL 2",
     "capacityKWp": 1300.14,
+    "pvModuleCount": 2097,
     "locationText": "สิงห์บุรี",
     "contactPhoneRaw": "คุณสุรนาท 0972508424",
-    "contactEmailRaw": "pe_05@sandenintercool.com"
+    "contactEmailRaw": "pe_05@sandenintercool.com",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 114.0,
+    "matchedDbName": "Sanden M2 FAC 4 7 and 8",
+    "matchedDbPlantCode": "NE=51806236",
+    "matchedDbAddress": "จ.สิงห์บุรีพรหมบุรีบ้านหม้อ104 3 Mu Ban Tra Chu Mu 6 Rd, Ban Mo, Phrom Buri District, Sing Buri 16120, ThailandMetro H & Res Co.,Ltd",
+    "reason": "ความจุและพื้นที่ตรงกัน",
+    "top3Candidates": ""
   },
   {
     "region": "ใต้",
-    "pvModuleCount": 648,
     "projectName": "Mega Wood สาขานาโยง",
     "capacityKWp": 356.16,
+    "pvModuleCount": 648,
     "locationText": "ตรัง",
     "contactPhoneRaw": "คุณจีรศักดิ์ ทองมีบัว 087-895-7566",
-    "contactEmailRaw": "jeerasak.t@megawood.co.th"
+    "contactEmailRaw": "jeerasak.t@megawood.co.th",
+    "matchStatus": "review",
+    "confidence": "low",
+    "matchedDbId": null,
+    "matchedDbName": null,
+    "matchedDbPlantCode": null,
+    "matchedDbAddress": null,
+    "reason": "พบ MEGAWOOD TRANG แต่ความจุไม่ตรง",
+    "top3Candidates": "MEGAWOOD TRANG (NE=60911902, 999.6 kWp) | MEGA Hatyai (NE=54494468, 999.41 kWp) | DCL MOLD (NE=57728658, 369.6 kWp)"
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 1834,
     "projectName": "M Senko",
     "capacityKWp": 999.53,
+    "pvModuleCount": 1834,
     "locationText": "สมุทรปราการ",
     "contactPhoneRaw": "คุณกิ่ง 088-233-4458",
-    "contactEmailRaw": "narongsak.ph@m-senko.com\nmsl_engineer@m-senko.com\nCC : lsi-chanika@lenso.com \nsoravit_y@lenso.com"
+    "contactEmailRaw": "narongsak.ph@m-senko.com\nmsl_engineer@m-senko.com\nCC : lsi-chanika@lenso.com \nsoravit_y@lenso.com",
+    "matchStatus": "possible",
+    "confidence": "medium",
+    "matchedDbId": 2.0,
+    "matchedDbName": "Msenko",
+    "matchedDbPlantCode": "NE=49982713",
+    "matchedDbAddress": "จ.สมุทรปราการบางเสาธงบางเสาธงเลขที่ 80 อำเภอ สมุทรปราการ 10570 ไทยขนมบ้านแอน",
+    "reason": "ชื่อใกล้กันมาก แต่ความจุใน DB 1749.73 ไม่ตรงกับไฟล์ตัวอย่าง",
+    "top3Candidates": ""
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 1230,
     "projectName": "M Senko Phase 2",
-    "capacityKWp": 1230,
+    "capacityKWp": 1230.0,
+    "pvModuleCount": 1230,
     "locationText": "สมุทรปราการ",
     "contactPhoneRaw": "คุณกิ่ง 088-233-4458",
-    "contactEmailRaw": "narongsak.ph@m-senko.com\nmsl_engineer@m-senko.com"
+    "contactEmailRaw": "narongsak.ph@m-senko.com\nmsl_engineer@m-senko.com",
+    "matchStatus": "review",
+    "confidence": "low",
+    "matchedDbId": null,
+    "matchedDbName": null,
+    "matchedDbPlantCode": null,
+    "matchedDbAddress": null,
+    "reason": "ไม่พบชื่อ Phase 2 ตรงใน DB",
+    "top3Candidates": "Siam Toppan (Phase​ 2​) (NE=52235059, 506.6 kWp) | TWD Nakhon-In​  (Phase​ 2​) (NE=68128628, 0.0 kWp) | TWD Mueang Ek (Phase 2) (NE=62949904, 464.8 kWp)"
   },
   {
     "region": "ตะวันออก",
-    "pvModuleCount": 720,
     "projectName": "บริษัท เอ็มซีซี ลาเบลส์ กรุงเทพ จำกัด",
     "capacityKWp": 446.4,
+    "pvModuleCount": 720,
     "locationText": "ชลบุรี",
     "contactPhoneRaw": "คุณกี้ 088-0133324",
-    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th"
+    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th",
+    "matchStatus": "review",
+    "confidence": "low",
+    "matchedDbId": null,
+    "matchedDbName": null,
+    "matchedDbPlantCode": null,
+    "matchedDbAddress": null,
+    "reason": "ไม่พบชื่อใกล้เคียงใน DB",
+    "top3Candidates": "Mukdahanbiogas (NE=50583054, 444.69 kWp) | TWD Mueang Ek (Phase 2) (NE=62949904, 464.8 kWp) | Indo Thai MDB-503 (NE=49741654, 463.32 kWp)"
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 386,
     "projectName": "บริษัท ดี.ที.เอส.อุตสาหกรรม จำกัด",
     "capacityKWp": 262.48,
+    "pvModuleCount": 386,
     "locationText": "สมุทรปราการ",
     "contactPhoneRaw": "คุณธนะวรรธน์ 082-3605428\nคุณพรเทพ 087-5071886",
-    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th"
+    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th",
+    "matchStatus": "review",
+    "confidence": "low",
+    "matchedDbId": null,
+    "matchedDbName": null,
+    "matchedDbPlantCode": null,
+    "matchedDbAddress": null,
+    "reason": "ไม่พบชื่อใกล้เคียงใน DB",
+    "top3Candidates": "P-Pamorn (NE=50492674, 257.58 kWp) | Captain Coating (NE=52499009, 264.52 kWp) | PPF พิษณุโลก 250.48kWp (NE=51250584, 250.48 kWp)"
   },
   {
     "region": "ใต้",
-    "pvModuleCount": 970,
     "projectName": "AIS Songkhla",
     "capacityKWp": 300.15,
+    "pvModuleCount": 970,
     "locationText": "สงขลา",
     "contactPhoneRaw": "AIS หาดใหญ่ พี่ณัฐพล \n0818953339",
-    "contactEmailRaw": "gulf1_om@gulf.co.th\nGULF1_Safety@gulf.co.th"
+    "contactEmailRaw": "gulf1_om@gulf.co.th\nGULF1_Safety@gulf.co.th",
+    "matchStatus": "review",
+    "confidence": "low",
+    "matchedDbId": null,
+    "matchedDbName": null,
+    "matchedDbPlantCode": null,
+    "matchedDbAddress": null,
+    "reason": "ไม่พบชื่อ AIS Songkhla ใน DB",
+    "top3Candidates": "CHARTER SCHOOL (NE=56018936, 300.24 kWp) | Lenso (NE=49761384, 300.0 kWp) | Concept Manufacturing (NE=52086985, 300.0 kWp)"
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 1834,
     "projectName": "Ecco Tannery (BOI)",
     "capacityKWp": 999.53,
+    "pvModuleCount": 1834,
     "locationText": "อยุธยา",
     "contactPhoneRaw": "คุณกรกช 092-2749991",
-    "contactEmailRaw": "kau@ecco.com , waka@ecco.com , \nchau@ecco.com , saw@ecco.com , thju@ecco.com"
+    "contactEmailRaw": "kau@ecco.com , waka@ecco.com , \nchau@ecco.com , saw@ecco.com , thju@ecco.com",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 74.0,
+    "matchedDbName": "ECCO Tannery",
+    "matchedDbPlantCode": "NE=50206418",
+    "matchedDbAddress": "ประเทศไทยพระนครศรีอยุธยานครหลวงบางพระครู13260",
+    "reason": "ชื่อ/อีเมล/เบอร์โทรตรง แม้ความจุใน DB ต่างจากไฟล์ตัวอย่าง",
+    "top3Candidates": ""
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 566,
     "projectName": "SONGSERM COMMERCIAL REFRIGERATION (THAILAND) CO.,LTD.",
     "capacityKWp": 350.92,
+    "pvModuleCount": 566,
     "locationText": "สิงห์บุรี",
     "contactPhoneRaw": "คุณสำเร็จ 089-7221166\nคุณพัฒน (จัดซื้อ) 085-4817034",
-    "contactEmailRaw": "wirat@songsermref.com\nphattana@songsermref.com"
+    "contactEmailRaw": "wirat@songsermref.com\nphattana@songsermref.com",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 194.0,
+    "matchedDbName": "Songserm Commercial Refrigeration",
+    "matchedDbPlantCode": "NE=51605380",
+    "matchedDbAddress": "จ.สิงห์บุรีพรหมบุรีบ้านแป้งหมู่ 4 ถนนสายเอเชีย-นครสวรรค์ ตำบล  อำเภอ สิงห์บุรี 16120 ไทยสำนักงานเกษตรอำเภอ",
+    "reason": "ชื่อ/อีเมล/เบอร์โทร/ความจุตรง",
+    "top3Candidates": ""
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 718,
     "projectName": "Polar Plastic",
     "capacityKWp": 445.08,
+    "pvModuleCount": 718,
     "locationText": "สมุทรปราการ",
     "contactPhoneRaw": "ช่างคมสัน 097-3436455",
-    "contactEmailRaw": "mt@polar-plastic.com"
+    "contactEmailRaw": "mt@polar-plastic.com",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 168.0,
+    "matchedDbName": "Polar Plastic",
+    "matchedDbPlantCode": "NE=52425407",
+    "matchedDbAddress": "ประเทศไทยสมุทรปราการอ.บางบ่อบางบ่อถนน โยธาธิการ สป. 3010137/9 ถนน โยธาธิการ สป. 3010",
+    "reason": "ชื่อ/อีเมล/เบอร์โทรตรง แต่ความจุไม่ตรง",
+    "top3Candidates": ""
   },
   {
     "region": "ตะวันออก",
-    "pvModuleCount": 2499,
     "projectName": "Robinson ฉะเชิงเทรา",
     "capacityKWp": 999.6,
+    "pvModuleCount": 2499,
     "locationText": "ฉะเชิงเทรา",
     "contactPhoneRaw": "ช่างสาขา 0886054547\nคุณทรงวุฒิ 098-824-4488",
-    "contactEmailRaw": "to : jusongwuth@central.co.th\ncc : mallmechachoengsao@central.co.th\nlsi-chanika@lenso.com\nsoravit_y@lenso.com"
+    "contactEmailRaw": "to : jusongwuth@central.co.th\ncc : mallmechachoengsao@central.co.th\nlsi-chanika@lenso.com\nsoravit_y@lenso.com",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 8.0,
+    "matchedDbName": "Robinson Chachoengsao",
+    "matchedDbPlantCode": "NE=49761575",
+    "matchedDbAddress": "910 หมู่ที่ 4 ถนน บางปะกง - ฉะเชิงเทรา ตำบล หน้าเมือง อำเภอเมืองฉะเชิงเทรา ฉะเชิงเทรา 24000",
+    "reason": "ชื่อจังหวัด/อีเมล/เบอร์โทร/ความจุตรง",
+    "top3Candidates": ""
   },
   {
     "region": "ใต้",
-    "pvModuleCount": 1438,
     "projectName": "Mega Hatyai",
     "capacityKWp": 999.41,
+    "pvModuleCount": 1438,
     "locationText": "สงขลา",
     "contactPhoneRaw": "คุณกาย 088-3984545",
-    "contactEmailRaw": "office.megahatyai@gmail.com"
+    "contactEmailRaw": "office.megahatyai@gmail.com",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 238.0,
+    "matchedDbName": "MEGA Hatyai",
+    "matchedDbPlantCode": "NE=54494468",
+    "matchedDbAddress": "จ.สงขลาสะเดาเขามีเกียรติ116 ตำบล  อำเภอ สงขลา 90170 ไทยเมกก้าหาดใหญ่",
+    "reason": "ชื่อ/อีเมล/เบอร์โทร/ความจุตรง",
+    "top3Candidates": ""
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 2860,
     "projectName": "บริษัท เฮ็ลธ์ฟู้ดส์ คอร์ปอเรชั่น จำกัด ( HFC )",
-    "capacityKWp": 2002,
+    "capacityKWp": 2002.0,
+    "pvModuleCount": 2860,
     "locationText": "สระบุุรี",
     "contactPhoneRaw": "คุณมังกร 091-1201939",
-    "contactEmailRaw": "gon108359@hotmail.com"
+    "contactEmailRaw": "gon108359@hotmail.com",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 221.0,
+    "matchedDbName": "HFC",
+    "matchedDbPlantCode": "NE=56459494",
+    "matchedDbAddress": "จ.สระบุรีวังม่วงแสลงพันบ้านหินซ้อนเหนือ ตำบล  อำเภอ  สระบุรี 18220 ไทยศูนย์เสริมสร้างสุขภาพประชาชนและผู้สูงวัยตำบล",
+    "reason": "ชื่อย่อ HFC/ความจุตรง",
+    "top3Candidates": ""
   },
   {
     "region": "ใต้",
-    "pvModuleCount": 1612,
     "projectName": "Piti seafood จะนะ",
     "capacityKWp": 999.44,
+    "pvModuleCount": 1612,
     "locationText": "สงขลา",
     "contactPhoneRaw": "คุณปอ 089-5816369\nคุณกิศนา 088-3992991",
-    "contactEmailRaw": "iso.ptf@gmail.com"
+    "contactEmailRaw": "iso.ptf@gmail.com",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 147.0,
+    "matchedDbName": "PITI SEAFOODS",
+    "matchedDbPlantCode": "NE=51419620",
+    "matchedDbAddress": "ประเทศไทยสงขลาอ.จะนะบ้านนา90130",
+    "reason": "ชื่อ/อีเมล/เบอร์โทร/พื้นที่/ความจุตรง",
+    "top3Candidates": ""
   },
   {
     "region": "ตะวันออก",
-    "pvModuleCount": 1303,
     "projectName": "United Coil Center (UCC)",
     "capacityKWp": 710.14,
+    "pvModuleCount": 1303,
     "locationText": "ชลบุรี",
     "contactPhoneRaw": "คุณปารุวัฒน์ - 0889133899",
-    "contactEmailRaw": "paruwat_c@ucc.co.th"
+    "contactEmailRaw": "paruwat_c@ucc.co.th",
+    "matchStatus": "review",
+    "confidence": "low",
+    "matchedDbId": null,
+    "matchedDbName": null,
+    "matchedDbPlantCode": null,
+    "matchedDbAddress": null,
+    "reason": "ไม่พบชื่อ UCC/United Coil ใน DB",
+    "top3Candidates": "Center Pack (NE=50550381, 71.16 kWp) | Jewelry Trade Center (JTC) (NE=51070389, 216.28 kWp) | Center Container (NE=50637478, 208.94 kWp)"
   },
   {
     "region": "ใต้",
-    "pvModuleCount": 1612,
     "projectName": "Semperflex Asia",
     "capacityKWp": 999.44,
+    "pvModuleCount": 1612,
     "locationText": "สงขลา",
     "contactPhoneRaw": "คุณตูน 063-8207689\nคุณวิโรจ 092-2563772",
-    "contactEmailRaw": "watcharapornc@sritranggroup.com"
+    "contactEmailRaw": "watcharapornc@sritranggroup.com",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 181.0,
+    "matchedDbName": "Semperflex Asia",
+    "matchedDbPlantCode": "NE=51335826",
+    "matchedDbAddress": "ประเทศไทยสงขลาอ.หาดใหญ่พะตง90230",
+    "reason": "ชื่อ/อีเมล/เบอร์โทร/ความจุตรง",
+    "top3Candidates": ""
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 364,
     "projectName": "บริษัท เค-เฟรช จำกัด (สาขา สวนส้ม)",
     "capacityKWp": 254.8,
+    "pvModuleCount": 364,
     "locationText": "สมุทรสาคร",
     "contactPhoneRaw": "คุณเกียรติ ผจก.โครงการ 081-4307006",
-    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th"
+    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th",
+    "matchStatus": "review",
+    "confidence": "low",
+    "matchedDbId": null,
+    "matchedDbName": null,
+    "matchedDbPlantCode": null,
+    "matchedDbAddress": null,
+    "reason": "ไม่พบชื่อใกล้เคียงใน DB",
+    "top3Candidates": "PPF พิษณุโลก 250.48kWp (NE=51250584, 250.48 kWp) | CDS WESTGATE 2 (NE=52069073, 252.34 kWp) | P-Pamorn (NE=50492674, 257.58 kWp)"
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 360,
     "projectName": "DMT PLASTECH",
     "capacityKWp": 223.2,
+    "pvModuleCount": 360,
     "locationText": "สมุทรสาคร",
     "contactPhoneRaw": "คุณชนิดา 081-4462333\nคุณอาสา 095-4563615",
-    "contactEmailRaw": "dmt.plastech@gmail.com\ndmtpurchase.plastech@gmail.com"
+    "contactEmailRaw": "dmt.plastech@gmail.com\ndmtpurchase.plastech@gmail.com",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 160.0,
+    "matchedDbName": "DMT PLASTECH",
+    "matchedDbPlantCode": "NE=51415844",
+    "matchedDbAddress": "คลองมะเดื่อ, กระทุ่มแบน 74110, ประเทศไทย5/1",
+    "reason": "ชื่อ/อีเมล/เบอร์โทร/ความจุตรง",
+    "top3Candidates": ""
   },
   {
     "region": "ใต้",
-    "pvModuleCount": 1408,
     "projectName": "บริษัท โกร๊ปฮอลส์ จำกัด",
     "capacityKWp": 999.68,
+    "pvModuleCount": 1408,
     "locationText": "สงขลา",
     "contactPhoneRaw": "K. Somjet Seayang CEO ฝ่ายวิศวกรรม 081-7668797\nK. wassana Dangsawat ฝ่ายการเงินและบัญชี 081-8962136",
-    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th"
+    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th",
+    "matchStatus": "review",
+    "confidence": "low",
+    "matchedDbId": null,
+    "matchedDbName": null,
+    "matchedDbPlantCode": null,
+    "matchedDbAddress": null,
+    "reason": "ไม่พบชื่อใกล้เคียงใน DB",
+    "top3Candidates": "TWD UDON (H2) (NE=53124961, 999.6 kWp) | TWD Pak Chong (NE=49748539, 999.68 kWp) | TWD Uthai thani (NE=53534545, 999.6 kWp)"
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 1439,
     "projectName": "TWD บางนา เฟส 2",
-    "capacityKWp": 1000,
+    "capacityKWp": 1000.0,
+    "pvModuleCount": 1439,
     "locationText": "สมุทรปราการ",
     "contactPhoneRaw": "MTN.สาขา : จิรวัฒน์ 083-797-3820\nArea จิรวัฒน์ สุขศาลา : 083-797-3820",
-    "contactEmailRaw": "KhoSupattra@chg.co.th\ncc  sujirawat@chg.co.th"
+    "contactEmailRaw": "KhoSupattra@chg.co.th\ncc  sujirawat@chg.co.th",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 217.0,
+    "matchedDbName": "TWD Bangna phase 2",
+    "matchedDbPlantCode": "NE=54621914",
+    "matchedDbAddress": "ประเทศไทยสมุทรปราการอำเภอบางพลีบางแก้วถนน เทพรัตน35/103 ถนน เทพรัตน",
+    "reason": "ชื่อ/อีเมล/พื้นที่ตรง",
+    "top3Candidates": ""
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 822,
     "projectName": "ชัยวารีมารีนโปรดัคส์ (Chaivaree Marin)",
     "capacityKWp": 509.64,
+    "pvModuleCount": 822,
     "locationText": "สมุทรสาคร",
     "contactPhoneRaw": "คุณช่อแก้ว 089-8057038\nคุณสุทิศ (ผู้จัดการโรงาน) 094-6496959",
-    "contactEmailRaw": "store.chaivaree@gmail.com"
+    "contactEmailRaw": "store.chaivaree@gmail.com",
+    "matchStatus": "matched",
+    "confidence": "high",
+    "matchedDbId": 110.0,
+    "matchedDbName": "Chaivaree Marin",
+    "matchedDbPlantCode": "NE=51413522",
+    "matchedDbAddress": "29/51 หมู่ 4  นาดี  สมุทรสาคร 74000",
+    "reason": "ชื่อไทย/อังกฤษและความจุตรง",
+    "top3Candidates": ""
   },
   {
     "region": "ใต้",
-    "pvModuleCount": 1056,
     "projectName": "บริษัท นาบอน พาราวู้ด จำกัด",
     "capacityKWp": 739.2,
+    "pvModuleCount": 1056,
     "locationText": "นครศรีธรรมราช",
     "contactPhoneRaw": "คุณสมทรง 061-5969173",
-    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th"
+    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th",
+    "matchStatus": "review",
+    "confidence": "low",
+    "matchedDbId": null,
+    "matchedDbName": null,
+    "matchedDbPlantCode": null,
+    "matchedDbAddress": null,
+    "reason": "ไม่พบชื่อใกล้เคียงใน DB",
+    "top3Candidates": "โชคชัยพัฒนาฟาร์ม (NE=62637348, 244.24 kWp) | โรงพยาบาล บ้านฉาง (NE=50682825, 100.0 kWp) | โรงพยาบาล บ้านค่าย (NE=50689020, 100.0 kWp)"
   },
   {
     "region": "กลาง",
-    "pvModuleCount": 2170,
     "projectName": "TWD บางนา",
     "capacityKWp": 999.75,
+    "pvModuleCount": 2170,
     "locationText": "สมุทรปราการ",
     "contactPhoneRaw": "MTN.สาขา : จิรวัฒน์ 083-797-3820\nArea จิรวัฒน์ สุขศาลา : 083-797-3820",
-    "contactEmailRaw": "NgNattapong@chg.co.th\ncc    KhoSupattra@chg.co.th         sujirawat@chg.co.th"
+    "contactEmailRaw": "NgNattapong@chg.co.th\ncc    KhoSupattra@chg.co.th         sujirawat@chg.co.th",
+    "matchStatus": "matched",
+    "confidence": "medium",
+    "matchedDbId": 39.0,
+    "matchedDbName": "TWD Bangna",
+    "matchedDbPlantCode": "NE=50474988",
+    "matchedDbAddress": "ประเทศไทยสมุทรปราการอำเภอบางพลีบางแก้วถนน เทพรัตน19/437 ถนน เทพรัตน",
+    "reason": "ชื่อไซต์ตรง; ใน DB ไม่มีอีเมลแต่มีอีกแถวเป็น Phase 2",
+    "top3Candidates": ""
   },
   {
     "region": "อีสาน",
-    "pvModuleCount": 1834,
     "projectName": "Do home Burriram (BOI)",
     "capacityKWp": 999.53,
+    "pvModuleCount": 1834,
     "locationText": "บุรีรัมย์",
     "contactPhoneRaw": "คุณแมน 099-3402798",
-    "contactEmailRaw": "maintenance-br@dohome.co.th"
+    "contactEmailRaw": "maintenance-br@dohome.co.th",
+    "matchStatus": "review",
+    "confidence": "low",
+    "matchedDbId": null,
+    "matchedDbName": null,
+    "matchedDbPlantCode": null,
+    "matchedDbAddress": null,
+    "reason": "ไม่พบชื่อ DoHome ตรงใน DB; พบ TWD Buriram ที่ขนาดใกล้กันแต่ชื่อไม่ตรง",
+    "top3Candidates": "TWD Buriram (NE=50806491, 999.495 kWp) | TWD DC Wang Noi (NE=50723811, 999.54 kWp) | TWD Chanthaburi (NE=50758642, 999.495 kWp)"
   },
   {
     "region": "ตะวันออก",
-    "pvModuleCount": 1378,
     "projectName": "บริษัท คอร์ติน่า สยาม สปอร์ต จำกัด",
     "capacityKWp": 854.36,
+    "pvModuleCount": 1378,
     "locationText": "ฉะเชิงเทรา",
     "contactPhoneRaw": "คุณไปยดา 085-2339779\nคุณมิน คอติน่า 0910060399\n",
-    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th"
+    "contactEmailRaw": "Chalermrat.M@sinopower.co.th\nwaraporn.l@sinopower.co.th\nChanapong.S@sinopower.co.th",
+    "matchStatus": "review",
+    "confidence": "low",
+    "matchedDbId": null,
+    "matchedDbName": null,
+    "matchedDbPlantCode": null,
+    "matchedDbAddress": null,
+    "reason": "ไม่พบชื่อใกล้เคียงใน DB",
+    "top3Candidates": "OLIC (Thailand) Limited (NE=51378360, 859.32 kWp) | TWD Phitsanulok (NE=50787491, 861.84 kWp) | โรงพยาบาล บ้านค่าย (NE=50689020, 100.0 kWp)"
   }
 ] as const;
+
 
 function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
@@ -604,8 +845,9 @@ function extractPhones(raw: unknown): string | null {
   return phones.length ? phones.join('; ') : null;
 }
 
+
 function normalizeName(name: string): string {
-  return name
+  return String(name || '')
     .toLowerCase()
     .replace(/\(.*?\)/g, ' ')
     .replace(/[^a-z0-9ก-๙]+/g, ' ')
@@ -623,6 +865,231 @@ function jaccard(a: Set<string>, b: Set<string>): number {
   for (const x of a) if (b.has(x)) inter++;
   const union = a.size + b.size - inter;
   return union === 0 ? 0 : inter / union;
+}
+
+function cleanText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value).replace(/\r/g, '').trim();
+  return text ? text : null;
+}
+
+function mergeDelimited(existing: string | null | undefined, incoming: string | null | undefined): string | null {
+  const items = [
+    ...(existing ? existing.split(/[;,]/).map((x) => x.trim()).filter(Boolean) : []),
+    ...(incoming ? incoming.split(/[;,]/).map((x) => x.trim()).filter(Boolean) : []),
+  ];
+  const merged = uniq(items);
+  return merged.length ? merged.join('; ') : null;
+}
+
+function buildImportRemark(input: {
+  projectName: string;
+  region: string | null;
+  locationText: string | null;
+  matchStatus: string | null;
+  confidence: string | null;
+  reason: string | null;
+  top3Candidates?: string | null;
+}): string {
+  const parts = [
+    '[excel-import]',
+    `project=${input.projectName}`,
+    input.region ? `region=${input.region}` : null,
+    input.locationText ? `location=${input.locationText}` : null,
+    input.matchStatus ? `matchStatus=${input.matchStatus}` : null,
+    input.confidence ? `confidence=${input.confidence}` : null,
+    input.reason ? `reason=${input.reason}` : null,
+    input.top3Candidates ? `candidates=${input.top3Candidates}` : null,
+  ].filter(Boolean);
+  return parts.join(' | ');
+}
+
+const UPSERT_REVIEW_STUBS = false;
+
+async function enrichSitesFromMappingResult() {
+  const imports = PROJECT_SITE_IMPORTS;
+  const sites = await prisma.site.findMany({
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      capacityKWp: true,
+      plantCode: true,
+      contactEmail: true,
+      contactPhone: true,
+      pvModuleCount: true,
+      companyName: true,
+      remark: true,
+      projectStatus: true,
+    },
+  });
+
+  const byId = new Map(sites.map((s) => [s.id, s]));
+  const byPlantCode = new Map(
+    sites.filter((s) => !!s.plantCode).map((s) => [String(s.plantCode).trim(), s])
+  );
+  const byNormName = new Map<string, (typeof sites)[number]>();
+  for (const s of sites) byNormName.set(normalizeName(s.name), s);
+
+  const aliases: Record<string, string> = {
+    'cpn sriracha': 'central sriracha',
+    'toshiba boi': 'toshiba 380 41kw',
+    'robinson ฉะเชิงเทรา': 'robinson chachoengsao',
+    'robinson chachoengsao': 'robinson chachoengsao',
+    'ecco tannery boi': 'ecco tannery',
+    'm senko': 'msenko',
+    'twd บางนา เฟส 2': 'twd bangna phase 2',
+    'twd บางนา': 'twd bangna',
+    'mega hatyai': 'mega hatyai',
+    'ชัยวารีมารีนโปรดัคส์ chaivaree marin': 'chaivaree marin',
+  };
+
+  let updated = 0;
+  let created = 0;
+  let skippedReview = 0;
+  let unmatched = 0;
+
+  for (const p of imports) {
+    const matchStatus = cleanText(p.matchStatus);
+    const confidence = cleanText(p.confidence);
+    const matchedDbName = cleanText(p.matchedDbName);
+    const matchedDbPlantCode = cleanText(p.matchedDbPlantCode);
+    const projectName = cleanText(p.projectName);
+
+    if (!projectName) continue;
+
+    let target =
+      (typeof p.matchedDbId === 'number' ? byId.get(p.matchedDbId) : undefined) ||
+      (matchedDbPlantCode ? byPlantCode.get(matchedDbPlantCode) : undefined) ||
+      (matchedDbName ? byNormName.get(normalizeName(matchedDbName)) : undefined);
+
+    if (!target) {
+      const aliasName = aliases[normalizeName(projectName)];
+      if (aliasName) target = byNormName.get(aliasName);
+    }
+
+    if (!target) {
+      const wantedTokens = tokenSet(projectName);
+      let best: (typeof sites)[number] | undefined;
+      let bestScore = 0;
+      for (const site of sites) {
+        const sim = jaccard(wantedTokens, tokenSet(site.name));
+        let score = sim;
+        const cap = Number(p.capacityKWp);
+        if (!Number.isNaN(cap) && cap > 0 && site.capacityKWp > 0) {
+          const diff = Math.abs(site.capacityKWp - cap);
+          if (diff <= 1) score += 0.35;
+          else if (diff <= 5) score += 0.2;
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          best = site;
+        }
+      }
+      if (best && bestScore >= 0.82 && matchStatus !== 'review') {
+        target = best;
+      }
+    }
+
+    const contactEmail = extractEmails(p.contactEmailRaw);
+    const contactPhone = extractPhones(p.contactPhoneRaw);
+    const nextPvModuleCount =
+      p.pvModuleCount === null || p.pvModuleCount === undefined
+        ? null
+        : Number(p.pvModuleCount);
+
+    const remark = buildImportRemark({
+      projectName,
+      region: cleanText(p.region),
+      locationText: cleanText(p.locationText),
+      matchStatus,
+      confidence,
+      reason: cleanText(p.reason),
+      top3Candidates: cleanText(p.top3Candidates),
+    });
+
+    if (!target) {
+      if (matchStatus === 'review' && !UPSERT_REVIEW_STUBS) {
+        console.warn(`⏭️  Skip review project: "${projectName}"`);
+        skippedReview++;
+        continue;
+      }
+
+      if (!UPSERT_REVIEW_STUBS) {
+        console.warn(`⚠️  Unmatched project: "${projectName}"`);
+        unmatched++;
+        continue;
+      }
+
+      const createdSite = await prisma.site.create({
+        data: {
+          name: projectName,
+          address: cleanText(p.locationText) ?? '',
+          capacityKWp: Number(p.capacityKWp) || 0,
+          plantCode: matchedDbPlantCode ?? undefined,
+          contactEmail: contactEmail ?? undefined,
+          contactPhone: contactPhone ?? undefined,
+          pvModuleCount: Number.isFinite(nextPvModuleCount ?? NaN) ? nextPvModuleCount : undefined,
+          companyName: projectName,
+          projectStatus: 'ACTIVE',
+          remark,
+        } as any,
+      });
+
+      console.log(`🆕 Site created: "${createdSite.name}"`);
+      created++;
+      continue;
+    }
+
+    const data: Record<string, unknown> = {};
+
+    const mergedEmail = mergeDelimited(target.contactEmail, contactEmail);
+    const mergedPhone = mergeDelimited(target.contactPhone, contactPhone);
+    if (mergedEmail && mergedEmail !== target.contactEmail) data.contactEmail = mergedEmail;
+    if (mergedPhone && mergedPhone !== target.contactPhone) data.contactPhone = mergedPhone;
+
+    if ((target.pvModuleCount === null || target.pvModuleCount === undefined) && Number.isFinite(nextPvModuleCount ?? NaN)) {
+      data.pvModuleCount = nextPvModuleCount;
+    }
+
+    if ((!target.companyName || !String(target.companyName).trim()) && normalizeName(target.name) !== normalizeName(projectName)) {
+      data.companyName = projectName;
+    }
+
+    if ((!target.plantCode || !String(target.plantCode).trim()) && matchedDbPlantCode) {
+      data.plantCode = matchedDbPlantCode;
+    }
+
+    if ((!target.address || !String(target.address).trim()) && cleanText(p.locationText)) {
+      data.address = cleanText(p.locationText);
+    }
+
+    if ((!target.capacityKWp || Number(target.capacityKWp) === 0) && Number(p.capacityKWp) > 0) {
+      data.capacityKWp = Number(p.capacityKWp);
+    }
+
+    const existingRemark = cleanText(target.remark);
+    if (!existingRemark) {
+      data.remark = remark;
+    } else if (!existingRemark.includes('[excel-import]')) {
+      data.remark = `${existingRemark} | ${remark}`;
+    }
+
+    if (Object.keys(data).length === 0) {
+      console.log(`ℹ️  No changes: "${target.name}" <- "${projectName}"`);
+      continue;
+    }
+
+    await prisma.site.update({
+      where: { id: target.id },
+      data: data as any,
+    });
+
+    console.log(`✅ Site updated: "${target.name}" <- "${projectName}"`);
+    updated++;
+  }
+
+  console.log(`✅ Mapping import done: updated=${updated}, created=${created}, skippedReview=${skippedReview}, unmatched=${unmatched}`);
 }
 
 async function seedUsers() {
@@ -722,91 +1189,10 @@ async function seedStockMaster() {
   console.log(`✅ Seed stock master: units=${unitNames.length}, categories=${categoryNames.length}, products=${upserted}`);
 }
 
-async function enrichSitesFromExcel() {
-  const sites = await prisma.site.findMany({
-    select: { id: true, name: true, capacityKWp: true, plantCode: true },
-  });
-
-  const byNormName = new Map<string, (typeof sites)[number]>();
-  for (const s of sites) byNormName.set(normalizeName(s.name), s);
-
-  // Some known aliases from the Excel
-  const ALIASES: Record<string, string> = {
-    'cpn sriracha': 'central sriracha',
-    'toshiba boi': 'toshiba 380.41kw',
-    'robinson ฉะเชิงเทรา': 'robinson chachoengsao',
-  };
-
-  function resolveCandidateName(excelName: string): string {
-    const n = normalizeName(excelName);
-    const alias = ALIASES[n];
-    return alias ? normalizeName(alias) : n;
-  }
-
-  let updated = 0;
-  let unmatched = 0;
-
-  for (const p of PROJECT_EXTRAS) {
-    const wantName = resolveCandidateName(p.projectName);
-
-    let best: (typeof sites)[number] | null = null;
-    let bestScore = 0;
-
-    const direct = byNormName.get(wantName);
-    if (direct) {
-      best = direct;
-      bestScore = 1;
-    } else {
-      const targetTokens = tokenSet(p.projectName);
-      for (const s of sites) {
-        const sim = jaccard(targetTokens, tokenSet(s.name));
-        let score = sim;
-
-        // Capacity match bonus (if provided)
-        const cap = Number(p.capacityKWp);
-        if (!Number.isNaN(cap) && cap > 0 && s.capacityKWp > 0) {
-          const diff = Math.abs(s.capacityKWp - cap);
-          if (diff <= 1) score += 0.35;
-          else if (diff <= 5) score += 0.2;
-        }
-
-        if (score > bestScore) {
-          bestScore = score;
-          best = s;
-        }
-      }
-    }
-
-    if (!best || bestScore < 0.55) {
-      console.warn(`⚠️  Unmatched project: "${p.projectName}" (bestScore=${bestScore.toFixed(2)})`);
-      unmatched++;
-      continue;
-    }
-
-    const contactEmail = extractEmails(p.contactEmailRaw);
-    const contactPhone = extractPhones(p.contactPhoneRaw);
-    const pvModuleCount = p.pvModuleCount ? Number(p.pvModuleCount) : null;
-
-    await prisma.site.update({
-      where: { id: best.id },
-      data: {
-        contactEmail: contactEmail ?? undefined,
-        contactPhone: contactPhone ?? undefined,
-        pvModuleCount: pvModuleCount ?? undefined,
-      },
-    });
-
-    console.log(`✅ Site updated: "${best.name}" <- "${p.projectName}" (score=${bestScore.toFixed(2)})`);
-    updated++;
-  }
-
-  console.log(`✅ Enrich sites done: updated=${updated}, unmatched=${unmatched}`);
-}
-
 async function main() {
   await seedUsers();
   await seedStockMaster();
-  await enrichSitesFromExcel();
+  await enrichSitesFromMappingResult();
 }
 
 main()

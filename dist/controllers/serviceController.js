@@ -4,19 +4,32 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listProjects = listProjects;
+exports.listServiceJobs = listServiceJobs;
 exports.createDraftStep1 = createDraftStep1;
 exports.getServiceJob = getServiceJob;
 exports.saveStep2Draft = saveStep2Draft;
 exports.sendStep2Email = sendStep2Email;
 exports.saveStep3Draft = saveStep3Draft;
 exports.generateReport = generateReport;
+exports.saveStep5Draft = saveStep5Draft;
 exports.downloadReportRedirect = downloadReportRedirect;
 exports.sendStep5Email = sendStep5Email;
+exports.updateServiceJob = updateServiceJob;
+exports.deleteServiceJob = deleteServiceJob;
+exports.downloadServiceReportsZip = downloadServiceReportsZip;
 const client_1 = require("@prisma/client");
 const path_1 = __importDefault(require("path"));
 const emailService_1 = require("../services/emailService");
 const reportService_1 = require("../services/reportService");
+const jobManagement_1 = require("../utils/jobManagement");
 const prisma = new client_1.PrismaClient();
+async function bumpJobStep(jobId, next) {
+    const job = await prisma.job.findUnique({ where: { id: jobId }, select: { step: true } });
+    if (!job)
+        return;
+    const step = Math.max(job.step ?? 1, next);
+    await prisma.job.update({ where: { id: jobId }, data: { step, status: client_1.JobStatus.DRAFT } });
+}
 function makeJobNo() {
     const d = new Date();
     const y = d.getFullYear();
@@ -39,9 +52,14 @@ async function listProjects(req, res) {
             ],
         }
         : {};
+    const page = Math.max(1, Number(req.query.page ?? 1));
+    const pageSize = Math.min(500, Math.max(1, Number(req.query.pageSize ?? 1000)));
+    const skip = (page - 1) * pageSize;
+    const total = await prisma.site.count({ where });
     const sites = await prisma.site.findMany({
         where,
-        take: 50,
+        skip,
+        take: pageSize,
         orderBy: { name: 'asc' },
         select: {
             id: true,
@@ -56,6 +74,12 @@ async function listProjects(req, res) {
     });
     res.json({
         success: true,
+        pagination: {
+            page,
+            pageSize,
+            total,
+            totalPages: Math.ceil(total / pageSize),
+        },
         data: sites.map((s) => ({
             siteId: s.id,
             plantCode: s.plantCode,
@@ -67,6 +91,95 @@ async function listProjects(req, res) {
             contactEmail: s.contactEmail ?? null,
         })),
     });
+}
+/**
+ * GET /api/service/jobs
+ * ใช้สำหรับหน้า HomeService เพื่อแสดงรายการ Service Job ที่ถูกสร้างแล้ว
+ */
+async function listServiceJobs(req, res) {
+    try {
+        const page = Math.max(1, Number(req.query.page ?? 1));
+        const pageSize = Math.min(100, Math.max(10, Number(req.query.pageSize ?? 20)));
+        const skip = (page - 1) * pageSize;
+        const jobNo = String(req.query.jobNo ?? '').trim();
+        const projectType = String(req.query.projectType ?? '').trim();
+        const projectName = String(req.query.projectName ?? '').trim();
+        const status = String(req.query.status ?? '').trim();
+        const service = String(req.query.service ?? '').trim();
+        const systemSizeKWp = Number.isFinite(Number(req.query.systemSizeKWp)) ? Number(req.query.systemSizeKWp) : null;
+        const pvModuleEA = Number.isFinite(Number(req.query.pvModuleEA)) ? Number(req.query.pvModuleEA) : null;
+        const dateStr = String(req.query.date ?? '').trim();
+        const date = dateStr ? new Date(dateStr) : null;
+        if (date)
+            date.setHours(0, 0, 0, 0);
+        const whereJob = { type: client_1.JobType.SERVICE };
+        if (jobNo)
+            whereJob.jobNo = { contains: jobNo, mode: 'insensitive' };
+        if (projectType)
+            whereJob.projectType = { contains: projectType, mode: 'insensitive' };
+        if (status)
+            whereJob.status = status;
+        const whereSvc = {};
+        if (projectName)
+            whereSvc.projectName = { contains: projectName, mode: 'insensitive' };
+        if (systemSizeKWp != null)
+            whereSvc.systemSizeKWp = systemSizeKWp;
+        if (pvModuleEA != null)
+            whereSvc.pvModuleEA = pvModuleEA;
+        if (date)
+            whereSvc.workDate = date;
+        if (service) {
+            // step3Meta อาจเก็บ field serviceType/serviceName ได้หลายแบบ
+            // ถ้าไม่มี ก็ปล่อยผ่าน
+            whereSvc.OR = [
+                { note: { contains: service, mode: 'insensitive' } },
+            ];
+        }
+        const [total, rows] = await Promise.all([
+            prisma.job.count({
+                where: {
+                    ...whereJob,
+                    serviceJob: Object.keys(whereSvc).length ? { is: whereSvc } : undefined,
+                },
+            }),
+            prisma.job.findMany({
+                where: {
+                    ...whereJob,
+                    serviceJob: Object.keys(whereSvc).length ? { is: whereSvc } : undefined,
+                },
+                orderBy: [{ createdAt: 'desc' }],
+                skip,
+                take: pageSize,
+                include: {
+                    serviceJob: true,
+                    site: { select: { name: true } },
+                },
+            }),
+        ]);
+        res.json({
+            success: true,
+            pagination: {
+                page,
+                pageSize,
+                total,
+                totalPages: Math.ceil(total / pageSize),
+            },
+            data: rows.map((j) => ({
+                jobId: j.id,
+                jobNo: j.jobNo,
+                projectType: j.projectType ?? j.serviceJob?.projectType ?? null,
+                projectName: j.serviceJob?.projectName ?? j.site?.name ?? null,
+                systemSizeKWp: j.serviceJob?.systemSizeKWp ?? null,
+                pvModuleEA: j.serviceJob?.pvModuleEA ?? null,
+                date: j.serviceJob?.workDate ?? null,
+                time: j.serviceJob?.workTimeText ?? null,
+                status: j.status,
+            })),
+        });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, message: e?.message ?? 'Internal error' });
+    }
 }
 /**
  * POST /api/service/step1
@@ -88,6 +201,7 @@ async function createDraftStep1(req, res) {
                 title: `Service - ${site.name}`,
                 type: client_1.JobType.SERVICE,
                 status: client_1.JobStatus.DRAFT,
+                step: 1,
                 scheduledDate: dt,
                 siteId: site.id,
                 createdById: 1, // TODO: auth
@@ -121,6 +235,7 @@ async function createDraftStep1(req, res) {
             scheduledDate: dt,
             siteId: site.id,
             title: `Service - ${site.name}`,
+            step: 1,
         },
     });
     await prisma.serviceJob.upsert({
@@ -160,7 +275,16 @@ async function getServiceJob(req, res) {
     const jobId = Number(req.params.jobId);
     const job = await prisma.job.findUnique({
         where: { id: jobId },
-        include: { site: true, attachments: true },
+        include: {
+            site: true,
+            attachments: true,
+            stockUsage: {
+                include: {
+                    product: { include: { category: true, unit: true } },
+                },
+                orderBy: { txDate: 'desc' },
+            },
+        },
     });
     if (!job)
         return res.status(404).json({ success: false, message: 'Job not found' });
@@ -197,6 +321,7 @@ async function saveStep2Draft(req, res) {
             step2EmailBody: body || null,
         },
     });
+    await bumpJobStep(jobId, 2);
     res.json({ success: true });
 }
 /**
@@ -287,12 +412,72 @@ async function saveStep3Draft(req, res) {
             // ignore
         }
     }
+    // --------- NEW: sync stock usage (OUT) from meta ---------
+    // เราจะ tag note เพื่อแยกแยะว่าเป็นรายการจ่ายออกจาก Service step3
+    const STOCK_USAGE_TAG = 'SERVICE_STEP3_STOCK_USAGE';
+    // try to read items from various shapes to be resilient with frontend changes
+    const readStockItems = (m) => {
+        if (!m)
+            return [];
+        const candidates = [m.stockItems, m.stock, m.items, m.products, m.stockUsage, m.usedStock].filter(Boolean);
+        const arr = Array.isArray(candidates[0]) ? candidates[0] : Array.isArray(m) ? m : null;
+        const list = Array.isArray(arr) ? arr : [];
+        return list
+            .map((it) => ({
+            productId: Number(it?.productId ?? it?.id ?? it?.product_id),
+            quantity: Number(it?.quantity ?? it?.qty ?? it?.amount),
+        }))
+            .filter((it) => Number.isFinite(it.productId) && it.productId > 0 && Number.isFinite(it.quantity) && it.quantity > 0);
+    };
+    const stockItems = readStockItems(meta);
+    // ลบรายการเดิมที่เคยสร้างจาก step3 เพื่อกันการซ้ำ (ไม่ยุ่งกับรายการที่สร้างจากเมนู Stock โดยตรง)
+    await prisma.stockTransaction.deleteMany({
+        where: {
+            jobId,
+            type: 'OUT',
+            note: { startsWith: STOCK_USAGE_TAG },
+        },
+    });
+    if (stockItems.length) {
+        const svc = await prisma.serviceJob.findUnique({ where: { jobId } });
+        const job = await prisma.job.findUnique({ where: { id: jobId }, include: { site: true } });
+        for (const it of stockItems) {
+            // onHand check (กันจ่ายออกเกินคงเหลือ)
+            const inAgg = await prisma.stockTransaction.aggregate({
+                where: { productId: it.productId, type: 'IN' },
+                _sum: { quantity: true },
+            });
+            const outAgg = await prisma.stockTransaction.aggregate({
+                where: { productId: it.productId, type: 'OUT' },
+                _sum: { quantity: true },
+            });
+            const onHand = Number(inAgg._sum.quantity ?? 0) - Number(outAgg._sum.quantity ?? 0);
+            if (it.quantity > onHand) {
+                return res
+                    .status(400)
+                    .json({ success: false, message: `insufficient stock for productId=${it.productId}: onHand=${onHand}` });
+            }
+            await prisma.stockTransaction.create({
+                data: {
+                    type: 'OUT',
+                    productId: it.productId,
+                    quantity: it.quantity, // prisma decimal
+                    txDate: new Date(),
+                    project: svc?.projectName ?? job?.site?.name ?? null,
+                    receiver: svc?.customerName ?? null,
+                    note: `${STOCK_USAGE_TAG} jobId=${jobId}`,
+                    jobId,
+                },
+            });
+        }
+    }
     await prisma.serviceJob.update({
         where: { jobId },
         data: {
             step3Meta: meta,
         },
     });
+    await bumpJobStep(jobId, 3);
     res.json({ success: true });
 }
 /**
@@ -303,7 +488,14 @@ async function generateReport(req, res) {
     const id = Number(jobId);
     const job = await prisma.job.findUnique({
         where: { id },
-        include: { site: true, attachments: true },
+        include: {
+            site: true,
+            attachments: true,
+            stockUsage: {
+                include: { product: { include: { category: true, unit: true } } },
+                orderBy: { txDate: 'desc' },
+            },
+        },
     });
     if (!job)
         return res.status(404).json({ success: false, message: 'Job not found' });
@@ -334,6 +526,8 @@ async function generateReport(req, res) {
         serviceReportFormPath: form ?? null,
         evidencePhotos: evidence,
         meta: service.step3Meta,
+        // include stock usage in the report
+        stockUsage: (job.stockUsage ?? []).filter((t) => t.type === 'OUT'),
     });
     await prisma.serviceJob.update({
         where: { jobId: id },
@@ -342,10 +536,32 @@ async function generateReport(req, res) {
     await prisma.jobAttachment.create({
         data: { jobId: id, fileUrl: report.fileUrl, fileType: 'REPORT' },
     });
+    await bumpJobStep(id, 4);
     res.json({
         success: true,
         data: { reportUrl: report.fileUrl, download: `/api/service/step4/download/${id}` },
     });
+}
+/**
+ * POST /api/service/step5/draft
+ * body: { jobId, to, subject, body }
+ * เก็บข้อความอีเมล step5 ไว้ก่อน (ยังไม่ส่ง)
+ */
+async function saveStep5Draft(req, res) {
+    const { jobId, to, subject, body } = req.body ?? {};
+    const id = Number(jobId);
+    if (!id)
+        return res.status(400).json({ success: false, message: 'jobId is required' });
+    await prisma.serviceJob.update({
+        where: { jobId: id },
+        data: {
+            step5EmailTo: to ? String(to) : null,
+            step5EmailSubject: subject ? String(subject) : null,
+            step5EmailBody: body ? String(body) : null,
+        },
+    });
+    await bumpJobStep(id, 5);
+    res.json({ success: true });
 }
 /** GET /api/service/step4/download/:jobId */
 async function downloadReportRedirect(req, res) {
@@ -394,4 +610,43 @@ async function sendStep5Email(req, res) {
         data: { status: client_1.JobStatus.COMPLETED },
     });
     res.json({ success: true });
+}
+/** PUT /api/service/job/:jobId */
+async function updateServiceJob(req, res) {
+    req.body = { ...(req.body ?? {}), jobId: Number(req.params.jobId) };
+    return createDraftStep1(req, res);
+}
+/** DELETE /api/service/job/:jobId */
+async function deleteServiceJob(req, res) {
+    try {
+        const jobId = Number(req.params.jobId);
+        if (!jobId)
+            return res.status(400).json({ success: false, message: 'jobId is required' });
+        const result = await (0, jobManagement_1.deleteJobCascade)(prisma, jobId, client_1.JobType.SERVICE);
+        if (!result.found)
+            return res.status(404).json({ success: false, message: 'Service job not found' });
+        return res.json({ success: true, message: `Deleted ${result.jobNo}` });
+    }
+    catch (e) {
+        return res.status(500).json({ success: false, message: e?.message ?? 'Internal error' });
+    }
+}
+/** GET/POST /api/service/jobs/download-zip */
+async function downloadServiceReportsZip(req, res) {
+    try {
+        const jobIds = (0, jobManagement_1.parseJobIds)((req.method === 'GET' ? req.query.jobIds : req.body?.jobIds));
+        if (!jobIds.length)
+            return res.status(400).json({ success: false, message: 'jobIds is required' });
+        const { files, skipped } = await (0, jobManagement_1.collectJobReportFiles)(prisma, client_1.JobType.SERVICE, jobIds);
+        if (!files.length) {
+            return res.status(404).json({ success: false, message: 'No report files found for selected service jobs', skipped });
+        }
+        const zip = await (0, jobManagement_1.createReportsZip)({ jobType: client_1.JobType.SERVICE, files, skipped });
+        return res.download(zip.outPath, zip.downloadName, async () => {
+            await zip.cleanup();
+        });
+    }
+    catch (e) {
+        return res.status(500).json({ success: false, message: e?.message ?? 'Internal error' });
+    }
 }

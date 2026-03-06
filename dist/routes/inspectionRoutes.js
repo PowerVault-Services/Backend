@@ -6,8 +6,14 @@ const inspectionController_1 = require("../controllers/inspectionController");
 const upload_1 = require("../middlewares/upload");
 const router = (0, express_1.Router)();
 router.get('/projects', inspectionController_1.listProjects);
+// Homepage list
+router.get('/jobs', inspectionController_1.listInspectionJobs);
 router.post('/step1', inspectionController_1.createDraftStep1);
 router.get('/job/:jobId', inspectionController_1.getInspectionJob);
+router.put('/job/:jobId', inspectionController_1.updateInspectionJob);
+router.delete('/job/:jobId', inspectionController_1.deleteInspectionJob);
+router.get('/jobs/download-zip', inspectionController_1.downloadInspectionReportsZip);
+router.post('/jobs/download-zip', inspectionController_1.downloadInspectionReportsZip);
 // step2: attachments หลายไฟล์ ใช้ field name = "attachments"
 router.post('/step2/draft', upload_1.upload.array('attachments', 20), inspectionController_1.saveStep2Draft);
 router.post('/step2/send', inspectionController_1.sendStep2Email);

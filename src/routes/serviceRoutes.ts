@@ -12,6 +12,9 @@ import {
   downloadReportRedirect,
   saveStep5Draft,
   sendStep5Email,
+  updateServiceJob,
+  deleteServiceJob,
+  downloadServiceReportsZip,
 } from '../controllers/serviceController';
 
 import { upload } from '../middlewares/upload';
@@ -29,6 +32,11 @@ router.post('/step1', createDraftStep1);
 
 // load data ทั้งก้อนตาม jobId
 router.get('/job/:jobId', getServiceJob);
+router.put('/job/:jobId', updateServiceJob);
+router.delete('/job/:jobId', deleteServiceJob);
+
+router.get('/jobs/download-zip', downloadServiceReportsZip);
+router.post('/jobs/download-zip', downloadServiceReportsZip);
 
 // Step2: draft + upload file (attachments)
 router.post('/step2/draft', upload.array('attachments', 20), saveStep2Draft);
