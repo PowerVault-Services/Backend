@@ -1,6 +1,7 @@
 	import { Router } from 'express';
 	import prisma from '../config/prisma';
 	import { huaweiOnDemand } from '../services/huaweiService';
+	import { syncPlantOnDemand } from '../services/syncService';
 
 	const router = Router();
 
@@ -218,7 +219,7 @@
 
   // list sites
   router.get('/sites', async (_req, res) => {
-    const sites = await prisma.site.findMany({
+    const sites = (await prisma.site.findMany({
       select: {
         id: true,
         plantCode: true,
@@ -227,10 +228,19 @@
         address: true,
         latitude: true,
         longitude: true,
+        gridConnectionDate: true,
+        currentPowerKW: true,
+        dayEnergyKWh: true,
+        monthEnergyKWh: true,
+        totalEnergyKWh: true,
+        dayUseEnergyKWh: true,
+        dayOnGridEnergyKWh: true,
+        plantHealthState: true,
+        lastPlantSyncAt: true,
         updatedAt: true,
       },
       orderBy: { name: 'asc' },
-    });
+    } as any)) as any[];
     res.json({ data: sites });
   });
 
@@ -239,11 +249,26 @@
     const siteId = Number(req.params.siteId);
     if (!Number.isFinite(siteId)) return res.status(400).json({ error: 'Invalid siteId' });
 
-    const site = await prisma.site.findUnique({ where: { id: siteId } });
+    let site: any = await prisma.site.findUnique({ where: { id: siteId } });
     if (!site) return res.status(404).json({ error: 'Site not found' });
 
+    const refreshFlag = String(req.query.refresh ?? '').trim();
+    const forceRefresh = refreshFlag === '1';
+    const onDemandStaleMs = Number(process.env.HUAWEI_ONDEMAND_SITE_STALE_MS ?? 5 * 60_000);
+    const siteIsStale = !site.lastPlantSyncAt || Date.now() - site.lastPlantSyncAt.getTime() >= onDemandStaleMs;
 
-    const inverters = await prisma.inverter.findMany({
+    if ((forceRefresh || siteIsStale) && site.plantCode) {
+      try {
+        await syncPlantOnDemand(site.plantCode);
+        site = await prisma.site.findUnique({ where: { id: siteId } });
+        if (!site) return res.status(404).json({ error: 'Site not found' });
+      } catch (e: any) {
+        console.warn('⚠️ /monitoring/sites/:siteId/overview on-demand refresh failed:', e?.message ?? e);
+      }
+    }
+
+
+    const inverters = (await prisma.inverter.findMany({
       where: { siteId },
       select: {
         id: true,
@@ -254,9 +279,10 @@
         lastDailyEnergy: true,
         status: true,
         lastSyncAt: true,
+        softwareVersion: true,
       },
       orderBy: { name: 'asc' },
-    });
+    } as any)) as any[];
 
 
     const last7Days = new Date();
@@ -275,10 +301,19 @@
           plantCode: site.plantCode,
           name: site.name,
           capacityKWp: site.capacityKWp,
+          gridConnectionDate: site.gridConnectionDate,
+          currentPowerKW: site.currentPowerKW,
+          dayEnergyKWh: site.dayEnergyKWh,
+          monthEnergyKWh: site.monthEnergyKWh,
+          totalEnergyKWh: site.totalEnergyKWh,
+          dayUseEnergyKWh: site.dayUseEnergyKWh,
+          dayOnGridEnergyKWh: site.dayOnGridEnergyKWh,
+          plantHealthState: site.plantHealthState,
+          lastPlantSyncAt: site.lastPlantSyncAt,
         },
         inverters,
         energySeries,
-        lastUpdatedAt: new Date().toISOString(),
+        lastUpdatedAt: site.updatedAt,
       },
     });
   });
@@ -288,7 +323,7 @@
     const inverterId = Number(req.params.inverterId);
     if (!Number.isFinite(inverterId)) return res.status(400).json({ error: 'Invalid inverterId' });
 
-    const inverter = await prisma.inverter.findUnique({
+    const inverter: any = await prisma.inverter.findUnique({
       where: { id: inverterId },
       include: { site: true },
     });

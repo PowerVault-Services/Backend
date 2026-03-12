@@ -1,6 +1,7 @@
 import cron from 'node-cron';
-import { syncInverterData } from '../services/syncService';
+import { syncInverterData, syncSiteRealtimeTick } from '../services/syncService';
 import { syncActiveAlarms } from '../services/alarmSyncService';
+import { huaweiClients } from '../services/huaweiPool';
 
 let isRunning = false;
 let isAlarmRunning = false;
@@ -8,13 +9,13 @@ let cronInitialized = false;
 
 export const startCronJobs = () => {
   if (cronInitialized) {
-    console.warn('⚠️ Cron already initialized. Skip duplicate start.');
+    console.warn('Cron already initialized. Skip duplicate start.');
     return;
   }
   cronInitialized = true;
-  console.log('🧠 startCronJobs() called');
+  console.log('startCronJobs() called');
 
-  // ---------------- Solar Sync ----------------
+  //Solar Sync 
   cron.schedule('*/5 * * * *', async () => {
     if (isRunning) {
       console.log('⏭️ Previous sync still running. Skip this round.');
@@ -22,14 +23,19 @@ export const startCronJobs = () => {
     }
     isRunning = true;
     try {
-      console.log('⏰ Cron Job Triggered: Syncing Solar Data');
+      huaweiClients.main.resetStats();
+      huaweiClients.backup.resetStats();
+      huaweiClients.ondemand.resetStats();
+
+      console.log('⏰ Cron Job Triggered: Syncing Site Realtime + Device Detail');
+      await syncSiteRealtimeTick();
       await syncInverterData();
     } finally {
       isRunning = false;
     }
   });
 
-  // ---------------- Alarm Sync ----------------
+  //Alarm Sync
   const alarmSchedule = process.env.HUAWEI_ALARM_CRON ?? '*/5 * * * *';
 
   cron.schedule(alarmSchedule, async () => {

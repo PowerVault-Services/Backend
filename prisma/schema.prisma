@@ -80,6 +80,22 @@ model Site {
   longitude   Float?
   capacityKWp Float
   plantCode   String  @unique
+  gridConnectionDate DateTime?
+
+  siteMetaSyncedAt   DateTime?
+  deviceMetaSyncedAt DateTime?
+  lastPlantSyncAt    DateTime?
+
+  currentPowerKW      Float?
+  dayEnergyKWh        Float?
+  monthEnergyKWh      Float?
+  totalEnergyKWh      Float?
+  dayIncome           Float?
+  totalIncome         Float?
+  dayUseEnergyKWh     Float?
+  dayOnGridEnergyKWh  Float?
+  plantHealthState    Int?
+  siteRealtimeRaw     Json?
 
   // -------- Client Data --------
   projectStatus ProjectStatus @default(ACTIVE)
@@ -162,8 +178,11 @@ model Inverter {
   siteId Int
   site   Site @relation(fields: [siteId], references: [id])
 
-  huaweiDevId String? @unique
-  stationCode String?
+  huaweiDevId     String? @unique
+  huaweiDevTypeId Int?
+  stationCode     String?
+  softwareVersion String?
+  deviceReplacementRecord String?
 
   activePower     Float     @default(0)
   lastDailyEnergy Float?
