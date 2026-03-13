@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { v4 as uuid } from 'uuid';
 import puppeteer from 'puppeteer';
+import { createTemporaryArtifactPath, storeGeneratedReportFromLocalFile } from './storageService';
 
 type EvidenceImage = { label?: string; filePath: string };
 type EvidenceGroup = {
@@ -20,12 +20,6 @@ type ServiceStockUsage = Array<{
     unit: { name: string };
   };
 }>;
-
-function ensureUploadsDir() {
-  const dir = path.join(process.cwd(), 'uploads');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
 
 function escapeHtml(s: any) {
   return String(s ?? '')
@@ -621,10 +615,7 @@ export async function generateCleaningReportPdf(data: {
   fullPageDocs?: { title: string; filePath: string }[];
   evidenceGroups?: EvidenceGroup[];
 }) {
-  ensureUploadsDir();
-
-  const fileName = `cleaning-report-${data.jobNo}-${uuid()}.pdf`;
-  const absPath = path.join(process.cwd(), 'uploads', fileName);
+  const absPath = createTemporaryArtifactPath('.pdf');
   const logoDataUri = getLogoDataUri();
 
   const coverPage = `
@@ -689,7 +680,7 @@ export async function generateCleaningReportPdf(data: {
 
   const html = wrapHtml([coverPage, layoutAndCertificatePages, planPage, evidencePages].join(''));
   await renderPdfToFile(html, absPath);
-  return { fileUrl: `/uploads/${fileName}`, absPath };
+  return storeGeneratedReportFromLocalFile(absPath, { jobType: 'cleaning', jobNo: data.jobNo });
 }
 
 export async function generateServiceReportPdf(data: {
@@ -706,10 +697,7 @@ export async function generateServiceReportPdf(data: {
   meta?: any;
   stockUsage?: ServiceStockUsage;
 }) {
-  ensureUploadsDir();
-
-  const fileName = `service-report-${data.jobNo}-${uuid()}.pdf`;
-  const absPath = path.join(process.cwd(), 'uploads', fileName);
+  const absPath = createTemporaryArtifactPath('.pdf');
   const logoDataUri = getLogoDataUri();
   const meta = data.meta ?? {};
   const detail = renderServiceDetailRows(meta, data.note);
@@ -820,5 +808,5 @@ export async function generateServiceReportPdf(data: {
 
   const html = wrapHtml([formPage, uploadedFormPage, evidencePages].join(''));
   await renderPdfToFile(html, absPath);
-  return { fileUrl: `/uploads/${fileName}`, absPath };
+  return storeGeneratedReportFromLocalFile(absPath, { jobType: 'cleaning', jobNo: data.jobNo });
 }

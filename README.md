@@ -69,14 +69,46 @@ MAIL_FROM_NAME="PowerVault Service"
 MAIL_FROM_EMAIL="yourgmail@gmail.com"
 ```
 
+### Storage (Uploads: Local / MinIO)
+
+ค่า default ปัจจุบันคือ local disk (`uploads/`) แต่โค้ดรองรับ object storage (MinIO/S3-compatible) ผ่าน gateway เดียวกัน (`/uploads/...`)
+
+```env
+# local | minio
+STORAGE_DRIVER="local"
+
+# local uploads root (default: uploads)
+STORAGE_LOCAL_ROOT="uploads"
+
+# public prefix (default: /uploads)
+STORAGE_PUBLIC_BASE="/uploads"
+
+# object storage endpoint + credentials (required when STORAGE_DRIVER=minio)
+MINIO_ENDPOINT="http://localhost:9000"
+MINIO_BUCKET="solar-files"
+MINIO_REGION="us-east-1"
+MINIO_ACCESS_KEY="minioadmin"
+MINIO_SECRET_KEY="minioadmin"
+
+# read/write switches
+READ_FROM_OBJECT_STORAGE=false
+WRITE_TO_OBJECT_STORAGE=false
+FALLBACK_TO_DISK=true
+MINIO_KEEP_LOCAL_COPY=true
+```
+
+> NOTE: ถ้าเปิด MinIO แต่ค่า endpoint/bucket/credential ไม่ครบ ระบบจะ fallback เป็น local behavior ตาม flag ที่ตั้งไว้
+
 ---
 
 ## Uploads (ไฟล์แนบ)
 
 - ไฟล์ที่อัปโหลดจะถูกเก็บไว้ที่ `uploads/`
-- ถูกเสิร์ฟเป็น static ผ่าน `GET /uploads/<filename>`
+- เส้นทางเปิดไฟล์คือ `GET /uploads/<filePath>` และ `HEAD /uploads/<filePath>`
+- การอ่านไฟล์ผ่าน storage gateway (รองรับ local และ object storage)
 - ทุก endpoint ที่เป็นไฟล์ต้องส่ง `multipart/form-data`
 - ชื่อ field ของไฟล์ “ต้องตรงตามที่กำหนดในแต่ละ endpoint” ไม่งั้นจะเจอ `MulterError: Unexpected field`
+- หากเปิด object storage และไฟล์ไม่พบบน object storage ระบบสามารถ fallback ไป disk ได้ตาม `FALLBACK_TO_DISK`
 
 ---
 

@@ -48,6 +48,7 @@ class HuaweiService {
   private userName: string;
   private systemCode: string;
   private label: string;
+  private aliasLabels = new Set<string>();
 
   private stats = {
     login: 0,
@@ -84,6 +85,7 @@ class HuaweiService {
     this.userName = creds?.userName ?? envUser ?? '';
     this.systemCode = creds?.systemCode ?? envPass ?? '';
     this.label = creds?.label ?? creds?.userName ?? 'HUAWEI';
+    this.aliasLabels.add(this.label);
 
     this.client = axios.create({
       baseURL: this.baseUrl,
@@ -170,6 +172,20 @@ class HuaweiService {
       }
     );
   }
+  public registerAlias(label?: string | null) {
+    const normalized = String(label ?? '').trim();
+    if (!normalized) return;
+    this.aliasLabels.add(normalized);
+  }
+
+  public getAccountKey() {
+    return `${this.baseUrl}::${this.userName}`;
+  }
+
+  public getLabels() {
+    return Array.from(this.aliasLabels);
+  }
+
   public getStats() {
     return { ...this.stats };
   }
@@ -423,10 +439,37 @@ const ondemandPass = process.env.HUAWEI_ONDEMAND_PASSWORD ?? basePass;
 const backupUser = process.env.HUAWEI_BACKUP_USER ?? baseUser;
 const backupPass = process.env.HUAWEI_BACKUP_PASSWORD ?? basePass;
 
-export const huaweiMain = new HuaweiService({ userName: baseUser, systemCode: basePass, label: 'MAIN' });
-export const huaweiAlarm = new HuaweiService({ userName: alarmUser, systemCode: alarmPass, label: 'ALARM' });
-export const huaweiOnDemand = new HuaweiService({ userName: ondemandUser, systemCode: ondemandPass, label: 'ONDEMAND' });
-export const huaweiBackup = new HuaweiService({ userName: backupUser, systemCode: backupPass, label: 'BACKUP' });
+const huaweiServiceRegistry = new Map<string, HuaweiService>();
+const warnedSharedCredentialKeys = new Set<string>();
+
+function makeRegistryKey(creds: HuaweiCreds) {
+  const baseUrl = process.env.HUAWEI_API_BASE_URL || 'https://intl.fusionsolar.huawei.com';
+  return `${baseUrl}::${creds.userName}::${creds.systemCode}`;
+}
+
+function getOrCreateHuaweiService(creds: HuaweiCreds) {
+  const key = makeRegistryKey(creds);
+  const existing = huaweiServiceRegistry.get(key);
+  if (existing) {
+    existing.registerAlias(creds.label);
+    if (!warnedSharedCredentialKeys.has(key)) {
+      warnedSharedCredentialKeys.add(key);
+      console.warn(
+        `⚠️ Huawei logical clients [${existing.getLabels().join(', ')}] share the same API account (${creds.userName}). Reusing one in-process session to avoid invalidating xsrf-token.`
+      );
+    }
+    return existing;
+  }
+
+  const service = new HuaweiService(creds);
+  huaweiServiceRegistry.set(key, service);
+  return service;
+}
+
+export const huaweiMain = getOrCreateHuaweiService({ userName: baseUser, systemCode: basePass, label: 'MAIN' });
+export const huaweiAlarm = getOrCreateHuaweiService({ userName: alarmUser, systemCode: alarmPass, label: 'ALARM' });
+export const huaweiOnDemand = getOrCreateHuaweiService({ userName: ondemandUser, systemCode: ondemandPass, label: 'ONDEMAND' });
+export const huaweiBackup = getOrCreateHuaweiService({ userName: backupUser, systemCode: backupPass, label: 'BACKUP' });
 
 export const huaweiService = huaweiMain;
 export { HuaweiService };
@@ -438,11 +481,13 @@ export async function callWithFailover<T>(
   opts?: { tag?: string }
 ): Promise<T> {
   const tag = opts?.tag ? ` ${opts.tag}` : '';
+  const hasDistinctBackup = primary !== backup;
+
   try {
     const r: any = await fn(primary);
     const failCode = Number(r?.failCode);
     const shouldFailover = r?.success === false && (failCode === 407 || failCode === 403 || failCode === 429);
-    if (!shouldFailover) return r as T;
+    if (!shouldFailover || !hasDistinctBackup) return r as T;
 
     console.warn(`⚠️ [FAILOVER]${tag} primary returned failCode=${failCode}. Switching to BACKUP...`);
     return (await fn(backup)) as T;
@@ -450,7 +495,7 @@ export async function callWithFailover<T>(
     const status = err?.response?.status;
     const failCode = Number(err?.response?.data?.failCode);
     const isRateLimit = status === 407 || status === 403 || status === 429 || failCode === 407 || failCode === 403 || failCode === 429;
-    if (!isRateLimit) throw err;
+    if (!isRateLimit || !hasDistinctBackup) throw err;
 
     console.warn(`⚠️ [FAILOVER]${tag} primary error status=${status ?? '-'} failCode=${failCode ?? '-'} -> BACKUP`);
     return (await fn(backup)) as T;

@@ -18,6 +18,22 @@ type DeviceTarget = {
   softwareVersion?: string | null;
 };
 
+export type SyncPlantOnDemandOptions = {
+  includeSiteRealtime?: boolean;
+  forceSiteRealtime?: boolean;
+  includeInventory?: boolean;
+  forceInventory?: boolean;
+  includeDeviceDetail?: boolean;
+  forceDeviceDetail?: boolean;
+};
+
+type SyncPlantDevicesOptions = {
+  includeInventory?: boolean;
+  forceInventory?: boolean;
+  includeDeviceDetail?: boolean;
+  forceDeviceDetail?: boolean;
+};
+
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
@@ -96,9 +112,30 @@ let lastTickAt = 0;
 let deviceSyncCursor = 0;
 let stationCache: { expiresAt: number; stationCodes: string[] } | null = null;
 const retryQueue: string[] = [];
+const onDemandSyncInflight = new Map<string, Promise<any>>();
 
 function enqueueRetry(stationCode: string) {
   if (!retryQueue.includes(stationCode)) retryQueue.unshift(stationCode);
+}
+
+function normalizeOnDemandOptions(opts?: SyncPlantOnDemandOptions) {
+  const includeSiteRealtime = opts?.includeSiteRealtime ?? true;
+  const includeInventory = opts?.includeInventory ?? true;
+  const includeDeviceDetail = opts?.includeDeviceDetail ?? true;
+
+  return {
+    includeSiteRealtime,
+    forceSiteRealtime: opts?.forceSiteRealtime ?? false,
+    includeInventory,
+    forceInventory: opts?.forceInventory ?? false,
+    includeDeviceDetail,
+    forceDeviceDetail: opts?.forceDeviceDetail ?? false,
+  } satisfies Required<SyncPlantOnDemandOptions>;
+}
+
+function makeOnDemandInflightKey(plantCode: string, opts?: SyncPlantOnDemandOptions) {
+  const normalized = normalizeOnDemandOptions(opts);
+  return `${plantCode}::${JSON.stringify(normalized)}`;
 }
 
 function pickStationCode(input: any): string | null {
@@ -396,9 +433,34 @@ async function syncSiteRealtimeBatch(plantCodes: string[], batchIndex: number) {
   return { synced: res.data.length };
 }
 
-async function syncPlantDevices(site: SiteLite, client: HuaweiService, runStateCount: Map<number, number>) {
-  const deviceTargets = await ensurePlantDeviceMetadata(site, client);
-  if (deviceTargets.length === 0) return { ok: true, inverters: 0, currentPowerKW: null as number | null };
+async function syncPlantDevices(
+  site: SiteLite,
+  client: HuaweiService,
+  runStateCount: Map<number, number>,
+  opts?: SyncPlantDevicesOptions
+) {
+  const includeInventory = opts?.includeInventory ?? true;
+  const includeDeviceDetail = opts?.includeDeviceDetail ?? true;
+  const forceInventory = opts?.forceInventory ?? false;
+  const forceDeviceDetail = opts?.forceDeviceDetail ?? false;
+
+  const deviceTargets = includeInventory
+    ? await ensurePlantDeviceMetadata(site, client, { force: forceInventory })
+    : await getCachedDeviceTargets(site.id);
+
+  if (deviceTargets.length === 0) {
+    return { ok: true, inverters: 0, currentPowerKW: null as number | null, usedCachedInventory: !includeInventory };
+  }
+
+  if (!includeDeviceDetail && !forceDeviceDetail) {
+    return {
+      ok: true,
+      inverters: deviceTargets.length,
+      currentPowerKW: null as number | null,
+      skippedDeviceDetail: true,
+      usedCachedInventory: !includeInventory,
+    };
+  }
 
   const groups = new Map<number, string[]>();
   for (const d of deviceTargets) {
@@ -585,7 +647,10 @@ export const syncMonitoringTick = async () => {
       const client = pickBulkClient(site.plantCode);
       console.log(`🔁 [${(client as any).label ?? 'BULK'}] Sync device detail for ${site.plantCode} (${site.name ?? ''})`);
       try {
-        const r = await syncPlantDevices(site, client, runStateCount);
+        const r = await syncPlantDevices(site, client, runStateCount, {
+          includeInventory: true,
+          includeDeviceDetail: true,
+        });
         console.log(`✅ Device sync done for ${site.plantCode}: ${r.inverters} inverter targets`);
       } catch (e: any) {
         enqueueRetry(site.plantCode);
@@ -620,23 +685,59 @@ export const syncMonitoringTick = async () => {
 
 export const syncInverterData = syncMonitoringTick;
 
-export async function syncPlantOnDemand(plantCode: string) {
-  const client = pickOnDemandClient();
-  const site = (await prisma.site.findUnique({
-    where: { plantCode },
-    select: { id: true, plantCode: true, name: true, deviceMetaSyncedAt: true },
-  } as any)) as SiteLite | null;
-  if (!site) throw new Error(`Site not found for plantCode=${plantCode}`);
+export async function syncPlantOnDemand(plantCode: string, opts?: SyncPlantOnDemandOptions) {
+  const normalized = normalizeOnDemandOptions(opts);
+  const inflightKey = makeOnDemandInflightKey(plantCode, normalized);
+  const existing = onDemandSyncInflight.get(inflightKey);
+  if (existing) return existing;
 
-  console.log(`⚡ [ONDEMAND] Refresh plant ${plantCode} (${site.name ?? ''})`);
+  const task = (async () => {
+    const client = pickOnDemandClient();
+    const site = (await prisma.site.findUnique({
+      where: { plantCode },
+      select: { id: true, plantCode: true, name: true, deviceMetaSyncedAt: true },
+    } as any)) as SiteLite | null;
+    if (!site) throw new Error(`Site not found for plantCode=${plantCode}`);
 
+    console.log(`⚡ [ONDEMAND] Refresh plant ${plantCode} (${site.name ?? ''})`, normalized);
+
+    let siteRealtimeRefreshed = false;
+    if (normalized.includeSiteRealtime) {
+      try {
+        await syncSiteRealtimeBatch([plantCode], 0);
+        siteRealtimeRefreshed = true;
+      } catch (e: any) {
+        console.warn(`⚠️ [ONDEMAND] Site realtime refresh failed for ${plantCode}:`, e?.message ?? e);
+      }
+    }
+
+    const shouldTouchDevices = normalized.includeInventory || normalized.includeDeviceDetail;
+    const runStateCount = new Map<number, number>();
+    const result = shouldTouchDevices
+      ? await syncPlantDevices(site, client, runStateCount, {
+          includeInventory: normalized.includeInventory,
+          forceInventory: normalized.forceInventory || normalized.forceDeviceDetail,
+          includeDeviceDetail: normalized.includeDeviceDetail,
+          forceDeviceDetail: normalized.forceDeviceDetail,
+        })
+      : { ok: true, inverters: 0, currentPowerKW: null as number | null, skippedDeviceDetail: true, usedCachedInventory: false };
+
+    return {
+      ok: true,
+      plantCode,
+      options: normalized,
+      siteRealtimeRefreshed,
+      inverters: result.inverters,
+      currentPowerKW: result.currentPowerKW,
+      skippedDeviceDetail: (result as any).skippedDeviceDetail ?? false,
+      usedCachedInventory: (result as any).usedCachedInventory ?? false,
+    };
+  })();
+
+  onDemandSyncInflight.set(inflightKey, task);
   try {
-    await syncSiteRealtimeBatch([plantCode], 0);
-  } catch (e: any) {
-    console.warn(`⚠️ [ONDEMAND] Site realtime refresh failed for ${plantCode}:`, e?.message ?? e);
+    return await task;
+  } finally {
+    onDemandSyncInflight.delete(inflightKey);
   }
-
-  const runStateCount = new Map<number, number>();
-  const result = await syncPlantDevices(site, client, runStateCount);
-  return { ok: true, plantCode, inverters: result.inverters, currentPowerKW: result.currentPowerKW };
 }

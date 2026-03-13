@@ -6,7 +6,6 @@ import cors from 'cors';
 import authRoutes from './routes/authRoutes';
 import { startCronJobs } from './jobs/cron';
 import { huaweiService } from './services/huaweiService';
-import path from 'path';
 // import huaweiDebugRoutes from './routes/huaweiDebugRoutes';
 import monitoringRoutes from './routes/monitoringRoutes';
 import { homepageRoutes } from './routes/homepageRoutes';
@@ -18,17 +17,28 @@ import alarmRoutes from './routes/alarmRoutes';
 import clientDataRoutes from './routes/clientDataRoutes';
 import reportRoutes from './routes/reportRoutes';
 import draftRoutes from './routes/draftRoutes';
+import { serveFileUrlViaGateway, storageFlagsSummary } from './services/storageService';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
 app.use('/api/auth', authRoutes);
 // app.use('/api/huawei', huaweiDebugRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/homepage', homepageRoutes);
 app.use('/api/stock', stockRoutes);
 app.use('/api/cleaning', cleaningRoutes);
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+// Express/path-to-regexp รุ่นใหม่ต้องตั้งชื่อ wildcard parameter
+app.get('/uploads/*filePath', async (req: Request, res: Response) => {
+  return serveFileUrlViaGateway(req.path, req, res);
+});
+
+app.head('/uploads/*filePath', async (req: Request, res: Response) => {
+  return serveFileUrlViaGateway(req.path, req, res);
+});
+
 app.use('/api/inspection', inspectionRoutes);
 app.use('/api/service', serviceRoutes);
 app.use('/api/alarms', alarmRoutes);
@@ -44,6 +54,7 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, async () => {
   console.log(`Server is running on port ${PORT}`);
+  console.log('📦 Storage flags:', storageFlagsSummary());
 
   try {
     await huaweiService.ensureLoggedIn();

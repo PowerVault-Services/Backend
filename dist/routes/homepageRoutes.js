@@ -8,6 +8,15 @@ exports.homepageRoutes = void 0;
 const express_1 = require("express");
 const prisma_1 = __importDefault(require("../config/prisma"));
 exports.homepageRoutes = (0, express_1.Router)();
+function calcPlantStatusFromHealth(healthState) {
+    if (healthState === 3)
+        return 'Normal';
+    if (healthState === 2)
+        return 'Faulty';
+    if (healthState === 1)
+        return 'Disconnected';
+    return 'Disconnected';
+}
 function calcPlantStatus(inverters) {
     if (!inverters || inverters.length === 0)
         return 'Disconnected';
@@ -29,29 +38,15 @@ function safeNum(n) {
  */
 exports.homepageRoutes.get('/summary', async (_req, res) => {
     try {
-        // 1) Plant status counts 
-        const sites = await prisma_1.default.site.findMany({
-            select: { id: true, plantCode: true, name: true },
+        const sites = (await prisma_1.default.site.findMany({
+            select: { id: true, plantHealthState: true },
             take: 5000,
-        });
-        // ดึง inverter เฉพาะ field ที่ใช้คำนวณ
-        const siteIds = sites.map((s) => s.id);
-        const inverters = await prisma_1.default.inverter.findMany({
-            where: { siteId: { in: siteIds } },
-            select: { siteId: true, status: true, lastSyncAt: true },
-        });
-        const bySite = new Map();
-        for (const inv of inverters) {
-            if (!bySite.has(inv.siteId))
-                bySite.set(inv.siteId, []);
-            bySite.get(inv.siteId).push({ status: inv.status, lastSyncAt: inv.lastSyncAt });
-        }
+        }));
         let normal = 0;
         let faulty = 0;
         let disconnected = 0;
         for (const s of sites) {
-            const list = bySite.get(s.id) ?? [];
-            const st = calcPlantStatus(list);
+            const st = calcPlantStatusFromHealth(s.plantHealthState);
             if (st === 'Normal')
                 normal++;
             else if (st === 'Faulty')
@@ -59,21 +54,18 @@ exports.homepageRoutes.get('/summary', async (_req, res) => {
             else
                 disconnected++;
         }
-        // 2) Active alarms (จาก DB ที่ cron sync มา)
         const active = await prisma_1.default.alarm.findMany({
             where: { status: 'ACTIVE', clearedAt: null },
             select: { severity: true },
             take: 500000,
         });
         const alarms = {
-            // mapping: 4=critical, 3=major, 2=minor, 1=warning
             critical: active.filter((a) => Number(a.severity) === 4).length,
             major: active.filter((a) => Number(a.severity) === 3).length,
             minor: active.filter((a) => Number(a.severity) === 2).length,
             warning: active.filter((a) => Number(a.severity) === 1).length,
             supported: true,
         };
-        // 3) Notification alarms list: latest 5 active alarms
         const latest = await prisma_1.default.alarm.findMany({
             where: { status: 'ACTIVE', clearedAt: null },
             orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
@@ -105,10 +97,6 @@ exports.homepageRoutes.get('/summary', async (_req, res) => {
  * Query:
  *  - q: search by plant name
  *  - page, pageSize
- *
- * Returns:
- *  - list: ตาราง plant
- *  - pagination
  */
 exports.homepageRoutes.get('/plants', async (req, res) => {
     try {
@@ -134,11 +122,15 @@ exports.homepageRoutes.get('/plants', async (req, res) => {
                     address: true,
                     capacityKWp: true,
                     updatedAt: true,
+                    gridConnectionDate: true,
+                    currentPowerKW: true,
+                    dayEnergyKWh: true,
+                    totalEnergyKWh: true,
+                    plantHealthState: true,
                 },
             }),
         ]);
         const siteIds = sites.map((s) => s.id);
-        // ดึง inverter เพื่อ sum current power + status
         const invs = await prisma_1.default.inverter.findMany({
             where: { siteId: { in: siteIds } },
             select: { siteId: true, activePower: true, status: true, lastSyncAt: true },
@@ -149,56 +141,28 @@ exports.homepageRoutes.get('/plants', async (req, res) => {
                 invBySite.set(inv.siteId, []);
             invBySite.get(inv.siteId).push(inv);
         }
-        // yield today (จาก SiteDailyEnergy วันนี้)
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const energyRows = await prisma_1.default.siteDailyEnergy.findMany({
-            where: { siteId: { in: siteIds }, date: today },
-            select: { siteId: true, energyKWh: true },
-        });
-        const energyMap = new Map();
-        for (const r of energyRows)
-            energyMap.set(r.siteId, safeNum(r.energyKWh));
-        // total yield
-        const latestSnaps = await prisma_1.default.inverterKpiSnapshot.findMany({
-            where: { inverter: { siteId: { in: siteIds } } },
-            orderBy: [{ ts: 'desc' }],
-            select: { inverterId: true, totalEnergy: true, ts: true },
-            take: 20000,
-        });
-        // เลือก snapshot ล่าสุดต่อ inverter 
-        const latestTotalByInv = new Map();
-        for (const s of latestSnaps) {
-            if (!latestTotalByInv.has(s.inverterId) && s.totalEnergy != null) {
-                latestTotalByInv.set(s.inverterId, safeNum(s.totalEnergy));
-            }
-        }
-        // map inverterId -> siteId
-        const invIdToSiteId = new Map();
-        for (const inv of invs) {
-        }
         const list = sites.map((s) => {
             const invList = invBySite.get(s.id) ?? [];
-            // activePower ใน DB เก็บเป็น kW แล้ว (อ้างอิงจากค่าที่เห็น เช่น 8.266)
-            const currentPowerKW = invList.reduce((sum, inv) => sum + safeNum(inv.activePower), 0);
-            const status = calcPlantStatus(invList.map((x) => ({ status: x.status, lastSyncAt: x.lastSyncAt })));
-            const yieldTodayKWh = energyMap.get(s.id) ?? 0;
+            const fallbackCurrentPowerKW = invList.reduce((sum, inv) => sum + safeNum(inv.activePower), 0);
+            const status = s.plantHealthState != null ? calcPlantStatusFromHealth(s.plantHealthState) : calcPlantStatus(invList);
+            const yieldTodayKWh = safeNum(s.dayEnergyKWh);
             const capacity = safeNum(s.capacityKWp);
             const specificEnergy = capacity > 0 ? yieldTodayKWh / capacity : 0;
+            const currentPowerKW = s.currentPowerKW != null ? safeNum(s.currentPowerKW) : fallbackCurrentPowerKW;
             return {
                 siteId: s.id,
                 plantCode: s.plantCode,
                 plantName: s.name,
                 address: s.address,
-                status, // Normal/Faulty/Disconnected
-                gridConnectionDate: null, // phase 2: ต้องเก็บจาก /thirdData/stations
-                totalStringCapacityKWp: capacity, // ใช้ capacity แทนชั่วคราว
-                optimizerQuantity: null, // phase 2: นับจาก getDevList devType optimizer
+                status,
+                gridConnectionDate: s.gridConnectionDate,
+                totalStringCapacityKWp: capacity,
+                optimizerQuantity: null,
                 currentPowerKW: Number(currentPowerKW.toFixed(3)),
                 specificEnergyKWhPerKWp: Number(specificEnergy.toFixed(4)),
                 yieldTodayKWh: Number(yieldTodayKWh.toFixed(3)),
-                totalYieldKWh: null, // phase 2: เก็บ site-level หรือ sum จาก inverter totalEnergy
-                performanceRatio: null, // phase 2: ต้องมี expected/irradiance ฯลฯ
+                totalYieldKWh: s.totalEnergyKWh != null ? Number(safeNum(s.totalEnergyKWh).toFixed(3)) : null,
+                performanceRatio: null,
                 lastUpdatedAt: s.updatedAt,
             };
         });

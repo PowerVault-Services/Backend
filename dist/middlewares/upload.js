@@ -6,11 +6,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.upload = void 0;
 const multer_1 = __importDefault(require("multer"));
 const path_1 = __importDefault(require("path"));
-const fs_1 = __importDefault(require("fs"));
 const crypto_1 = __importDefault(require("crypto"));
-const uploadDir = path_1.default.join(process.cwd(), 'uploads');
-if (!fs_1.default.existsSync(uploadDir))
-    fs_1.default.mkdirSync(uploadDir, { recursive: true });
+const storageService_1 = require("../services/storageService");
+const uploadDir = (0, storageService_1.createTemporaryUploadDir)();
 const storage = multer_1.default.diskStorage({
     destination: (_req, _file, cb) => cb(null, uploadDir),
     filename: (_req, file, cb) => {

@@ -6,6 +6,7 @@ import {
 } from '@prisma/client';
 import { Request, Response } from 'express';
 import path from 'path';
+import { storeIncomingUserUpload } from '../services/storageService';
 
 const prisma = new PrismaClient();
 
@@ -493,15 +494,35 @@ export async function upsertLayout(req: Request, res: Response) {
   if (!type) return res.status(400).json({ success: false, message: 'type must be PV_LAYOUT or PV_STRING_LAYOUT' });
   if (!file) return res.status(400).json({ success: false, message: 'file is required' });
 
-  const fileUrl = `/uploads/${path.basename(file.path)}`;
+  console.log('🧪 upsertLayout incoming file:', {
+    siteId,
+    type,
+    originalname: file.originalname,
+    mimetype: file.mimetype,
+    size: file.size,
+    tempPath: file.path,
+  });
 
-  const row = await prisma.siteLayout.upsert({
+  const stored = await storeIncomingUserUpload(file, {
+    scopeParts: ['sites', `site_${siteId}`, 'layouts', String(type).toLowerCase()],
+  });
+  const fileUrl = stored.fileUrl;
+
+  console.log('🧪 upsertLayout stored result:', stored);
+
+  await prisma.siteLayout.upsert({
     where: { siteId_type: { siteId, type } },
     create: { siteId, type, fileUrl },
     update: { fileUrl },
   });
 
-  res.json({ success: true, data: row });
+  const row = await prisma.siteLayout.findUnique({
+    where: { siteId_type: { siteId, type } },
+  });
+
+  console.log('🧪 upsertLayout db row after write:', row);
+
+  res.json({ success: true, data: row ?? { siteId, type, fileUrl } });
 }
 
 // =====================================================

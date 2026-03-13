@@ -17,7 +17,7 @@ exports.downloadInspectionReportsZip = downloadInspectionReportsZip;
 const client_1 = require("@prisma/client");
 const path_1 = __importDefault(require("path"));
 const emailService_1 = require("../services/emailService");
-const fs_1 = __importDefault(require("fs"));
+const storageService_1 = require("../services/storageService");
 const jobManagement_1 = require("../utils/jobManagement");
 const prisma = new client_1.PrismaClient();
 async function bumpJobStep(jobId, next) {
@@ -289,11 +289,13 @@ async function saveStep2Draft(req, res) {
         return res.status(400).json({ success: false, message: 'jobId is required' });
     const files = req.files ?? [];
     for (const f of files) {
-        // NOTE: ถ้าเปลี่ยน multer storage ให้ตั้ง filename มีนามสกุลแล้ว Gmail จะเปิดได้
+        const stored = await (0, storageService_1.storeIncomingUserUpload)(f, {
+            scopeParts: ['jobs', `job_${jobId}`, 'inspection-step2'],
+        });
         await prisma.jobAttachment.create({
             data: {
                 jobId,
-                fileUrl: `/uploads/${path_1.default.basename(f.path)}`,
+                fileUrl: stored.fileUrl,
                 fileType: 'INSP_STEP2_ATTACHMENT',
             },
         });
@@ -334,27 +336,18 @@ async function sendStep2Email(req, res) {
         return res.status(400).json({ success: false, message: 'Email draft incomplete (ต้องมี To/Subject/Body)' });
     }
     const missing = [];
-    const att = (job.attachments ?? [])
+    const attResolved = await Promise.all((job.attachments ?? [])
         .filter((a) => a.fileType === 'INSP_STEP2_ATTACHMENT')
-        .map((a) => {
-        // ✅ sanitize fileUrl กันตัวแปลก ๆ เช่น * " '
-        const safeUrl = String(a.fileUrl ?? '')
-            .trim()
-            .replace(/["']/g, '')
-            .replace(/\*/g, '');
-        // safeUrl เช่น /uploads/xxxx  -> uploads/xxxx
-        const relPath = safeUrl.replace(/^\/+/, '').replace(/^uploads\//, 'uploads/');
-        const absPath = path_1.default.join(process.cwd(), relPath);
-        if (!fs_1.default.existsSync(absPath)) {
-            missing.push(relPath);
+        .map(async (a) => {
+        try {
+            return await (0, storageService_1.resolveEmailAttachment)(a.fileUrl);
+        }
+        catch {
+            missing.push(String(a.fileUrl ?? ''));
             return null;
         }
-        return {
-            filename: path_1.default.basename(absPath), // อย่างน้อยให้มีชื่อไฟล์แนบ
-            path: absPath,
-        };
-    })
-        .filter(Boolean);
+    }));
+    const att = attResolved.filter(Boolean);
     // ถ้าอยาก “บังคับว่าต้องมีไฟล์แนบ” ให้ return error ตรงนี้แทนการส่ง
     // ตอนนี้ผมทำแบบ "ส่งได้ แม้บางไฟล์หาย" แต่แจ้งรายการไฟล์ที่หายกลับไป
     const send = await (0, emailService_1.sendEmailNow)({
@@ -394,7 +387,12 @@ async function saveStep3Draft(req, res) {
         return res.status(400).json({ success: false, message: 'jobId is required' });
     const file = req.file ?? null;
     if (file) {
-        const fileUrl = `/uploads/${path_1.default.basename(file.path)}`;
+        const job = await prisma.job.findUnique({ where: { id: jobId }, select: { jobNo: true } });
+        const stored = await (0, storageService_1.storeIncomingReportUpload)(file, {
+            jobType: 'inspection',
+            jobNo: job?.jobNo ?? `job-${jobId}`,
+        });
+        const fileUrl = stored.fileUrl;
         await prisma.jobAttachment.create({
             data: { jobId, fileUrl, fileType: 'INSP_REPORT' },
         });
@@ -446,7 +444,7 @@ async function sendStep3Email(req, res) {
     if (!inspection.reportFileUrl) {
         return res.status(400).json({ success: false, message: 'Report not uploaded' });
     }
-    const reportAbs = path_1.default.join(process.cwd(), inspection.reportFileUrl.replace('/uploads/', 'uploads/'));
+    const reportAbs = await (0, storageService_1.ensureLocalFilePath)(inspection.reportFileUrl);
     const send = await (0, emailService_1.sendEmailNow)({
         jobId: id,
         step: 3,

@@ -1,7 +1,4 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listProjects = listProjects;
 exports.listCleaningJobs = listCleaningJobs;
@@ -19,8 +16,8 @@ exports.updateCleaningJob = updateCleaningJob;
 exports.deleteCleaningJob = deleteCleaningJob;
 exports.downloadCleaningReportsZip = downloadCleaningReportsZip;
 const client_1 = require("@prisma/client");
-const path_1 = __importDefault(require("path"));
 const emailService_1 = require("../services/emailService");
+const storageService_1 = require("../services/storageService");
 const reportService_1 = require("../services/reportService");
 const jobManagement_1 = require("../utils/jobManagement");
 const prisma = new client_1.PrismaClient();
@@ -47,7 +44,6 @@ function makeJobNo() {
 /**
  * GET /api/cleaning/projects
  * ใช้สำหรับ dropdown "Project Name" แล้ว FE จะเลือก -> call detail
- * ดึงจาก DB (Site) ซึ่งถูก sync มาจาก Huawei อยู่แล้ว (ลด rate limit)
  */
 async function listProjects(req, res) {
     const q = String(req.query.q ?? '').trim();
@@ -152,7 +148,7 @@ async function listCleaningJobs(req, res) {
                 take: pageSize,
                 include: {
                     cleaningJob: true,
-                    site: { select: { name: true } },
+                    site: { select: { name: true, pvModuleCount: true } },
                 },
             }),
         ]);
@@ -216,11 +212,11 @@ async function createDraftStep1(req, res) {
                 jobId: created.id,
                 projectName: site.name,
                 systemSizeKWp: site.capacityKWp,
-                pvModuleEA: null,
+                pvModuleEA: site.pvModuleCount ?? null,
                 locationText: site.address ?? null,
                 projectType: projectType ?? null,
-                contactPhone: contactPhone ?? null,
-                contactEmail: contactEmail ?? null,
+                contactPhone: contactPhone ?? site.contactPhone ?? null,
+                contactEmail: contactEmail ?? site.contactEmail ?? null,
                 workDate: dt,
                 workTimeText: workTimeText ?? null,
                 customerName: customerName ?? null,
@@ -248,10 +244,11 @@ async function createDraftStep1(req, res) {
             jobId: j.id,
             projectName: site.name,
             systemSizeKWp: site.capacityKWp,
+            pvModuleEA: site.pvModuleCount ?? null,
             locationText: site.address ?? null,
             projectType: projectType ?? null,
-            contactPhone: contactPhone ?? null,
-            contactEmail: contactEmail ?? null,
+            contactPhone: contactPhone ?? site.contactPhone ?? null,
+            contactEmail: contactEmail ?? site.contactEmail ?? null,
             workDate: dt,
             workTimeText: workTimeText ?? null,
             customerName: customerName ?? null,
@@ -260,10 +257,11 @@ async function createDraftStep1(req, res) {
         update: {
             projectName: site.name,
             systemSizeKWp: site.capacityKWp,
+            pvModuleEA: site.pvModuleCount ?? null,
             locationText: site.address ?? null,
             projectType: projectType ?? null,
-            contactPhone: contactPhone ?? null,
-            contactEmail: contactEmail ?? null,
+            contactPhone: contactPhone ?? site.contactPhone ?? null,
+            contactEmail: contactEmail ?? site.contactEmail ?? null,
             workDate: dt,
             workTimeText: workTimeText ?? null,
             customerName: customerName ?? null,
@@ -302,10 +300,13 @@ async function saveStep2Draft(req, res) {
     // save files to JobAttachment
     const files = req.files ?? [];
     for (const f of files) {
+        const stored = await (0, storageService_1.storeIncomingUserUpload)(f, {
+            scopeParts: ['jobs', `job_${jobId}`, 'cleaning-step2'],
+        });
         await prisma.jobAttachment.create({
             data: {
                 jobId,
-                fileUrl: `/uploads/${path_1.default.basename(f.path)}`,
+                fileUrl: stored.fileUrl,
                 fileType: 'STEP2_ATTACHMENT',
             },
         });
@@ -339,12 +340,9 @@ async function sendStep2Email(req, res) {
     if (!cleaning?.step2EmailTo || !cleaning.step2EmailSubject || !cleaning.step2EmailBody) {
         return res.status(400).json({ success: false, message: 'Email draft incomplete' });
     }
-    const att = job.attachments
-        .filter(a => a.fileType === 'STEP2_ATTACHMENT')
-        .map(a => ({
-        filename: a.fileUrl.split('/').pop() || 'file',
-        path: path_1.default.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
-    }));
+    const att = await Promise.all(job.attachments
+        .filter((a) => a.fileType === 'STEP2_ATTACHMENT')
+        .map((a) => (0, storageService_1.resolveEmailAttachment)(a.fileUrl)));
     const send = await (0, emailService_1.sendEmailNow)({
         jobId: id,
         step: 2,
@@ -379,10 +377,13 @@ async function uploadEvidence(req, res) {
         return res.status(400).json({ success: false, message: 'jobId is required' });
     const files = req.files ?? [];
     for (const f of files) {
+        const stored = await (0, storageService_1.storeIncomingUserUpload)(f, {
+            scopeParts: ['jobs', `job_${jobId}`, 'cleaning-evidence', labelType],
+        });
         await prisma.jobAttachment.create({
             data: {
                 jobId,
-                fileUrl: `/uploads/${path_1.default.basename(f.path)}`,
+                fileUrl: stored.fileUrl,
                 fileType: `STEP3_${labelType}`,
             },
         });
@@ -425,18 +426,18 @@ async function generateReport(req, res) {
     // เปลี่ยนจาก photos -> fullPageDocs + evidenceGroups
     const attachments = job.attachments ?? [];
     // 1) Full page docs (แนบเป็นหน้าเต็ม) — แนะนำให้อัปโหลดเป็นรูป (jpg/png)
-    const cert = attachments
-        .filter(a => a.fileType === 'STEP3_CERTIFICATE')
-        .map(a => ({
+    const cert = await Promise.all(attachments
+        .filter((a) => a.fileType === 'STEP3_CERTIFICATE')
+        .map(async (a) => ({
         title: 'เอกสารส่งมอบงาน',
-        filePath: path_1.default.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
-    }));
-    const layout = attachments
-        .filter(a => a.fileType === 'STEP3_LAYOUT')
-        .map(a => ({
+        filePath: await (0, storageService_1.ensureLocalFilePath)(a.fileUrl),
+    })));
+    const layout = await Promise.all(attachments
+        .filter((a) => a.fileType === 'STEP3_LAYOUT')
+        .map(async (a) => ({
         title: 'Layout',
-        filePath: path_1.default.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
-    }));
+        filePath: await (0, storageService_1.ensureLocalFilePath)(a.fileUrl),
+    })));
     // 2) Evidence groups (Step3.1)
     // NOTE: ฝั่งหน้าเว็บ Step3.1 มีหัวข้อย่อยหลายแบบ (ก่อน/ขณะ/หลัง - ล้างแผง / ทำความสะอาดห้องอินเวอร์เตอร์ ฯลฯ)
     // แต่ก่อนหน้านี้ report จัดกลุ่มแค่ BEFORE/AFTER ทำให้ "ข้อความใต้รูป" และ "หัวข้อในรายงาน" ไม่ตรงกับหน้าเว็บ
@@ -471,7 +472,7 @@ async function generateReport(req, res) {
             grouped.set(groupTitle, []);
         grouped.get(groupTitle).push({
             label,
-            filePath: path_1.default.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
+            filePath: await (0, storageService_1.ensureLocalFilePath)(a.fileUrl),
         });
     }
     const evidenceGroups = Array.from(grouped.entries()).map(([title, images]) => ({ title, images }));
@@ -542,7 +543,7 @@ async function sendStep5Email(req, res) {
     const cleaning = await prisma.cleaningJob.findUnique({ where: { jobId: id } });
     if (!cleaning?.reportFileUrl)
         return res.status(400).json({ success: false, message: 'Report not generated' });
-    const reportAbs = path_1.default.join(process.cwd(), cleaning.reportFileUrl.replace('/uploads/', 'uploads/'));
+    const reportAbs = await (0, storageService_1.ensureLocalFilePath)(cleaning.reportFileUrl);
     const send = await (0, emailService_1.sendEmailNow)({
         jobId: id,
         step: 5,

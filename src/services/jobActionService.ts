@@ -1,8 +1,10 @@
 import { PrismaClient, JobType } from '@prisma/client';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { deleteStoredFile, ensureLocalFilePath } from './storageService';
 
 const execFileAsync = promisify(execFile);
 
@@ -10,21 +12,6 @@ export type ScopedJobType = 'CLEANING' | 'INSPECTION' | 'SERVICE';
 
 function uniqueStrings(items: Array<string | null | undefined>) {
   return Array.from(new Set(items.filter((v): v is string => !!v)));
-}
-
-function toAbsUploadPath(fileUrl: string) {
-  if (fileUrl.startsWith('/uploads/')) {
-    return path.join(process.cwd(), fileUrl.replace('/uploads/', 'uploads/'));
-  }
-  return path.isAbsolute(fileUrl) ? fileUrl : path.join(process.cwd(), fileUrl);
-}
-
-function safeUnlink(absPath: string) {
-  try {
-    if (fs.existsSync(absPath)) fs.unlinkSync(absPath);
-  } catch {
-    // ignore file cleanup error
-  }
 }
 
 export async function buildReportsZipForJobs(args: {
@@ -49,33 +36,37 @@ export async function buildReportsZipForJobs(args: {
     orderBy: { createdAt: 'desc' },
   });
 
-  const reportRows = jobs
-    .map((job) => {
-      const reportFileUrl =
-        type === 'CLEANING'
-          ? job.cleaningJob?.reportFileUrl
-          : type === 'INSPECTION'
-            ? job.inspectionJob?.reportFileUrl
-            : job.serviceJob?.reportFileUrl;
-      if (!reportFileUrl) return null;
-      const absPath = toAbsUploadPath(reportFileUrl);
-      if (!fs.existsSync(absPath)) return null;
-      const ext = path.extname(absPath) || '.pdf';
-      const sanitizedJobNo = (job.jobNo || `job-${job.id}`).replace(/[^a-zA-Z0-9-_]+/g, '_');
-      return {
-        jobId: job.id,
-        fileUrl: reportFileUrl,
-        absPath,
-        zipName: `${sanitizedJobNo}${ext}`,
-      };
-    })
-    .filter((v): v is { jobId: number; fileUrl: string; absPath: string; zipName: string } => !!v);
+  const reportRows = (
+    await Promise.all(
+      jobs.map(async (job) => {
+        const reportFileUrl =
+          type === 'CLEANING'
+            ? job.cleaningJob?.reportFileUrl
+            : type === 'INSPECTION'
+              ? job.inspectionJob?.reportFileUrl
+              : job.serviceJob?.reportFileUrl;
+        if (!reportFileUrl) return null;
+
+        const absPath = await ensureLocalFilePath(reportFileUrl);
+        if (!fs.existsSync(absPath)) return null;
+
+        const ext = path.extname(absPath) || '.pdf';
+        const sanitizedJobNo = (job.jobNo || `job-${job.id}`).replace(/[^a-zA-Z0-9-_]+/g, '_');
+        return {
+          jobId: job.id,
+          fileUrl: reportFileUrl,
+          absPath,
+          zipName: `${sanitizedJobNo}${ext}`,
+        };
+      }),
+    )
+  ).filter((v): v is { jobId: number; fileUrl: string; absPath: string; zipName: string } => !!v);
 
   if (!reportRows.length) {
     throw new Error('No report files found for selected jobs');
   }
 
-  const tmpRoot = path.join(process.cwd(), 'uploads', '_tmp_zip');
+  const tmpRoot = path.join(os.tmpdir(), 'solar-job-action-zips');
   fs.mkdirSync(tmpRoot, { recursive: true });
 
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
@@ -153,9 +144,7 @@ export async function deleteScopedJob(args: {
     await tx.job.delete({ where: { id: jobId } });
   });
 
-  for (const fileUrl of fileUrls) {
-    safeUnlink(toAbsUploadPath(fileUrl));
-  }
+  await Promise.all(fileUrls.map((fileUrl) => deleteStoredFile(fileUrl)));
 
   return { notFound: false as const, deletedJobId: jobId, deletedFiles: fileUrls };
 }

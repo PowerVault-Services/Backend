@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { deleteStoredFile, ensureLocalFilePath } from '../services/storageService';
 
 const execFileAsync = promisify(execFile);
 
@@ -95,16 +96,7 @@ export async function deleteJobCascade(prisma: PrismaClient, jobId: number, jobT
     await tx.job.delete({ where: { id: jobId } });
   });
 
-  await Promise.all(
-    Array.from(fileUrls).map(async (fileUrl) => {
-      const abs = fileUrlToAbsPath(fileUrl);
-      try {
-        await fsp.unlink(abs);
-      } catch {
-        // no-op: file may already be gone
-      }
-    }),
-  );
+  await Promise.all(Array.from(fileUrls).map((fileUrl) => deleteStoredFile(fileUrl)));
 
   return { found: true as const, jobNo: job.jobNo };
 }
@@ -149,9 +141,9 @@ export async function collectJobReportFiles(
       continue;
     }
 
-    const absPath = fileUrlToAbsPath(reportFileUrl);
+    const absPath = await ensureLocalFilePath(reportFileUrl);
     if (!fs.existsSync(absPath)) {
-      skipped.push(`${row.jobNo}: report file missing on disk`);
+      skipped.push(`${row.jobNo}: report file missing in storage`);
       continue;
     }
 
@@ -185,7 +177,7 @@ export async function createReportsZip(options: {
 }) {
   const { jobType, files, skipped = [] } = options;
   const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), `solar-${jobType.toLowerCase()}-zip-`));
-  const outDir = path.join(process.cwd(), 'uploads', 'zip');
+  const outDir = path.join(os.tmpdir(), 'solar-zip-output');
   await fsp.mkdir(outDir, { recursive: true });
 
   try {

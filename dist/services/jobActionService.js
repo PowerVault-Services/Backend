@@ -6,27 +6,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildReportsZipForJobs = buildReportsZipForJobs;
 exports.deleteScopedJob = deleteScopedJob;
 const fs_1 = __importDefault(require("fs"));
+const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 const util_1 = require("util");
+const storageService_1 = require("./storageService");
 const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
 function uniqueStrings(items) {
     return Array.from(new Set(items.filter((v) => !!v)));
-}
-function toAbsUploadPath(fileUrl) {
-    if (fileUrl.startsWith('/uploads/')) {
-        return path_1.default.join(process.cwd(), fileUrl.replace('/uploads/', 'uploads/'));
-    }
-    return path_1.default.isAbsolute(fileUrl) ? fileUrl : path_1.default.join(process.cwd(), fileUrl);
-}
-function safeUnlink(absPath) {
-    try {
-        if (fs_1.default.existsSync(absPath))
-            fs_1.default.unlinkSync(absPath);
-    }
-    catch {
-        // ignore file cleanup error
-    }
 }
 async function buildReportsZipForJobs(args) {
     const { prisma, type, jobIds } = args;
@@ -43,8 +30,7 @@ async function buildReportsZipForJobs(args) {
         },
         orderBy: { createdAt: 'desc' },
     });
-    const reportRows = jobs
-        .map((job) => {
+    const reportRows = (await Promise.all(jobs.map(async (job) => {
         const reportFileUrl = type === 'CLEANING'
             ? job.cleaningJob?.reportFileUrl
             : type === 'INSPECTION'
@@ -52,7 +38,7 @@ async function buildReportsZipForJobs(args) {
                 : job.serviceJob?.reportFileUrl;
         if (!reportFileUrl)
             return null;
-        const absPath = toAbsUploadPath(reportFileUrl);
+        const absPath = await (0, storageService_1.ensureLocalFilePath)(reportFileUrl);
         if (!fs_1.default.existsSync(absPath))
             return null;
         const ext = path_1.default.extname(absPath) || '.pdf';
@@ -63,12 +49,11 @@ async function buildReportsZipForJobs(args) {
             absPath,
             zipName: `${sanitizedJobNo}${ext}`,
         };
-    })
-        .filter((v) => !!v);
+    }))).filter((v) => !!v);
     if (!reportRows.length) {
         throw new Error('No report files found for selected jobs');
     }
-    const tmpRoot = path_1.default.join(process.cwd(), 'uploads', '_tmp_zip');
+    const tmpRoot = path_1.default.join(os_1.default.tmpdir(), 'solar-job-action-zips');
     fs_1.default.mkdirSync(tmpRoot, { recursive: true });
     const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
     const workDir = path_1.default.join(tmpRoot, `${type.toLowerCase()}-${stamp}-${Math.random().toString(36).slice(2, 8)}`);
@@ -132,8 +117,6 @@ async function deleteScopedJob(args) {
         await tx.jobAttachment.deleteMany({ where: { jobId } });
         await tx.job.delete({ where: { id: jobId } });
     });
-    for (const fileUrl of fileUrls) {
-        safeUnlink(toAbsUploadPath(fileUrl));
-    }
+    await Promise.all(fileUrls.map((fileUrl) => (0, storageService_1.deleteStoredFile)(fileUrl)));
     return { notFound: false, deletedJobId: jobId, deletedFiles: fileUrls };
 }

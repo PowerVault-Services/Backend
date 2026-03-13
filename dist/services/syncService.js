@@ -1,17 +1,14 @@
 "use strict";
-// src/services/syncService.ts
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.syncInverterData = exports.syncMonitoringTick = void 0;
+exports.syncSiteRealtimeTick = syncSiteRealtimeTick;
 exports.syncPlantOnDemand = syncPlantOnDemand;
-const huaweiPool_1 = require("./huaweiPool");
 const prisma_1 = __importDefault(require("../config/prisma"));
-// ---------------- Utils ----------------
-function pickStationCode(s) {
-    return (s.plantCode ?? s.stationCode)?.toString() ?? null;
-}
+const huaweiService_1 = require("./huaweiService");
+const huaweiPool_1 = require("./huaweiPool");
 function chunk(arr, size) {
     const out = [];
     for (let i = 0; i < arr.length; i += size)
@@ -23,6 +20,23 @@ function snapTsNow(slotMs) {
     const slot = Math.floor(t / slotMs) * slotMs;
     return new Date(slot);
 }
+function startOfLocalDay(d = new Date()) {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+}
+function parseNum(value) {
+    if (value == null || value === '')
+        return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+function parseDate(value) {
+    if (value == null || value === '')
+        return null;
+    const d = new Date(String(value));
+    return Number.isNaN(d.getTime()) ? null : d;
+}
 function deriveStringStatus(voltage, current) {
     if (voltage == null && current == null)
         return 'Disconnected';
@@ -32,9 +46,6 @@ function deriveStringStatus(voltage, current) {
         return 'Lost';
     return 'Normal';
 }
-// Inverter status mapping (Huawei run_state -> UI status)
-// หมายเหตุ: run_state ของ Huawei มีหลายค่าและต่างกันตาม tenant
-// เราใช้ชุด FAULT_RUN_STATES ที่ปรับได้ผ่าน env เพื่อไม่เดาแบบ 0/อื่นๆ แล้วเพี้ยน
 const FAULT_RUN_STATES = new Set(String(process.env.HUAWEI_FAULT_RUN_STATES ?? '3,4,5,6,7,8,9,10')
     .split(',')
     .map((x) => Number(x.trim()))
@@ -46,35 +57,50 @@ function deriveInverterStatus(runState) {
         return 'Fault';
     return 'Normal';
 }
-// ---------------- Config ----------------
-const MAX_PLANTS_PER_TICK = Number(process.env.HUAWEI_MAX_PLANTS_PER_TICK ?? 1);
-const DEV_BATCH_SIZE = Number(process.env.HUAWEI_DEV_BATCH_SIZE ?? 100);
-// กัน cron ตั้งถี่เกิน (cron ยิงถี่ได้ แต่ระบบจะ skip เอง)
+const MAX_DEVICE_PLANTS_PER_TICK = Number(process.env.HUAWEI_MAX_DEVICE_PLANTS_PER_TICK ?? process.env.HUAWEI_MAX_PLANTS_PER_TICK ?? 2);
+const DEV_BATCH_SIZE = Math.min(100, Math.max(1, Number(process.env.HUAWEI_DEV_BATCH_SIZE ?? 100)));
+const SITE_REALTIME_BATCH_SIZE = Math.min(100, Math.max(1, Number(process.env.HUAWEI_SITE_REALTIME_BATCH_SIZE ?? 100)));
 const MIN_TICK_INTERVAL_MS = Number(process.env.HUAWEI_MIN_TICK_INTERVAL_MS ?? 60000);
-let lastTickAt = 0;
-// snapshot time-slot (แนะนำ 5 นาที เพื่อ match rate limit)
 const SNAPSHOT_SLOT_MS = Number(process.env.HUAWEI_SNAPSHOT_SLOT_MS ?? 5 * 60000);
-// station cache
 const STATION_CACHE_TTL_MS = Number(process.env.HUAWEI_STATION_CACHE_TTL_MS ?? 6 * 60 * 60 * 1000);
-let stationCache = null;
-// NOTE: ตอนนี้มีหลาย Huawei account -> ไม่ pause ทั้งระบบแล้ว
-// ให้ HuaweiService ของแต่ละ account จัดการ throttle/cooldown ของตัวเอง
+const DEVICE_META_TTL_MS = Number(process.env.HUAWEI_DEVICE_META_TTL_MS ?? 24 * 60 * 60 * 1000);
+const STRING_SLOT_COUNT = Math.min(36, Math.max(1, Number(process.env.HUAWEI_STRING_SLOT_COUNT ?? 36)));
 const PERSONAL_RATE_LIMIT_PAUSE_MS = Number(process.env.HUAWEI_PERSONAL_RATE_LIMIT_PAUSE_MS ?? 5 * 60000);
 const SYSTEM_BUSY_PAUSE_MS = Number(process.env.HUAWEI_SYSTEM_BUSY_PAUSE_MS ?? 60000);
-// retry queue: plant ไหน fail ให้ดันเข้าคิว แล้ว tick ถัดไปจะหยิบก่อน
-const retryQueue = [];
-function enqueueRetry(stationCode) {
-    if (!retryQueue.includes(stationCode))
-        retryQueue.unshift(stationCode);
-}
-// Inverter devTypeId ต่างกันตาม tenant (คุณเจอ 351)
-// ปรับผ่าน env: HUAWEI_INVERTER_DEV_TYPE_IDS="351,1"
 const INVERTER_DEV_TYPE_IDS = new Set(String(process.env.HUAWEI_INVERTER_DEV_TYPE_IDS ?? '351,1')
     .split(',')
     .map((x) => Number(x.trim()))
     .filter((x) => Number.isFinite(x)));
 const DEBUG = String(process.env.SYNC_DEBUG ?? '').trim() === '1';
-// ---------------- Rate limit handler (body-level) ----------------
+let lastTickAt = 0;
+let deviceSyncCursor = 0;
+let stationCache = null;
+const retryQueue = [];
+const onDemandSyncInflight = new Map();
+function enqueueRetry(stationCode) {
+    if (!retryQueue.includes(stationCode))
+        retryQueue.unshift(stationCode);
+}
+function normalizeOnDemandOptions(opts) {
+    const includeSiteRealtime = opts?.includeSiteRealtime ?? true;
+    const includeInventory = opts?.includeInventory ?? true;
+    const includeDeviceDetail = opts?.includeDeviceDetail ?? true;
+    return {
+        includeSiteRealtime,
+        forceSiteRealtime: opts?.forceSiteRealtime ?? false,
+        includeInventory,
+        forceInventory: opts?.forceInventory ?? false,
+        includeDeviceDetail,
+        forceDeviceDetail: opts?.forceDeviceDetail ?? false,
+    };
+}
+function makeOnDemandInflightKey(plantCode, opts) {
+    const normalized = normalizeOnDemandOptions(opts);
+    return `${plantCode}::${JSON.stringify(normalized)}`;
+}
+function pickStationCode(input) {
+    return (input?.plantCode ?? input?.stationCode)?.toString() ?? null;
+}
 function handleFailCode(client, failCode, context, stationCode) {
     const code = Number(failCode);
     if (!Number.isFinite(code))
@@ -83,47 +109,35 @@ function handleFailCode(client, failCode, context, stationCode) {
         console.warn(`🚫 ${context} rate-limited (407) ${stationCode ? `station=${stationCode}` : ''}`);
         if (stationCode)
             enqueueRetry(stationCode);
-        client.notifyRateLimit({
-            kind: 'personal',
-            delayMs: PERSONAL_RATE_LIMIT_PAUSE_MS,
-            reason: `${context} failCode=407`,
-        });
+        client.notifyRateLimit({ kind: 'personal', delayMs: PERSONAL_RATE_LIMIT_PAUSE_MS, reason: `${context} failCode=407` });
         return true;
     }
     if (code === 403 || code === 429) {
         console.warn(`⛔ ${context} system busy (${code}) ${stationCode ? `station=${stationCode}` : ''}`);
         if (stationCode)
             enqueueRetry(stationCode);
-        client.notifyRateLimit({
-            kind: 'system',
-            delayMs: SYSTEM_BUSY_PAUSE_MS,
-            reason: `${context} failCode=${code}`,
-        });
+        client.notifyRateLimit({ kind: 'system', delayMs: SYSTEM_BUSY_PAUSE_MS, reason: `${context} failCode=${code}` });
         return true;
     }
-    // บาง tenant ใช้ 305 = token expired
     if (code === 305) {
         console.warn(`🔑 ${context} token expired (305) ${stationCode ? `station=${stationCode}` : ''}`);
         if (stationCode)
             enqueueRetry(stationCode);
-        // force relogin แบบ “ครั้งเดียว” แล้วให้ tick ถัดไปลองใหม่
         client.ensureLoggedIn({ force: true }).catch(() => undefined);
         return true;
     }
     return false;
 }
-// ---------------- Stations cache ----------------
 async function refreshStationsIfNeeded() {
     const now = Date.now();
     if (stationCache && now < stationCache.expiresAt && stationCache.stationCodes.length > 0) {
         return stationCache.stationCodes;
     }
-    // ดึง stations ใช้ BACKUP เพื่อลดภาระ MAIN
     const stationClient = huaweiPool_1.huaweiClients.backup;
     try {
         const stationCodes = [];
         let pageNo = 1;
-        const pageSize = Number(process.env.HUAWEI_STATION_PAGE_SIZE ?? 100);
+        const pageSize = Math.min(100, Math.max(1, Number(process.env.HUAWEI_STATION_PAGE_SIZE ?? 100)));
         while (true) {
             const res = await stationClient.stations({ pageNo, pageSize });
             if (!res?.success) {
@@ -149,6 +163,8 @@ async function refreshStationsIfNeeded() {
                         latitude: st.latitude != null ? Number(st.latitude) : undefined,
                         longitude: st.longitude != null ? Number(st.longitude) : undefined,
                         capacityKWp: st.capacity != null ? Number(st.capacity) : 0,
+                        gridConnectionDate: parseDate(st.gridConnectionDate) ?? undefined,
+                        siteMetaSyncedAt: new Date(),
                     },
                     update: {
                         name: (st.plantName ?? st.stationName ?? code).toString(),
@@ -156,6 +172,8 @@ async function refreshStationsIfNeeded() {
                         latitude: st.latitude != null ? Number(st.latitude) : undefined,
                         longitude: st.longitude != null ? Number(st.longitude) : undefined,
                         capacityKWp: st.capacity != null ? Number(st.capacity) : undefined,
+                        gridConnectionDate: parseDate(st.gridConnectionDate) ?? undefined,
+                        siteMetaSyncedAt: new Date(),
                     },
                 });
             }
@@ -177,281 +195,232 @@ async function refreshStationsIfNeeded() {
     }
     catch (e) {
         console.warn('⚠️ Cannot refresh stations from Huawei (will fallback to DB):', e?.message ?? e);
-        const sites = await prisma_1.default.site.findMany({ select: { plantCode: true }, orderBy: [{ createdAt: 'asc' }], take: 5000 });
+        const sites = (await prisma_1.default.site.findMany({ select: { plantCode: true }, orderBy: [{ createdAt: 'asc' }], take: 5000 }));
         const codes = sites.map((s) => s.plantCode).filter(Boolean);
         stationCache = { expiresAt: now + 10 * 60000, stationCodes: codes };
         console.log(`✅ Using DB fallback station codes: ${codes.length} stations (short ttl=10min)`);
         return codes;
     }
 }
-// ---------------- Main tick ----------------
-const syncMonitoringTick = async () => {
-    console.log('⏳ Starting Sync Monitoring Tick...');
-    // reset counter ต่อ tick (ทุก account ที่ใช้ bulk)
-    huaweiPool_1.huaweiClients.main.resetStats();
-    huaweiPool_1.huaweiClients.backup.resetStats();
-    // สถิติ run_state ต่อ tick (ช่วยจูน HUAWEI_FAULT_RUN_STATES ให้แม่น)
-    const runStateCount = new Map();
+function normalizeDeviceTarget(inv) {
+    const devId = inv.id != null ? String(inv.id) : '';
+    const devTypeId = Number(inv.devTypeId);
+    if (!devId || !Number.isFinite(devTypeId))
+        return null;
+    return {
+        devId,
+        devTypeId,
+        serialNumber: inv.esnCode ? String(inv.esnCode) : `DEV-${devId}`,
+        devName: (inv.devName ?? devId).toString(),
+        model: (inv.model ?? inv.invType ?? 'UNKNOWN').toString(),
+        softwareVersion: inv.softwareVersion ?? null,
+    };
+}
+async function getCachedDeviceTargets(siteId) {
+    const rows = (await prisma_1.default.inverter.findMany({
+        where: { siteId, huaweiDevId: { not: null }, huaweiDevTypeId: { not: null } },
+        select: {
+            huaweiDevId: true,
+            huaweiDevTypeId: true,
+            serialNumber: true,
+            name: true,
+            model: true,
+            softwareVersion: true,
+        },
+        orderBy: { id: 'asc' },
+    }));
+    return rows
+        .map((row) => {
+        const devId = row.huaweiDevId ? String(row.huaweiDevId) : '';
+        const devTypeId = row.huaweiDevTypeId != null ? Number(row.huaweiDevTypeId) : NaN;
+        if (!devId || !Number.isFinite(devTypeId))
+            return null;
+        return {
+            devId,
+            devTypeId,
+            serialNumber: row.serialNumber,
+            devName: row.name,
+            model: row.model,
+            softwareVersion: row.softwareVersion,
+        };
+    })
+        .filter(Boolean);
+}
+async function ensurePlantDeviceMetadata(site, client, opts) {
+    const force = opts?.force ?? false;
     const now = Date.now();
-    if (lastTickAt && now - lastTickAt < MIN_TICK_INTERVAL_MS) {
-        console.log(`⏭️ Skip sync tick (min interval ${MIN_TICK_INTERVAL_MS}ms not reached)`);
-        return;
+    const cached = await getCachedDeviceTargets(site.id);
+    const isFresh = !!site.deviceMetaSyncedAt && now - site.deviceMetaSyncedAt.getTime() < DEVICE_META_TTL_MS;
+    if (!force && isFresh && cached.length > 0) {
+        return cached;
     }
-    lastTickAt = now;
-    try {
-        // preload stations (cache)
-        await refreshStationsIfNeeded();
-        // decide which plants to sync
-        const plantCodes = [];
-        while (plantCodes.length < MAX_PLANTS_PER_TICK && retryQueue.length > 0) {
-            const code = retryQueue.shift();
-            if (code)
-                plantCodes.push(code);
-        }
-        if (plantCodes.length < MAX_PLANTS_PER_TICK) {
-            const more = await prisma_1.default.site.findMany({
-                orderBy: [{ updatedAt: 'asc' }, { createdAt: 'asc' }],
-                take: MAX_PLANTS_PER_TICK - plantCodes.length,
-            });
-            plantCodes.push(...more.map((s) => s.plantCode));
-        }
-        if (plantCodes.length === 0) {
-            console.log('⚠️ No sites to sync.');
-            return;
-        }
-        const ts = snapTsNow(SNAPSHOT_SLOT_MS);
-        // สำหรับ debug: นับ run_state ที่เจอใน tick นี้
-        const runStateCount = new Map();
-        for (const stationCode of plantCodes) {
-            const client = (0, huaweiPool_1.pickBulkClient)(stationCode);
-            const site = await prisma_1.default.site.findUnique({ where: { plantCode: stationCode } });
-            if (!site)
-                continue;
-            console.log(`🔁 [${client.label ?? 'BULK'}] Sync plant ${stationCode} (${site.name ?? ''})`);
-            // (A) getDevList
-            const end4 = await client.getDevList(stationCode);
-            if (!end4?.success) {
-                handleFailCode(client, end4?.failCode, 'getDevList', stationCode);
-                console.warn('⚠️ getDevList failed:', { failCode: end4?.failCode, message: end4?.message });
-                enqueueRetry(stationCode);
-                continue;
-            }
-            const devices = end4?.data ?? [];
-            const inverterDevices = devices.filter((d) => INVERTER_DEV_TYPE_IDS.has(Number(d.devTypeId)));
-            // upsert inverters
-            for (const inv of inverterDevices) {
-                const devIdStr = String(inv.id);
-                const sn = inv.esnCode ? String(inv.esnCode) : `DEV-${devIdStr}`;
-                await prisma_1.default.inverter.upsert({
-                    where: { serialNumber: sn },
-                    create: {
-                        serialNumber: sn,
-                        name: (inv.devName ?? devIdStr).toString(),
-                        model: (inv.model ?? inv.invType ?? 'UNKNOWN').toString(),
-                        siteId: site.id,
-                        huaweiDevId: devIdStr,
-                        stationCode: stationCode,
-                    },
-                    update: {
-                        name: (inv.devName ?? devIdStr).toString(),
-                        model: (inv.model ?? inv.invType ?? 'UNKNOWN').toString(),
-                        siteId: site.id,
-                        huaweiDevId: devIdStr,
-                        stationCode: stationCode,
-                    },
-                });
-            }
-            console.log(`✅ Seeded/updated ${inverterDevices.length} inverters for plant ${stationCode}`);
-            // (B) getDevRealKpi: ยิงแยกตาม devTypeId
-            const groups = new Map();
-            for (const d of inverterDevices) {
-                const t = Number(d.devTypeId);
-                if (!groups.has(t))
-                    groups.set(t, []);
-                groups.get(t).push(String(d.id));
-            }
-            for (const [devTypeId, devIds] of groups.entries()) {
-                const batches = chunk(devIds, DEV_BATCH_SIZE);
-                for (const batchIds of batches) {
-                    const end5 = await client.getDevRealKpi({ devTypeId, devIds: batchIds });
-                    if (!end5?.success || !Array.isArray(end5?.data)) {
-                        handleFailCode(client, end5?.failCode, 'getDevRealKpi', stationCode);
-                        console.warn('⚠️ getDevRealKpi failed:', { failCode: end5?.failCode, message: end5?.message });
-                        enqueueRetry(stationCode);
-                        continue;
-                    }
-                    for (const item of end5.data) {
-                        const devId = String(item.devId ?? '');
-                        const map = item.dataItemMap ?? {};
-                        // active_power: ถ้า field ไม่มา ให้ "ไม่เขียนทับ" ค่าเดิม (กัน 0 หลอก)
-                        const activePowerRaw = map.active_power;
-                        const activePowerVal = activePowerRaw != null && Number.isFinite(Number(activePowerRaw)) ? Number(activePowerRaw) : null;
-                        const dayEnergy = map.day_cap != null ? Number(map.day_cap) : null;
-                        const runState = map.run_state != null && Number.isFinite(Number(map.run_state)) ? Number(map.run_state) : null;
-                        const totalEnergy = map.total_cap != null ? Number(map.total_cap) : null;
-                        const temperature = map.temperature != null ? Number(map.temperature) : null;
-                        const powerFactor = map.power_factor != null ? Number(map.power_factor) : null;
-                        if (runState != null) {
-                            runStateCount.set(runState, (runStateCount.get(runState) ?? 0) + 1);
-                        }
-                        const inv = await prisma_1.default.inverter.findFirst({ where: { huaweiDevId: devId, siteId: site.id } });
-                        if (!inv)
-                            continue;
-                        const derivedStatus = deriveInverterStatus(runState);
-                        await prisma_1.default.inverter.update({
-                            where: { id: inv.id },
-                            // NOTE: cast to any so code compiles even if Prisma Client hasn't been regenerated yet.
-                            // After running `prisma migrate` + `prisma generate`, this remains valid.
-                            data: {
-                                // เขียนเฉพาะเมื่อมีค่าใหม่จริง
-                                ...(activePowerVal != null ? { activePower: activePowerVal } : {}),
-                                lastDailyEnergy: dayEnergy ?? inv.lastDailyEnergy,
-                                status: derivedStatus,
-                                runState: runState,
-                                lastSyncAt: new Date(),
-                            },
-                        });
-                        const snap = await prisma_1.default.inverterKpiSnapshot.upsert({
-                            where: { inverterId_ts: { inverterId: inv.id, ts } },
-                            create: {
-                                inverterId: inv.id,
-                                ts,
-                                activePower: activePowerVal != null ? activePowerVal : 0,
-                                dayEnergy: dayEnergy != null && Number.isFinite(dayEnergy) ? dayEnergy : 0,
-                                totalEnergy: totalEnergy != null && Number.isFinite(totalEnergy) ? totalEnergy : null,
-                                runState: runState != null && Number.isFinite(runState) ? runState : null,
-                                temperature: temperature != null && Number.isFinite(temperature) ? temperature : null,
-                                powerFactor: powerFactor != null && Number.isFinite(powerFactor) ? powerFactor : null,
-                                raw: item,
-                            },
-                            update: {
-                                activePower: activePowerVal != null ? activePowerVal : 0,
-                                dayEnergy: dayEnergy != null && Number.isFinite(dayEnergy) ? dayEnergy : 0,
-                                totalEnergy: totalEnergy != null && Number.isFinite(totalEnergy) ? totalEnergy : null,
-                                runState: runState != null && Number.isFinite(runState) ? runState : null,
-                                temperature: temperature != null && Number.isFinite(temperature) ? temperature : null,
-                                powerFactor: powerFactor != null && Number.isFinite(powerFactor) ? powerFactor : null,
-                                raw: item,
-                            },
-                        });
-                        const rows = [];
-                        for (let n = 1; n <= 20; n++) {
-                            const uKey = `pv${n}_u`;
-                            const iKey = `pv${n}_i`;
-                            const vRaw = map[uKey] != null ? Number(map[uKey]) : null;
-                            const cRaw = map[iKey] != null ? Number(map[iKey]) : null;
-                            const v = vRaw != null && Number.isFinite(vRaw) ? vRaw : null;
-                            const c = cRaw != null && Number.isFinite(cRaw) ? cRaw : null;
-                            rows.push({
-                                snapshotId: snap.id,
-                                stringNo: n,
-                                voltage: v,
-                                current: c,
-                                status: deriveStringStatus(v, c),
-                            });
-                        }
-                        await prisma_1.default.$transaction([
-                            prisma_1.default.inverterStringSnapshot.deleteMany({ where: { snapshotId: snap.id } }),
-                            prisma_1.default.inverterStringSnapshot.createMany({ data: rows }),
-                        ]);
-                    }
-                }
-            }
-            console.log(`✅ Sync done for plant ${stationCode}`);
-            await prisma_1.default.site.update({ where: { id: site.id }, data: { updatedAt: new Date() } });
-        }
-        console.log('✅ Sync tick done.');
-    }
-    catch (error) {
-        console.error('❌ Sync Job Failed:', error?.message ?? error);
-    }
-    finally {
-        // endpoint part summary (per tick)
-        console.log('📊 Huawei API call summary:', {
-            MAIN: huaweiPool_1.huaweiClients.main.getStats(),
-            BACKUP: huaweiPool_1.huaweiClients.backup.getStats(),
-        });
-        if (runStateCount.size > 0) {
-            const top = Array.from(runStateCount.entries())
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 20)
-                .map(([k, v]) => `${k}:${v}`)
-                .join(', ');
-            console.log(`📈 run_state distribution (top): ${top}`);
-            console.log(`ℹ️ Tune fault mapping via env: HUAWEI_FAULT_RUN_STATES="..."`);
-        }
-        if (DEBUG) {
-            console.log('📌 retryQueue size:', retryQueue.length, retryQueue.slice(0, 10));
-        }
-    }
-};
-exports.syncMonitoringTick = syncMonitoringTick;
-exports.syncInverterData = exports.syncMonitoringTick;
-/**
- * ON-DEMAND: refresh a single plant right now using ONDEMAND account.
- * Used when user opens Monitoring pages and expects latest values.
- */
-async function syncPlantOnDemand(plantCode) {
-    const client = (0, huaweiPool_1.pickOnDemandClient)();
-    const site = await prisma_1.default.site.findUnique({ where: { plantCode } });
-    if (!site)
-        throw new Error(`Site not found for plantCode=${plantCode}`);
-    console.log(`⚡ [ONDEMAND] Refresh plant ${plantCode} (${site.name ?? ''})`);
-    const end4 = await client.getDevList(plantCode);
+    const end4 = await client.getDevList(site.plantCode);
     if (!end4?.success) {
-        handleFailCode(client, end4?.failCode, 'getDevList(ondemand)', plantCode);
-        throw new Error(`ONDEMAND getDevList failed (failCode=${end4?.failCode})`);
+        handleFailCode(client, end4?.failCode, 'getDevList', site.plantCode);
+        if (cached.length > 0) {
+            console.warn(`⚠️ Falling back to cached device metadata for ${site.plantCode}`);
+            return cached;
+        }
+        throw new Error(`getDevList failed (failCode=${end4?.failCode})`);
     }
     const devices = end4?.data ?? [];
-    const inverterDevices = devices.filter((d) => INVERTER_DEV_TYPE_IDS.has(Number(d.devTypeId)));
-    for (const inv of inverterDevices) {
-        const devIdStr = String(inv.id);
-        const sn = inv.esnCode ? String(inv.esnCode) : `DEV-${devIdStr}`;
+    const inverterTargets = devices
+        .filter((d) => INVERTER_DEV_TYPE_IDS.has(Number(d.devTypeId)))
+        .map(normalizeDeviceTarget)
+        .filter(Boolean);
+    for (const inv of inverterTargets) {
         await prisma_1.default.inverter.upsert({
-            where: { serialNumber: sn },
+            where: { serialNumber: inv.serialNumber },
             create: {
-                serialNumber: sn,
-                name: (inv.devName ?? devIdStr).toString(),
-                model: (inv.model ?? inv.invType ?? 'UNKNOWN').toString(),
+                serialNumber: inv.serialNumber,
+                name: inv.devName,
+                model: inv.model,
                 siteId: site.id,
-                huaweiDevId: devIdStr,
-                stationCode: plantCode,
+                huaweiDevId: inv.devId,
+                huaweiDevTypeId: inv.devTypeId,
+                stationCode: site.plantCode,
+                softwareVersion: inv.softwareVersion ?? undefined,
             },
             update: {
-                name: (inv.devName ?? devIdStr).toString(),
-                model: (inv.model ?? inv.invType ?? 'UNKNOWN').toString(),
+                name: inv.devName,
+                model: inv.model,
                 siteId: site.id,
-                huaweiDevId: devIdStr,
-                stationCode: plantCode,
+                huaweiDevId: inv.devId,
+                huaweiDevTypeId: inv.devTypeId,
+                stationCode: site.plantCode,
+                softwareVersion: inv.softwareVersion ?? undefined,
             },
         });
     }
+    await prisma_1.default.site.update({
+        where: { id: site.id },
+        data: { deviceMetaSyncedAt: new Date() },
+    });
+    if (DEBUG) {
+        console.log(`🧰 Refreshed device metadata for ${site.plantCode}: ${inverterTargets.length} inverter targets`);
+    }
+    return inverterTargets.length > 0 ? inverterTargets : cached;
+}
+async function syncSiteRealtimeBatch(plantCodes, batchIndex) {
+    if (plantCodes.length === 0)
+        return { synced: 0 };
+    const primary = batchIndex % 2 === 0 ? huaweiPool_1.huaweiClients.main : huaweiPool_1.huaweiClients.backup;
+    const secondary = batchIndex % 2 === 0 ? huaweiPool_1.huaweiClients.backup : huaweiPool_1.huaweiClients.main;
+    const res = await (0, huaweiService_1.callWithFailover)(primary, secondary, (svc) => svc.getStationRealKpi(plantCodes), {
+        tag: `getStationRealKpi batch=${batchIndex + 1}`,
+    });
+    if (!res?.success || !Array.isArray(res?.data)) {
+        handleFailCode(primary, res?.failCode, 'getStationRealKpi(batch)');
+        throw new Error(`getStationRealKpi failed (failCode=${res?.failCode})`);
+    }
+    const sites = (await prisma_1.default.site.findMany({
+        where: { plantCode: { in: plantCodes } },
+        select: { id: true, plantCode: true },
+    }));
+    const byCode = new Map(sites.map((s) => [s.plantCode, s.id]));
+    for (const row of res.data) {
+        const stationCode = String(row?.stationCode ?? '');
+        const siteId = byCode.get(stationCode);
+        if (!siteId)
+            continue;
+        const map = row?.dataItemMap ?? {};
+        const dayEnergyKWh = parseNum(map.day_power);
+        const monthEnergyKWh = parseNum(map.month_power);
+        const totalEnergyKWh = parseNum(map.total_power);
+        const dayIncome = parseNum(map.day_income);
+        const totalIncome = parseNum(map.total_income);
+        const dayOnGridEnergyKWh = parseNum(map.day_on_grid_energy);
+        const dayUseEnergyKWh = parseNum(map.day_use_energy);
+        const plantHealthState = parseNum(map.real_health_state);
+        const currentPowerKW = parseNum(map.current_power) ??
+            (() => {
+                const maybe = parseNum(map.active_power);
+                return maybe != null && Math.abs(maybe) <= 10000 ? maybe : null;
+            })();
+        await prisma_1.default.site.update({
+            where: { id: siteId },
+            data: {
+                ...(currentPowerKW != null ? { currentPowerKW } : {}),
+                ...(dayEnergyKWh != null ? { dayEnergyKWh } : {}),
+                ...(monthEnergyKWh != null ? { monthEnergyKWh } : {}),
+                ...(totalEnergyKWh != null ? { totalEnergyKWh } : {}),
+                ...(dayIncome != null ? { dayIncome } : {}),
+                ...(totalIncome != null ? { totalIncome } : {}),
+                ...(dayOnGridEnergyKWh != null ? { dayOnGridEnergyKWh } : {}),
+                ...(dayUseEnergyKWh != null ? { dayUseEnergyKWh } : {}),
+                ...(plantHealthState != null ? { plantHealthState } : {}),
+                siteRealtimeRaw: row,
+                lastPlantSyncAt: new Date(),
+            },
+        });
+        if (dayEnergyKWh != null) {
+            await prisma_1.default.siteDailyEnergy.upsert({
+                where: { siteId_date: { siteId, date: startOfLocalDay() } },
+                create: {
+                    siteId,
+                    date: startOfLocalDay(),
+                    energyKWh: dayEnergyKWh,
+                    raw: row,
+                },
+                update: {
+                    energyKWh: dayEnergyKWh,
+                    raw: row,
+                },
+            });
+        }
+    }
+    return { synced: res.data.length };
+}
+async function syncPlantDevices(site, client, runStateCount, opts) {
+    const includeInventory = opts?.includeInventory ?? true;
+    const includeDeviceDetail = opts?.includeDeviceDetail ?? true;
+    const forceInventory = opts?.forceInventory ?? false;
+    const forceDeviceDetail = opts?.forceDeviceDetail ?? false;
+    const deviceTargets = includeInventory
+        ? await ensurePlantDeviceMetadata(site, client, { force: forceInventory })
+        : await getCachedDeviceTargets(site.id);
+    if (deviceTargets.length === 0) {
+        return { ok: true, inverters: 0, currentPowerKW: null, usedCachedInventory: !includeInventory };
+    }
+    if (!includeDeviceDetail && !forceDeviceDetail) {
+        return {
+            ok: true,
+            inverters: deviceTargets.length,
+            currentPowerKW: null,
+            skippedDeviceDetail: true,
+            usedCachedInventory: !includeInventory,
+        };
+    }
     const groups = new Map();
-    for (const d of inverterDevices) {
-        const t = Number(d.devTypeId);
-        if (!groups.has(t))
-            groups.set(t, []);
-        groups.get(t).push(String(d.id));
+    for (const d of deviceTargets) {
+        if (!groups.has(d.devTypeId))
+            groups.set(d.devTypeId, []);
+        groups.get(d.devTypeId).push(d.devId);
     }
     const ts = snapTsNow(SNAPSHOT_SLOT_MS);
+    let siteCurrentPowerKW = 0;
+    let hasCurrentPower = false;
     for (const [devTypeId, devIds] of groups.entries()) {
         const batches = chunk(devIds, DEV_BATCH_SIZE);
         for (const batchIds of batches) {
             const end5 = await client.getDevRealKpi({ devTypeId, devIds: batchIds });
             if (!end5?.success || !Array.isArray(end5?.data)) {
-                handleFailCode(client, end5?.failCode, 'getDevRealKpi(ondemand)', plantCode);
+                handleFailCode(client, end5?.failCode, 'getDevRealKpi', site.plantCode);
+                enqueueRetry(site.plantCode);
                 continue;
             }
             for (const item of end5.data) {
                 const devId = String(item.devId ?? '');
                 const map = item.dataItemMap ?? {};
-                const activePowerRaw = map.active_power;
-                const activePowerVal = activePowerRaw != null && Number.isFinite(Number(activePowerRaw)) ? Number(activePowerRaw) : null;
-                const dayEnergy = map.day_cap != null ? Number(map.day_cap) : null;
-                const runState = map.run_state != null && Number.isFinite(Number(map.run_state)) ? Number(map.run_state) : null;
-                const totalEnergy = map.total_cap != null ? Number(map.total_cap) : null;
-                const temperature = map.temperature != null ? Number(map.temperature) : null;
-                const powerFactor = map.power_factor != null ? Number(map.power_factor) : null;
+                const activePowerVal = parseNum(map.active_power);
+                const dayEnergy = parseNum(map.day_cap);
+                const runState = parseNum(map.run_state);
+                const totalEnergy = parseNum(map.total_cap);
+                const temperature = parseNum(map.temperature);
+                const powerFactor = parseNum(map.power_factor);
+                if (runState != null) {
+                    runStateCount.set(runState, (runStateCount.get(runState) ?? 0) + 1);
+                }
                 const inv = await prisma_1.default.inverter.findFirst({ where: { huaweiDevId: devId, siteId: site.id } });
                 if (!inv)
                     continue;
@@ -462,47 +431,47 @@ async function syncPlantOnDemand(plantCode) {
                         ...(activePowerVal != null ? { activePower: activePowerVal } : {}),
                         lastDailyEnergy: dayEnergy ?? inv.lastDailyEnergy,
                         status: derivedStatus,
-                        runState: runState,
+                        runState: runState != null ? Math.trunc(runState) : null,
                         lastSyncAt: new Date(),
                     },
                 });
+                if (activePowerVal != null) {
+                    siteCurrentPowerKW += activePowerVal;
+                    hasCurrentPower = true;
+                }
                 const snap = await prisma_1.default.inverterKpiSnapshot.upsert({
                     where: { inverterId_ts: { inverterId: inv.id, ts } },
                     create: {
                         inverterId: inv.id,
                         ts,
-                        activePower: activePowerVal != null ? activePowerVal : 0,
-                        dayEnergy: dayEnergy != null && Number.isFinite(dayEnergy) ? dayEnergy : 0,
-                        totalEnergy: totalEnergy != null && Number.isFinite(totalEnergy) ? totalEnergy : null,
-                        runState: runState != null && Number.isFinite(runState) ? runState : null,
-                        temperature: temperature != null && Number.isFinite(temperature) ? temperature : null,
-                        powerFactor: powerFactor != null && Number.isFinite(powerFactor) ? powerFactor : null,
+                        activePower: activePowerVal ?? 0,
+                        dayEnergy: dayEnergy ?? 0,
+                        totalEnergy,
+                        runState: runState != null ? Math.trunc(runState) : null,
+                        temperature,
+                        powerFactor,
                         raw: item,
                     },
                     update: {
-                        activePower: activePowerVal != null ? activePowerVal : 0,
-                        dayEnergy: dayEnergy != null && Number.isFinite(dayEnergy) ? dayEnergy : 0,
-                        totalEnergy: totalEnergy != null && Number.isFinite(totalEnergy) ? totalEnergy : null,
-                        runState: runState != null && Number.isFinite(runState) ? runState : null,
-                        temperature: temperature != null && Number.isFinite(temperature) ? temperature : null,
-                        powerFactor: powerFactor != null && Number.isFinite(powerFactor) ? powerFactor : null,
+                        activePower: activePowerVal ?? 0,
+                        dayEnergy: dayEnergy ?? 0,
+                        totalEnergy,
+                        runState: runState != null ? Math.trunc(runState) : null,
+                        temperature,
+                        powerFactor,
                         raw: item,
                     },
                 });
                 const rows = [];
-                for (let n = 1; n <= 20; n++) {
-                    const uKey = `pv${n}_u`;
-                    const iKey = `pv${n}_i`;
-                    const vRaw = map[uKey] != null ? Number(map[uKey]) : null;
-                    const cRaw = map[iKey] != null ? Number(map[iKey]) : null;
-                    const v = vRaw != null && Number.isFinite(vRaw) ? vRaw : null;
-                    const c = cRaw != null && Number.isFinite(cRaw) ? cRaw : null;
+                for (let n = 1; n <= STRING_SLOT_COUNT; n++) {
+                    const voltage = parseNum(map[`pv${n}_u`]);
+                    const current = parseNum(map[`pv${n}_i`]);
                     rows.push({
                         snapshotId: snap.id,
                         stringNo: n,
-                        voltage: v,
-                        current: c,
-                        status: deriveStringStatus(v, c),
+                        voltage,
+                        current,
+                        status: deriveStringStatus(voltage, current),
                     });
                 }
                 await prisma_1.default.$transaction([
@@ -512,6 +481,168 @@ async function syncPlantOnDemand(plantCode) {
             }
         }
     }
-    await prisma_1.default.site.update({ where: { id: site.id }, data: { updatedAt: new Date() } });
-    return { ok: true, plantCode, inverters: inverterDevices.length };
+    if (hasCurrentPower) {
+        await prisma_1.default.site.update({ where: { id: site.id }, data: { currentPowerKW: siteCurrentPowerKW } });
+    }
+    return { ok: true, inverters: deviceTargets.length, currentPowerKW: hasCurrentPower ? siteCurrentPowerKW : null };
+}
+async function syncSiteRealtimeTick() {
+    console.log('⏳ Starting Site Realtime Sync Tick...');
+    try {
+        await refreshStationsIfNeeded();
+        const sites = (await prisma_1.default.site.findMany({
+            where: { plantCode: { not: '' } },
+            select: { plantCode: true },
+            orderBy: { plantCode: 'asc' },
+            take: 5000,
+        }));
+        const plantCodes = sites.map((s) => s.plantCode).filter(Boolean);
+        if (plantCodes.length === 0) {
+            console.log('⚠️ No sites to sync for site realtime.');
+            return;
+        }
+        const batches = chunk(plantCodes, SITE_REALTIME_BATCH_SIZE);
+        let totalSynced = 0;
+        for (let i = 0; i < batches.length; i++) {
+            const result = await syncSiteRealtimeBatch(batches[i], i);
+            totalSynced += result.synced;
+        }
+        console.log(`✅ Site realtime sync done: ${totalSynced} rows across ${batches.length} batches`);
+    }
+    catch (error) {
+        console.error('❌ Site realtime sync failed:', error?.message ?? error);
+    }
+}
+const syncMonitoringTick = async () => {
+    console.log('⏳ Starting Device Sync Tick...');
+    const now = Date.now();
+    if (lastTickAt && now - lastTickAt < MIN_TICK_INTERVAL_MS) {
+        console.log(`⏭️ Skip device sync tick (min interval ${MIN_TICK_INTERVAL_MS}ms not reached)`);
+        return;
+    }
+    lastTickAt = now;
+    const runStateCount = new Map();
+    try {
+        const stationCodes = await refreshStationsIfNeeded();
+        if (stationCodes.length === 0) {
+            console.log('⚠️ No station codes available for device sync.');
+            return;
+        }
+        const picked = new Set();
+        while (picked.size < MAX_DEVICE_PLANTS_PER_TICK && retryQueue.length > 0) {
+            const code = retryQueue.shift();
+            if (code)
+                picked.add(code);
+        }
+        while (picked.size < MAX_DEVICE_PLANTS_PER_TICK && stationCodes.length > 0) {
+            const code = stationCodes[deviceSyncCursor % stationCodes.length];
+            deviceSyncCursor = (deviceSyncCursor + 1) % Math.max(stationCodes.length, 1);
+            picked.add(code);
+            if (picked.size >= stationCodes.length)
+                break;
+        }
+        if (picked.size === 0) {
+            console.log('⚠️ No sites selected for device sync.');
+            return;
+        }
+        const sites = (await prisma_1.default.site.findMany({
+            where: { plantCode: { in: Array.from(picked) } },
+            select: { id: true, plantCode: true, name: true, deviceMetaSyncedAt: true },
+            orderBy: { plantCode: 'asc' },
+        }));
+        for (const site of sites) {
+            const client = (0, huaweiPool_1.pickBulkClient)(site.plantCode);
+            console.log(`🔁 [${client.label ?? 'BULK'}] Sync device detail for ${site.plantCode} (${site.name ?? ''})`);
+            try {
+                const r = await syncPlantDevices(site, client, runStateCount, {
+                    includeInventory: true,
+                    includeDeviceDetail: true,
+                });
+                console.log(`✅ Device sync done for ${site.plantCode}: ${r.inverters} inverter targets`);
+            }
+            catch (e) {
+                enqueueRetry(site.plantCode);
+                console.warn(`⚠️ Device sync failed for ${site.plantCode}:`, e?.message ?? e);
+            }
+        }
+    }
+    catch (error) {
+        console.error('❌ Device Sync Tick Failed:', error?.message ?? error);
+    }
+    finally {
+        console.log('📊 Huawei API call summary:', {
+            MAIN: huaweiPool_1.huaweiClients.main.getStats(),
+            BACKUP: huaweiPool_1.huaweiClients.backup.getStats(),
+            ALARM: huaweiPool_1.huaweiClients.alarm.getStats(),
+            ONDEMAND: huaweiPool_1.huaweiClients.ondemand.getStats(),
+        });
+        if (runStateCount.size > 0) {
+            const top = Array.from(runStateCount.entries())
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 20)
+                .map(([k, v]) => `${k}:${v}`)
+                .join(', ');
+            console.log(`📈 run_state distribution (top): ${top}`);
+            console.log(`ℹ️ Tune fault mapping via env: HUAWEI_FAULT_RUN_STATES=\"...\"`);
+        }
+        if (DEBUG) {
+            console.log('📌 retryQueue size:', retryQueue.length, retryQueue.slice(0, 10));
+        }
+    }
+};
+exports.syncMonitoringTick = syncMonitoringTick;
+exports.syncInverterData = exports.syncMonitoringTick;
+async function syncPlantOnDemand(plantCode, opts) {
+    const normalized = normalizeOnDemandOptions(opts);
+    const inflightKey = makeOnDemandInflightKey(plantCode, normalized);
+    const existing = onDemandSyncInflight.get(inflightKey);
+    if (existing)
+        return existing;
+    const task = (async () => {
+        const client = (0, huaweiPool_1.pickOnDemandClient)();
+        const site = (await prisma_1.default.site.findUnique({
+            where: { plantCode },
+            select: { id: true, plantCode: true, name: true, deviceMetaSyncedAt: true },
+        }));
+        if (!site)
+            throw new Error(`Site not found for plantCode=${plantCode}`);
+        console.log(`⚡ [ONDEMAND] Refresh plant ${plantCode} (${site.name ?? ''})`, normalized);
+        let siteRealtimeRefreshed = false;
+        if (normalized.includeSiteRealtime) {
+            try {
+                await syncSiteRealtimeBatch([plantCode], 0);
+                siteRealtimeRefreshed = true;
+            }
+            catch (e) {
+                console.warn(`⚠️ [ONDEMAND] Site realtime refresh failed for ${plantCode}:`, e?.message ?? e);
+            }
+        }
+        const shouldTouchDevices = normalized.includeInventory || normalized.includeDeviceDetail;
+        const runStateCount = new Map();
+        const result = shouldTouchDevices
+            ? await syncPlantDevices(site, client, runStateCount, {
+                includeInventory: normalized.includeInventory,
+                forceInventory: normalized.forceInventory || normalized.forceDeviceDetail,
+                includeDeviceDetail: normalized.includeDeviceDetail,
+                forceDeviceDetail: normalized.forceDeviceDetail,
+            })
+            : { ok: true, inverters: 0, currentPowerKW: null, skippedDeviceDetail: true, usedCachedInventory: false };
+        return {
+            ok: true,
+            plantCode,
+            options: normalized,
+            siteRealtimeRefreshed,
+            inverters: result.inverters,
+            currentPowerKW: result.currentPowerKW,
+            skippedDeviceDetail: result.skippedDeviceDetail ?? false,
+            usedCachedInventory: result.usedCachedInventory ?? false,
+        };
+    })();
+    onDemandSyncInflight.set(inflightKey, task);
+    try {
+        return await task;
+    }
+    finally {
+        onDemandSyncInflight.delete(inflightKey);
+    }
 }

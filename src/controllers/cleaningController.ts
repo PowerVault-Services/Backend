@@ -2,6 +2,7 @@ import { PrismaClient, JobStatus, JobType } from '@prisma/client';
 import { Request, Response } from 'express';
 import path from 'path';
 import { sendEmailNow } from '../services/emailService';
+import { ensureLocalFilePath, resolveEmailAttachment, storeIncomingUserUpload } from '../services/storageService';
 import { generateCleaningReportPdf } from '../services/reportService';
 import { collectJobReportFiles, createReportsZip, deleteJobCascade, parseJobIds } from '../utils/jobManagement';
 
@@ -309,10 +310,14 @@ export async function saveStep2Draft(req: Request, res: Response) {
   // save files to JobAttachment
   const files = (req.files as Express.Multer.File[]) ?? [];
   for (const f of files) {
+    const stored = await storeIncomingUserUpload(f, {
+      scopeParts: ['jobs', `job_${jobId}`, 'cleaning-step2'],
+    });
+
     await prisma.jobAttachment.create({
       data: {
         jobId,
-        fileUrl: `/uploads/${path.basename(f.path)}`,
+        fileUrl: stored.fileUrl,
         fileType: 'STEP2_ATTACHMENT',
       },
     });
@@ -351,12 +356,11 @@ export async function sendStep2Email(req: Request, res: Response) {
     return res.status(400).json({ success: false, message: 'Email draft incomplete' });
   }
 
-  const att = job.attachments
-    .filter(a => a.fileType === 'STEP2_ATTACHMENT')
-    .map(a => ({
-      filename: a.fileUrl.split('/').pop() || 'file',
-      path: path.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
-    }));
+  const att = await Promise.all(
+    job.attachments
+      .filter((a) => a.fileType === 'STEP2_ATTACHMENT')
+      .map((a) => resolveEmailAttachment(a.fileUrl)),
+  );
 
   const send = await sendEmailNow({
     jobId: id,
@@ -397,10 +401,14 @@ export async function uploadEvidence(req: Request, res: Response) {
 
   const files = (req.files as Express.Multer.File[]) ?? [];
   for (const f of files) {
+    const stored = await storeIncomingUserUpload(f, {
+      scopeParts: ['jobs', `job_${jobId}`, 'cleaning-evidence', labelType],
+    });
+
     await prisma.jobAttachment.create({
       data: {
         jobId,
-        fileUrl: `/uploads/${path.basename(f.path)}`,
+        fileUrl: stored.fileUrl,
         fileType: `STEP3_${labelType}`,
       },
     });
@@ -450,19 +458,23 @@ export async function generateReport(req: Request, res: Response) {
   const attachments = job.attachments ?? [];
 
   // 1) Full page docs (แนบเป็นหน้าเต็ม) — แนะนำให้อัปโหลดเป็นรูป (jpg/png)
-  const cert = attachments
-    .filter(a => a.fileType === 'STEP3_CERTIFICATE')
-    .map(a => ({
-      title: 'เอกสารส่งมอบงาน',
-      filePath: path.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
-    }));
+  const cert = await Promise.all(
+    attachments
+      .filter((a) => a.fileType === 'STEP3_CERTIFICATE')
+      .map(async (a) => ({
+        title: 'เอกสารส่งมอบงาน',
+        filePath: await ensureLocalFilePath(a.fileUrl),
+      })),
+  );
 
-  const layout = attachments
-    .filter(a => a.fileType === 'STEP3_LAYOUT')
-    .map(a => ({
-      title: 'Layout',
-      filePath: path.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
-    }));
+  const layout = await Promise.all(
+    attachments
+      .filter((a) => a.fileType === 'STEP3_LAYOUT')
+      .map(async (a) => ({
+        title: 'Layout',
+        filePath: await ensureLocalFilePath(a.fileUrl),
+      })),
+  );
 
   // 2) Evidence groups (Step3.1)
   // NOTE: ฝั่งหน้าเว็บ Step3.1 มีหัวข้อย่อยหลายแบบ (ก่อน/ขณะ/หลัง - ล้างแผง / ทำความสะอาดห้องอินเวอร์เตอร์ ฯลฯ)
@@ -506,7 +518,7 @@ export async function generateReport(req: Request, res: Response) {
     if (!grouped.has(groupTitle)) grouped.set(groupTitle, []);
     grouped.get(groupTitle)!.push({
       label,
-      filePath: path.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
+      filePath: await ensureLocalFilePath(a.fileUrl),
     });
   }
 
@@ -587,7 +599,7 @@ export async function sendStep5Email(req: Request, res: Response) {
   const cleaning = await prisma.cleaningJob.findUnique({ where: { jobId: id } });
   if (!cleaning?.reportFileUrl) return res.status(400).json({ success: false, message: 'Report not generated' });
 
-  const reportAbs = path.join(process.cwd(), cleaning.reportFileUrl.replace('/uploads/', 'uploads/'));
+  const reportAbs = await ensureLocalFilePath(cleaning.reportFileUrl);
 
   const send = await sendEmailNow({
     jobId: id,

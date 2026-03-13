@@ -1,7 +1,4 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listProjects = listProjects;
 exports.listServiceJobs = listServiceJobs;
@@ -18,8 +15,8 @@ exports.updateServiceJob = updateServiceJob;
 exports.deleteServiceJob = deleteServiceJob;
 exports.downloadServiceReportsZip = downloadServiceReportsZip;
 const client_1 = require("@prisma/client");
-const path_1 = __importDefault(require("path"));
 const emailService_1 = require("../services/emailService");
+const storageService_1 = require("../services/storageService");
 const reportService_1 = require("../services/reportService");
 const jobManagement_1 = require("../utils/jobManagement");
 const prisma = new client_1.PrismaClient();
@@ -305,10 +302,13 @@ async function saveStep2Draft(req, res) {
         return res.status(400).json({ success: false, message: 'jobId is required' });
     const files = req.files ?? [];
     for (const f of files) {
+        const stored = await (0, storageService_1.storeIncomingUserUpload)(f, {
+            scopeParts: ['jobs', `job_${jobId}`, 'service-step2'],
+        });
         await prisma.jobAttachment.create({
             data: {
                 jobId,
-                fileUrl: `/uploads/${path_1.default.basename(f.path)}`,
+                fileUrl: stored.fileUrl,
                 fileType: 'SERVICE_STEP2_ATTACHMENT',
             },
         });
@@ -341,12 +341,9 @@ async function sendStep2Email(req, res) {
     if (!service?.step2EmailTo || !service.step2EmailSubject || !service.step2EmailBody) {
         return res.status(400).json({ success: false, message: 'Email draft incomplete (ต้องมี To/Subject/Body)' });
     }
-    const att = (job.attachments ?? [])
+    const att = await Promise.all((job.attachments ?? [])
         .filter((a) => a.fileType === 'SERVICE_STEP2_ATTACHMENT')
-        .map((a) => ({
-        filename: a.fileUrl.split('/').pop() || 'file',
-        path: path_1.default.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
-    }));
+        .map((a) => (0, storageService_1.resolveEmailAttachment)(a.fileUrl)));
     const send = await (0, emailService_1.sendEmailNow)({
         jobId: id,
         step: 2,
@@ -386,19 +383,25 @@ async function saveStep3Draft(req, res) {
     const formFile = files.serviceReport?.[0] ?? undefined;
     const evidenceFiles = files.evidence ?? [];
     if (formFile) {
+        const stored = await (0, storageService_1.storeIncomingUserUpload)(formFile, {
+            scopeParts: ['jobs', `job_${jobId}`, 'service-form'],
+        });
         await prisma.jobAttachment.create({
             data: {
                 jobId,
-                fileUrl: `/uploads/${path_1.default.basename(formFile.path)}`,
+                fileUrl: stored.fileUrl,
                 fileType: 'SERVICE_REPORT_FORM',
             },
         });
     }
     for (const f of evidenceFiles) {
+        const stored = await (0, storageService_1.storeIncomingUserUpload)(f, {
+            scopeParts: ['jobs', `job_${jobId}`, 'service-evidence'],
+        });
         await prisma.jobAttachment.create({
             data: {
                 jobId,
-                fileUrl: `/uploads/${path_1.default.basename(f.path)}`,
+                fileUrl: stored.fileUrl,
                 fileType: 'SERVICE_EVIDENCE',
             },
         });
@@ -503,17 +506,17 @@ async function generateReport(req, res) {
     if (!service)
         return res.status(404).json({ success: false, message: 'ServiceJob not found' });
     const attachments = job.attachments ?? [];
-    const form = attachments
+    const formAttachment = attachments
         .filter((a) => a.fileType === 'SERVICE_REPORT_FORM')
-        .slice(-1)
-        .map((a) => path_1.default.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')))[0];
-    const evidence = attachments
+        .slice(-1)[0];
+    const form = formAttachment ? await (0, storageService_1.ensureLocalFilePath)(formAttachment.fileUrl) : undefined;
+    const evidence = await Promise.all(attachments
         .filter((a) => a.fileType === 'SERVICE_EVIDENCE')
         .slice(0, 12)
-        .map((a) => ({
+        .map(async (a) => ({
         label: 'รูปภาพ',
-        filePath: path_1.default.join(process.cwd(), a.fileUrl.replace('/uploads/', 'uploads/')),
-    }));
+        filePath: await (0, storageService_1.ensureLocalFilePath)(a.fileUrl),
+    })));
     const report = await (0, reportService_1.generateServiceReportPdf)({
         jobNo: job.jobNo,
         projectName: service.projectName ?? job.site.name,
@@ -584,7 +587,7 @@ async function sendStep5Email(req, res) {
     const service = await prisma.serviceJob.findUnique({ where: { jobId: id } });
     if (!service?.reportFileUrl)
         return res.status(400).json({ success: false, message: 'Report not generated' });
-    const reportAbs = path_1.default.join(process.cwd(), service.reportFileUrl.replace('/uploads/', 'uploads/'));
+    const reportAbs = await (0, storageService_1.ensureLocalFilePath)(service.reportFileUrl);
     const send = await (0, emailService_1.sendEmailNow)({
         jobId: id,
         step: 5,

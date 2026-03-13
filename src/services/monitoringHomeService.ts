@@ -1,5 +1,6 @@
 import prisma from '../config/prisma';
 import { pickOnDemandClient } from './huaweiPool';
+import { getCachedPlantKpi } from './huaweiKpiCache';
 import { syncPlantOnDemand } from './syncService';
 
 const AUX_DEVICE_META_CACHE_TTL_MS = Number(process.env.HUAWEI_AUX_DEVICE_META_CACHE_TTL_MS ?? 6 * 60 * 60 * 1000);
@@ -397,8 +398,6 @@ export async function getEnergyManagementSeries(siteId: number, opts?: { view?: 
   const site = await getSiteOrThrow(siteId);
   const view: MonitoringView = opts?.view ?? 'day';
   const anchor = parseRequestedAnchor(view, opts?.date ?? null);
-  const client = pickOnDemandClient();
-
   let endpoint = '/thirdData/getKpiStationHour';
   let start = startOfDay(anchor);
   let end = addDays(start, 1);
@@ -427,7 +426,8 @@ export async function getEnergyManagementSeries(siteId: number, opts?: { view?: 
     collectTime = new Date(anchor.getFullYear(), 5, 15, 12, 0, 0, 0);
   }
 
-  const response: any = await client.postRaw(endpoint, {
+  const response: any = await getCachedPlantKpi({
+    endpoint,
     stationCodes: site.plantCode,
     collectTime: collectTime.getTime(),
   });

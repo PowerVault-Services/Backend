@@ -12,6 +12,7 @@ class HuaweiService {
     constructor(creds) {
         this.token = null;
         this.loginPromise = null;
+        this.aliasLabels = new Set();
         this.stats = {
             login: 0,
             stations: 0,
@@ -38,6 +39,7 @@ class HuaweiService {
         this.userName = creds?.userName ?? envUser ?? '';
         this.systemCode = creds?.systemCode ?? envPass ?? '';
         this.label = creds?.label ?? creds?.userName ?? 'HUAWEI';
+        this.aliasLabels.add(this.label);
         this.client = axios_1.default.create({
             baseURL: this.baseUrl,
             headers: { 'Content-Type': 'application/json' },
@@ -103,6 +105,18 @@ class HuaweiService {
             }
             return Promise.reject(error);
         });
+    }
+    registerAlias(label) {
+        const normalized = String(label ?? '').trim();
+        if (!normalized)
+            return;
+        this.aliasLabels.add(normalized);
+    }
+    getAccountKey() {
+        return `${this.baseUrl}::${this.userName}`;
+    }
+    getLabels() {
+        return Array.from(this.aliasLabels);
     }
     getStats() {
         return { ...this.stats };
@@ -314,18 +328,40 @@ const ondemandUser = process.env.HUAWEI_ONDEMAND_USER ?? baseUser;
 const ondemandPass = process.env.HUAWEI_ONDEMAND_PASSWORD ?? basePass;
 const backupUser = process.env.HUAWEI_BACKUP_USER ?? baseUser;
 const backupPass = process.env.HUAWEI_BACKUP_PASSWORD ?? basePass;
-exports.huaweiMain = new HuaweiService({ userName: baseUser, systemCode: basePass, label: 'MAIN' });
-exports.huaweiAlarm = new HuaweiService({ userName: alarmUser, systemCode: alarmPass, label: 'ALARM' });
-exports.huaweiOnDemand = new HuaweiService({ userName: ondemandUser, systemCode: ondemandPass, label: 'ONDEMAND' });
-exports.huaweiBackup = new HuaweiService({ userName: backupUser, systemCode: backupPass, label: 'BACKUP' });
+const huaweiServiceRegistry = new Map();
+const warnedSharedCredentialKeys = new Set();
+function makeRegistryKey(creds) {
+    const baseUrl = process.env.HUAWEI_API_BASE_URL || 'https://intl.fusionsolar.huawei.com';
+    return `${baseUrl}::${creds.userName}::${creds.systemCode}`;
+}
+function getOrCreateHuaweiService(creds) {
+    const key = makeRegistryKey(creds);
+    const existing = huaweiServiceRegistry.get(key);
+    if (existing) {
+        existing.registerAlias(creds.label);
+        if (!warnedSharedCredentialKeys.has(key)) {
+            warnedSharedCredentialKeys.add(key);
+            console.warn(`⚠️ Huawei logical clients [${existing.getLabels().join(', ')}] share the same API account (${creds.userName}). Reusing one in-process session to avoid invalidating xsrf-token.`);
+        }
+        return existing;
+    }
+    const service = new HuaweiService(creds);
+    huaweiServiceRegistry.set(key, service);
+    return service;
+}
+exports.huaweiMain = getOrCreateHuaweiService({ userName: baseUser, systemCode: basePass, label: 'MAIN' });
+exports.huaweiAlarm = getOrCreateHuaweiService({ userName: alarmUser, systemCode: alarmPass, label: 'ALARM' });
+exports.huaweiOnDemand = getOrCreateHuaweiService({ userName: ondemandUser, systemCode: ondemandPass, label: 'ONDEMAND' });
+exports.huaweiBackup = getOrCreateHuaweiService({ userName: backupUser, systemCode: backupPass, label: 'BACKUP' });
 exports.huaweiService = exports.huaweiMain;
 async function callWithFailover(primary, backup, fn, opts) {
     const tag = opts?.tag ? ` ${opts.tag}` : '';
+    const hasDistinctBackup = primary !== backup;
     try {
         const r = await fn(primary);
         const failCode = Number(r?.failCode);
         const shouldFailover = r?.success === false && (failCode === 407 || failCode === 403 || failCode === 429);
-        if (!shouldFailover)
+        if (!shouldFailover || !hasDistinctBackup)
             return r;
         console.warn(`⚠️ [FAILOVER]${tag} primary returned failCode=${failCode}. Switching to BACKUP...`);
         return (await fn(backup));
@@ -334,7 +370,7 @@ async function callWithFailover(primary, backup, fn, opts) {
         const status = err?.response?.status;
         const failCode = Number(err?.response?.data?.failCode);
         const isRateLimit = status === 407 || status === 403 || status === 429 || failCode === 407 || failCode === 403 || failCode === 429;
-        if (!isRateLimit)
+        if (!isRateLimit || !hasDistinctBackup)
             throw err;
         console.warn(`⚠️ [FAILOVER]${tag} primary error status=${status ?? '-'} failCode=${failCode ?? '-'} -> BACKUP`);
         return (await fn(backup));

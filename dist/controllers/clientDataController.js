@@ -1,7 +1,4 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listProjectsThailand = listProjectsThailand;
 exports.listProjectsService = listProjectsService;
@@ -25,7 +22,7 @@ exports.createServiceEntry = createServiceEntry;
 exports.updateServiceEntry = updateServiceEntry;
 exports.deleteServiceEntry = deleteServiceEntry;
 const client_1 = require("@prisma/client");
-const path_1 = __importDefault(require("path"));
+const storageService_1 = require("../services/storageService");
 const prisma = new client_1.PrismaClient();
 function toNumber(v) {
     if (v === null || v === undefined || v === '')
@@ -486,13 +483,29 @@ async function upsertLayout(req, res) {
         return res.status(400).json({ success: false, message: 'type must be PV_LAYOUT or PV_STRING_LAYOUT' });
     if (!file)
         return res.status(400).json({ success: false, message: 'file is required' });
-    const fileUrl = `/uploads/${path_1.default.basename(file.path)}`;
-    const row = await prisma.siteLayout.upsert({
+    console.log('🧪 upsertLayout incoming file:', {
+        siteId,
+        type,
+        originalname: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size,
+        tempPath: file.path,
+    });
+    const stored = await (0, storageService_1.storeIncomingUserUpload)(file, {
+        scopeParts: ['sites', `site_${siteId}`, 'layouts', String(type).toLowerCase()],
+    });
+    const fileUrl = stored.fileUrl;
+    console.log('🧪 upsertLayout stored result:', stored);
+    await prisma.siteLayout.upsert({
         where: { siteId_type: { siteId, type } },
         create: { siteId, type, fileUrl },
         update: { fileUrl },
     });
-    res.json({ success: true, data: row });
+    const row = await prisma.siteLayout.findUnique({
+        where: { siteId_type: { siteId, type } },
+    });
+    console.log('🧪 upsertLayout db row after write:', row);
+    res.json({ success: true, data: row ?? { siteId, type, fileUrl } });
 }
 // =====================================================
 // FORECAST
