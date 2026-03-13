@@ -105,6 +105,36 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 
 > Error payload บางจุดเป็น `{ success:false, message }` และบางจุดเป็น `{ error: "..." }` (ยังไม่ได้ unify)
 
+### Date/Time & Timezone
+
+Backend นี้มีการรับค่า “วัน/เวลา” อยู่หลายแบบ (ขึ้นกับโมดูล) เพื่อให้ FE ส่งค่าได้ถูกต้อง แนะนำใช้ตามนี้:
+
+- **ISO datetime (แนะนำเมื่อเป็นช่วงเวลา filter)**: `YYYY-MM-DDTHH:mm:ss.sssZ` หรือมี timezone เช่น `+07:00`
+  - ตัวอย่าง: `2026-03-13T10:30:00+07:00`
+  - ใช้กับ: alarm `from/to`, stock `dateFrom/dateTo`, client-data filters ที่เป็นวันที่แบบ ISO
+- **Date (วันล้วน)**: `YYYY-MM-DD`
+  - ใช้กับ: job step1 `workDate`, cleaning jobs filter `date`, monitoring strings history `date`
+  - ตัวอย่าง: `2026-03-13`
+- **Time (เวลาเป็นข้อความ)**: `HH:mm`
+  - ใช้กับ: job step1 `workTimeText`
+  - ตัวอย่าง: `10:00`
+- **Month selector**: `YYYY-MM`
+  - ใช้กับ: report center `startMonth/endMonth`, monitoring energy-management `view=month`
+  - ตัวอย่าง: `2026-03`
+- **Year selector**: `YYYY`
+  - ใช้กับ: monitoring energy-management `view=year`, monitoring PR `year`
+  - ตัวอย่าง: `2026`
+- **Huawei `collectTime`**: millisecond timestamp (Unix epoch ms)
+  - ตัวอย่าง: `collectTime=1773365400000`
+  - แปลงจาก ISO ได้ด้วย `new Date('2026-03-13T12:30:00+07:00').getTime()`
+
+**เรื่อง timezone ที่ต้องระวัง (สำคัญกับ Monitoring strings history):**
+
+- `tzOffsetMinutes` ใช้ semantics เดียวกับ `Date.getTimezoneOffset()` (หน่วยเป็นนาที)
+  - กรุงเทพ (UTC+7) จะได้ค่า `-420`
+  - ตัวอย่างเรียกแบบ “เอาข้อมูลของวันที่ 2026-03-01 ตามเวลาท้องถิ่น (กรุงเทพ)”
+    - `GET /api/monitoring/inverters/10/strings/history?date=2026-03-01&tzOffsetMinutes=-420`
+
 ### Common HTTP errors
 
 - `400` invalid input / missing required fields
@@ -269,6 +299,12 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 
 - `siteId` (required, number)
 
+**Query params (optional):**
+
+- `refresh`:
+  - `soft` = พยายาม refresh ถ้าข้อมูลไม่ครบ/เก่า
+  - `1 | true | full` = force refresh (หนักสุด)
+
 **Response 200 (example):**
 
 ```json
@@ -288,6 +324,14 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
       }
     ],
     "energySeries": [{ "date": "2026-02-01T00:00:00.000Z", "energyKWh": 613.5 }],
+    "hydration": {
+      "attempted": true,
+      "trigger": "soft",
+      "hasRealtime": true,
+      "hasInventory": true,
+      "hasLiveInverterData": true,
+      "ready": true
+    },
     "lastUpdatedAt": "2026-02-03T01:05:00.000Z"
   }
 }
@@ -297,6 +341,48 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 
 - `400` `{ "error": "Invalid siteId" }`
 - `404` `{ "error": "Site not found" }`
+
+### POST `/api/monitoring/sites/:siteId/refresh`
+
+**Description:** Force refresh ข้อมูล site/inverter จาก Huawei (ใช้ตอน FE ต้องการปุ่ม Refresh)
+
+**Auth:** None
+
+**Path params:**
+
+- `siteId` (required, number)
+
+**Query params (optional):**
+
+- `mode`: `full | site` (default `full`)
+  - `full`: refresh site realtime + device detail
+  - `site`: refresh เฉพาะ site realtime
+
+**Request body (optional):**
+
+```json
+{ "mode": "full" }
+```
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "mode": "full",
+    "refreshResult": {},
+    "site": { "id": 1, "plantCode": "PLANT-001" },
+    "inverterCount": 12
+  }
+}
+```
+
+**Errors:**
+
+- `400` `{ "error": "Invalid siteId" }`
+- `404` `{ "error": "Site not found" }`
+- `400` `{ "error": "Site plantCode is missing" }`
 
 ### GET `/api/monitoring/inverters/:inverterId`
 
@@ -526,6 +612,87 @@ MAIL_FROM_EMAIL="yourgmail@gmail.com"
 - `400` `{ "error": "Invalid siteId" }`
 - `400` `{ "error": "Invalid granularity" }`
 - `404` `{ "error": "Site not found" }`
+
+### GET `/api/monitoring/sites/:siteId/energy-management`
+
+**Description:** Series สำหรับหน้า Energy management (day/month/year/lifetime)
+
+**Auth:** None
+
+**Path params:**
+
+- `siteId` (required, number)
+
+**Query params (optional):**
+
+- `view` (default `day`): `day | month | year | lifetime`
+- `date` (optional): anchor date ของกราฟ (ขึ้นกับ `view`)
+  - `view=day` ใช้ `YYYY-MM-DD` เช่น `2026-03-13`
+  - `view=month` ใช้ `YYYY-MM` เช่น `2026-03`
+  - `view=year` ใช้ `YYYY` เช่น `2026`
+  - ถ้าส่งเป็น ISO datetime ก็ได้
+
+**Example:**
+
+- `GET /api/monitoring/sites/1/energy-management?view=day&date=2026-03-13`
+- `GET /api/monitoring/sites/1/energy-management?view=month&date=2026-03`
+
+**Response 200:**
+
+```json
+{ "data": { "siteId": 1, "view": "day", "collectTime": 1773364800000, "points": [] } }
+```
+
+**Errors:**
+
+- `400` `{ "error": "Invalid siteId" }`
+- `400` `{ "error": "Invalid view" }`
+
+### GET `/api/monitoring/sites/:siteId/home-realtime`
+
+**Description:** ข้อมูล realtime สำหรับหน้า Home (รวม energy-flow/summary cards/supporting data)
+
+**Auth:** None
+
+**Path params:**
+
+- `siteId` (required, number)
+
+**Query params (optional):**
+
+- `refresh`:
+  - `1 | true | full` = force refresh
+  - ถ้าไม่ส่งมา จะเป็น `auto`
+
+**Response 200:**
+
+```json
+{ "data": { "siteId": 1, "plantCode": "PLANT-001", "fetchedAt": "2026-03-13T03:30:00.000Z" } }
+```
+
+### GET `/api/monitoring/sites/:siteId/energy-flow`
+
+**Description:** Shortcut คืนเฉพาะ `energyFlow` (เรียก service เดียวกับ home-realtime)
+
+**Query params:** เหมือน `/home-realtime`
+
+**Response 200:**
+
+```json
+{ "data": { "siteId": 1, "energyFlow": {} } }
+```
+
+### GET `/api/monitoring/sites/:siteId/summary-cards`
+
+**Description:** Shortcut คืนเฉพาะ `summaryCards` + `supportingData` (เรียก service เดียวกับ home-realtime)
+
+**Query params:** เหมือน `/home-realtime`
+
+**Response 200:**
+
+```json
+{ "data": { "siteId": 1, "summaryCards": [], "supportingData": {} } }
+```
 
 ---
 

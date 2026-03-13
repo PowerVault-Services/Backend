@@ -2,6 +2,7 @@
 	import prisma from '../config/prisma';
 	import { huaweiOnDemand } from '../services/huaweiService';
 	import { syncPlantOnDemand } from '../services/syncService';
+	import { getEnergyManagementSeries, getMonitoringHomeRealtime } from '../services/monitoringHomeService';
 
 	const router = Router();
 
@@ -249,50 +250,94 @@
     const siteId = Number(req.params.siteId);
     if (!Number.isFinite(siteId)) return res.status(400).json({ error: 'Invalid siteId' });
 
-    let site: any = await prisma.site.findUnique({ where: { id: siteId } });
-    if (!site) return res.status(404).json({ error: 'Site not found' });
+    const loadSiteBundle = async () => {
+      const site = await prisma.site.findUnique({ where: { id: siteId } });
+      if (!site) return null;
 
-    const refreshFlag = String(req.query.refresh ?? '').trim();
-    const forceRefresh = refreshFlag === '1';
+      const inverters = (await prisma.inverter.findMany({
+        where: { siteId },
+        select: {
+          id: true,
+          name: true,
+          model: true,
+          serialNumber: true,
+          activePower: true,
+          lastDailyEnergy: true,
+          status: true,
+          lastSyncAt: true,
+          softwareVersion: true,
+        },
+        orderBy: { name: 'asc' },
+      } as any)) as any[];
+
+      return { site, inverters };
+    };
+
+    let bundle = await loadSiteBundle();
+    if (!bundle) return res.status(404).json({ error: 'Site not found' });
+
+    let { site, inverters } = bundle;
+
+    const refreshFlag = String(req.query.refresh ?? '').trim().toLowerCase();
+    const forceRefresh = refreshFlag === '1' || refreshFlag === 'true' || refreshFlag === 'full';
+    const softRefresh = forceRefresh || refreshFlag === 'soft';
     const onDemandStaleMs = Number(process.env.HUAWEI_ONDEMAND_SITE_STALE_MS ?? 5 * 60_000);
     const siteIsStale = !site.lastPlantSyncAt || Date.now() - site.lastPlantSyncAt.getTime() >= onDemandStaleMs;
+    const hasRealtime = !!(site.lastPlantSyncAt || site.currentPowerKW != null || site.dayEnergyKWh != null || site.totalEnergyKWh != null);
+    const hasInventory = inverters.length > 0;
+    const hasLiveInverterData = inverters.some((inv) => !!inv.lastSyncAt);
+    const needsHydration = !hasRealtime || !hasInventory || !hasLiveInverterData;
 
-    if ((forceRefresh || siteIsStale) && site.plantCode) {
+    let hydration: any = {
+      attempted: false,
+      trigger: null,
+      hasRealtime,
+      hasInventory,
+      hasLiveInverterData,
+    };
+
+    if ((forceRefresh || softRefresh || siteIsStale || needsHydration) && site.plantCode) {
       try {
-        await syncPlantOnDemand(site.plantCode);
-        site = await prisma.site.findUnique({ where: { id: siteId } });
-        if (!site) return res.status(404).json({ error: 'Site not found' });
+        hydration.attempted = true;
+        hydration.trigger = forceRefresh ? 'force' : softRefresh ? 'soft' : siteIsStale ? 'stale' : 'missing_data';
+
+		const syncResult = await (syncPlantOnDemand as any)(site.plantCode, {
+		forceSiteRealtime: forceRefresh || !hasRealtime || siteIsStale,
+		includeInventory: forceRefresh || !hasInventory,
+		includeDeviceDetail: forceRefresh || !hasInventory || !hasLiveInverterData,
+		});
+        hydration.syncResult = syncResult;
+
+        bundle = await loadSiteBundle();
+        if (!bundle) return res.status(404).json({ error: 'Site not found' });
+        site = bundle.site;
+        inverters = bundle.inverters;
       } catch (e: any) {
+        hydration.error = e?.message ?? String(e);
         console.warn('⚠️ /monitoring/sites/:siteId/overview on-demand refresh failed:', e?.message ?? e);
       }
     }
 
-
-    const inverters = (await prisma.inverter.findMany({
-      where: { siteId },
-      select: {
-        id: true,
-        name: true,
-        model: true,
-        serialNumber: true,
-        activePower: true,
-        lastDailyEnergy: true,
-        status: true,
-        lastSyncAt: true,
-        softwareVersion: true,
-      },
-      orderBy: { name: 'asc' },
-    } as any)) as any[];
-
-
     const last7Days = new Date();
     last7Days.setDate(last7Days.getDate() - 7);
 
-	    const energySeries = await prisma.siteDailyEnergy.findMany({
-	      where: { siteId, date: { gte: last7Days } },
-	      select: { date: true, energyKWh: true },
-	      orderBy: { date: 'asc' },
-	    });
+    const energySeries = await prisma.siteDailyEnergy.findMany({
+      where: { siteId, date: { gte: last7Days } },
+      select: { date: true, energyKWh: true },
+      orderBy: { date: 'asc' },
+    });
+
+    const finalHasRealtime = !!(site.lastPlantSyncAt || site.currentPowerKW != null || site.dayEnergyKWh != null || site.totalEnergyKWh != null);
+    const finalHasInventory = inverters.length > 0;
+    const finalHasLiveInverterData = inverters.some((inv) => !!inv.lastSyncAt);
+
+    hydration = {
+      ...hydration,
+      hasRealtime: finalHasRealtime,
+      hasInventory: finalHasInventory,
+      hasLiveInverterData: finalHasLiveInverterData,
+      ready: finalHasRealtime || finalHasInventory,
+    };
 
     res.json({
       data: {
@@ -313,7 +358,39 @@
         },
         inverters,
         energySeries,
+        hydration,
         lastUpdatedAt: site.updatedAt,
+      },
+    });
+  });
+
+  router.post('/sites/:siteId/refresh', async (req, res) => {
+    const siteId = Number(req.params.siteId);
+    if (!Number.isFinite(siteId)) return res.status(400).json({ error: 'Invalid siteId' });
+
+    const site: any = await prisma.site.findUnique({ where: { id: siteId } });
+    if (!site) return res.status(404).json({ error: 'Site not found' });
+    if (!site.plantCode) return res.status(400).json({ error: 'Site plantCode is missing' });
+
+    const mode = String((req.query.mode ?? req.body?.mode ?? 'full')).trim().toLowerCase();
+    const full = mode !== 'site';
+
+    const result = await (syncPlantOnDemand as any) (site.plantCode, {
+      forceSiteRealtime: true,
+      forceDeviceDetail: full,
+      includeDeviceDetail: full,
+    });
+
+    const refreshed = await prisma.site.findUnique({ where: { id: siteId } });
+    const inverterCount = await prisma.inverter.count({ where: { siteId } });
+
+    res.json({
+      success: true,
+      data: {
+        mode: full ? 'full' : 'site',
+        refreshResult: result,
+        site: refreshed,
+        inverterCount,
       },
     });
   });
@@ -410,6 +487,92 @@
     const series = rows.map((r: any) => ({ t: r.ts, v: r[metric] }));
     res.json({ data: { metric, range, series } });
   });
+
+
+	router.get('/sites/:siteId/energy-management', async (req, res) => {
+		const siteId = Number(req.params.siteId);
+		if (!Number.isFinite(siteId)) return res.status(400).json({ error: 'Invalid siteId' });
+
+		const view = String(req.query.view ?? 'day').trim().toLowerCase();
+		if (!['day', 'month', 'year', 'lifetime'].includes(view)) {
+			return res.status(400).json({ error: 'Invalid view' });
+		}
+
+		try {
+			const data = await getEnergyManagementSeries(siteId, {
+				view: view as 'day' | 'month' | 'year' | 'lifetime',
+				date: req.query.date != null ? String(req.query.date) : null,
+			});
+
+			return res.json({ data });
+		} catch (e: any) {
+			return res.status(e?.statusCode ?? 500).json({ error: e?.message ?? 'Internal error' });
+		}
+	});
+
+	router.get('/sites/:siteId/home-realtime', async (req, res) => {
+		const siteId = Number(req.params.siteId);
+		if (!Number.isFinite(siteId)) return res.status(400).json({ error: 'Invalid siteId' });
+
+		const refreshRaw = String(req.query.refresh ?? '').trim().toLowerCase();
+		const refresh = refreshRaw === '1' || refreshRaw === 'true' || refreshRaw === 'full' ? 'force' : 'auto';
+
+		try {
+			const data = await getMonitoringHomeRealtime(siteId, { refresh });
+			return res.json({ data });
+		} catch (e: any) {
+			return res.status(e?.statusCode ?? 500).json({ error: e?.message ?? 'Internal error' });
+		}
+	});
+
+	router.get('/sites/:siteId/energy-flow', async (req, res) => {
+		const siteId = Number(req.params.siteId);
+		if (!Number.isFinite(siteId)) return res.status(400).json({ error: 'Invalid siteId' });
+
+		const refreshRaw = String(req.query.refresh ?? '').trim().toLowerCase();
+		const refresh = refreshRaw === '1' || refreshRaw === 'true' || refreshRaw === 'full' ? 'force' : 'auto';
+
+		try {
+			const data = await getMonitoringHomeRealtime(siteId, { refresh });
+			return res.json({
+				data: {
+					siteId: data.siteId,
+					plantCode: data.plantCode,
+					plantName: data.plantName,
+					fetchedAt: data.fetchedAt,
+					siteRefresh: data.siteRefresh,
+					energyFlow: data.energyFlow,
+				},
+			});
+		} catch (e: any) {
+			return res.status(e?.statusCode ?? 500).json({ error: e?.message ?? 'Internal error' });
+		}
+	});
+
+	router.get('/sites/:siteId/summary-cards', async (req, res) => {
+		const siteId = Number(req.params.siteId);
+		if (!Number.isFinite(siteId)) return res.status(400).json({ error: 'Invalid siteId' });
+
+		const refreshRaw = String(req.query.refresh ?? '').trim().toLowerCase();
+		const refresh = refreshRaw === '1' || refreshRaw === 'true' || refreshRaw === 'full' ? 'force' : 'auto';
+
+		try {
+			const data = await getMonitoringHomeRealtime(siteId, { refresh });
+			return res.json({
+				data: {
+					siteId: data.siteId,
+					plantCode: data.plantCode,
+					plantName: data.plantName,
+					fetchedAt: data.fetchedAt,
+					siteRefresh: data.siteRefresh,
+					summaryCards: data.summaryCards,
+					supportingData: data.supportingData,
+				},
+			});
+		} catch (e: any) {
+			return res.status(e?.statusCode ?? 500).json({ error: e?.message ?? 'Internal error' });
+		}
+	});
 
 	// Historical PV string current (for Historical Information graph)
 	// GET /api/monitoring/inverters/:inverterId/strings/history

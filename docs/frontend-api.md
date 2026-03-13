@@ -255,6 +255,113 @@ Errors:
 
 ---
 
+
+### 3.3 GET `/api/monitoring/sites/:siteId/energy-management`
+
+Use for Monitoring > Home > Energy Management graph.
+
+Path params:
+- `siteId` (required, number)
+
+Query params:
+- `view` (optional, default `day`)
+  - allowed: `day`, `month`, `year`, `lifetime`
+- `date` (optional)
+  - `day`: `YYYY-MM-DD`
+  - `month`: `YYYY-MM`
+  - `year`: `YYYY`
+
+Success response:
+```json
+{
+  "data": {
+    "siteId": 1,
+    "plantCode": "NE=49982713",
+    "plantName": "Msenko",
+    "view": "day",
+    "endpoint": "/thirdData/getKpiStationHour",
+    "range": {
+      "start": "2026-03-13T00:00:00.000Z",
+      "end": "2026-03-14T00:00:00.000Z",
+      "requestedDate": "2026-03-13"
+    },
+    "points": [
+      {
+        "timestamp": "2026-03-13T00:00:00.000Z",
+        "label": "00:00",
+        "pvOutput": 0,
+        "powerOfGrid": 0,
+        "gridImport": 0,
+        "gridExport": 0,
+        "consumptionPower": 0,
+        "consumedFromPv": 0,
+        "batteryCharge": 0,
+        "batteryDischarge": 0,
+        "irradiance": 0
+      }
+    ]
+  }
+}
+```
+
+Notes:
+- `day` view uses Huawei hourly plant data (`/thirdData/getKpiStationHour`) and always returns a 24-hour window from `00:00` to `00:00` of the next day.
+- `powerOfGrid` prefers `buyPower`; if Huawei does not return it, the backend falls back to `ongrid_power`.
+- `consumptionPower` maps from `use_power`.
+- `irradiance` maps from `radiation_intensity`.
+
+---
+
+### 3.4 GET `/api/monitoring/sites/:siteId/home-realtime`
+
+Use for Monitoring > Home realtime widgets with one backend call.
+
+Path params:
+- `siteId` (required, number)
+
+Query params:
+- `refresh` (optional)
+  - `1`, `true`, `full` => force Huawei refresh
+
+Success response:
+```json
+{
+  "data": {
+    "siteId": 1,
+    "plantCode": "NE=49982713",
+    "plantName": "Msenko",
+    "fetchedAt": "2026-03-13T04:30:00.000Z",
+    "energyFlow": {
+      "pv": { "powerKw": 42.3 },
+      "grid": { "powerKw": 3.2, "signedPowerKw": 3.2, "direction": "import" },
+      "battery": { "powerKw": 5.1, "signedPowerKw": -5.1, "direction": "charge", "socPct": 78 },
+      "load": { "powerKw": 40.4 },
+      "balanceKw": 0
+    },
+    "summaryCards": {
+      "meterMain": { "voltageV": 228.5, "currentA": 21.3, "powerKw": 4.5, "status": "Connect" },
+      "battery": { "socPct": 78, "tempC": 32, "powerKw": 5.1, "direction": "charge", "status": "Charge" },
+      "solarIrradiance": { "irradianceWm2": 910, "tempC": 36, "status": "Online" },
+      "weatherStation": { "windSpeedMs": 4.8, "tempC": 34, "humidityRh": null, "status": "Normal" }
+    }
+  }
+}
+```
+
+---
+
+### 3.5 GET `/api/monitoring/sites/:siteId/energy-flow`
+
+Thin endpoint for the four-node energy flow only.
+
+---
+
+### 3.6 GET `/api/monitoring/sites/:siteId/summary-cards`
+
+Thin endpoint for Meter Main / Battery / Solar Irradiance / Weather Station only.
+
+---
+
 ### 3.3 GET `/api/monitoring/inverters/:inverterId`
 
 Use for inverter detail header/realtime summary.
