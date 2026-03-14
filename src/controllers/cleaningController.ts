@@ -2,7 +2,7 @@ import { PrismaClient, JobStatus, JobType } from '@prisma/client';
 import { Request, Response } from 'express';
 import path from 'path';
 import { sendEmailNow } from '../services/emailService';
-import { ensureLocalFilePath, resolveEmailAttachment, storeIncomingUserUpload } from '../services/storageService';
+import { ensureLocalFilePath, resolveEmailAttachment, storeIncomingUserUpload, tryEnsureLocalFilePath, tryResolveEmailAttachment } from '../services/storageService';
 import { generateCleaningReportPdf } from '../services/reportService';
 import { collectJobReportFiles, createReportsZip, deleteJobCascade, parseJobIds } from '../utils/jobManagement';
 
@@ -337,6 +337,7 @@ export async function saveStep2Draft(req: Request, res: Response) {
   res.json({ success: true });
 }
 
+
 /**
  * POST /api/cleaning/step2/send
  * body: { jobId }
@@ -356,11 +357,20 @@ export async function sendStep2Email(req: Request, res: Response) {
     return res.status(400).json({ success: false, message: 'Email draft incomplete' });
   }
 
-  const att = await Promise.all(
+  const missing: string[] = [];
+  const attResolved = await Promise.all(
     job.attachments
       .filter((a) => a.fileType === 'STEP2_ATTACHMENT')
-      .map((a) => resolveEmailAttachment(a.fileUrl)),
+      .map(async (a) => {
+        const attachment = await tryResolveEmailAttachment(a.fileUrl);
+        if (!attachment) {
+          missing.push(String(a.fileUrl ?? ''));
+          return null;
+        }
+        return attachment;
+      }),
   );
+  const att = attResolved.filter(Boolean) as { filename: string; path: string }[];
 
   const send = await sendEmailNow({
     jobId: id,
@@ -386,7 +396,10 @@ export async function sendStep2Email(req: Request, res: Response) {
     data: { status: JobStatus.ASSIGNED },
   });
 
-  res.json({ success: true });
+  return res.json({
+    success: true,
+    warning: missing.length ? { message: 'บางไฟล์แนบไม่พบ จึงไม่ถูกแนบในอีเมล', missing } : undefined,
+  });
 }
 
 /**
@@ -458,23 +471,41 @@ export async function generateReport(req: Request, res: Response) {
   const attachments = job.attachments ?? [];
 
   // 1) Full page docs (แนบเป็นหน้าเต็ม) — แนะนำให้อัปโหลดเป็นรูป (jpg/png)
-  const cert = await Promise.all(
+  const missingAttachments: string[] = [];
+
+  const certResolved = await Promise.all(
     attachments
       .filter((a) => a.fileType === 'STEP3_CERTIFICATE')
-      .map(async (a) => ({
-        title: 'เอกสารส่งมอบงาน',
-        filePath: await ensureLocalFilePath(a.fileUrl),
-      })),
+      .map(async (a) => {
+        const filePath = await tryEnsureLocalFilePath(a.fileUrl);
+        if (!filePath) {
+          missingAttachments.push(String(a.fileUrl ?? ''));
+          return null;
+        }
+        return {
+          title: 'เอกสารส่งมอบงาน',
+          filePath,
+        };
+      }),
   );
+  const cert = certResolved.filter(Boolean) as { title: string; filePath: string }[];
 
-  const layout = await Promise.all(
+  const layoutResolved = await Promise.all(
     attachments
       .filter((a) => a.fileType === 'STEP3_LAYOUT')
-      .map(async (a) => ({
-        title: 'Layout',
-        filePath: await ensureLocalFilePath(a.fileUrl),
-      })),
+      .map(async (a) => {
+        const filePath = await tryEnsureLocalFilePath(a.fileUrl);
+        if (!filePath) {
+          missingAttachments.push(String(a.fileUrl ?? ''));
+          return null;
+        }
+        return {
+          title: 'Layout',
+          filePath,
+        };
+      }),
   );
+  const layout = layoutResolved.filter(Boolean) as { title: string; filePath: string }[];
 
   // 2) Evidence groups (Step3.1)
   // NOTE: ฝั่งหน้าเว็บ Step3.1 มีหัวข้อย่อยหลายแบบ (ก่อน/ขณะ/หลัง - ล้างแผง / ทำความสะอาดห้องอินเวอร์เตอร์ ฯลฯ)
@@ -516,9 +547,15 @@ export async function generateReport(req: Request, res: Response) {
       ?? ft.replace(/^STEP3_/, '').split('_').join(' ');
 
     if (!grouped.has(groupTitle)) grouped.set(groupTitle, []);
+    const filePath = await tryEnsureLocalFilePath(a.fileUrl);
+    if (!filePath) {
+      missingAttachments.push(String(a.fileUrl ?? ''));
+      continue;
+    }
+
     grouped.get(groupTitle)!.push({
       label,
-      filePath: await ensureLocalFilePath(a.fileUrl),
+      filePath,
     });
   }
 
@@ -550,7 +587,13 @@ export async function generateReport(req: Request, res: Response) {
 
   await bumpJobStep(id, 4);
 
-  res.json({ success: true, data: { reportUrl: report.fileUrl, download: `/api/cleaning/step4/download/${id}` } });
+  res.json({
+    success: true,
+    data: { reportUrl: report.fileUrl, download: `/api/cleaning/step4/download/${id}` },
+    warning: missingAttachments.length
+      ? { message: 'บางไฟล์แนบ/รูปประกอบไม่พบ จึงถูกข้ามตอนสร้างรายงาน', missing: Array.from(new Set(missingAttachments)) }
+      : undefined,
+  });
 }
 
 /**
@@ -599,7 +642,8 @@ export async function sendStep5Email(req: Request, res: Response) {
   const cleaning = await prisma.cleaningJob.findUnique({ where: { jobId: id } });
   if (!cleaning?.reportFileUrl) return res.status(400).json({ success: false, message: 'Report not generated' });
 
-  const reportAbs = await ensureLocalFilePath(cleaning.reportFileUrl);
+  const reportAbs = await tryEnsureLocalFilePath(cleaning.reportFileUrl);
+  if (!reportAbs) return res.status(400).json({ success: false, message: 'Report file not found' });
 
   const send = await sendEmailNow({
     jobId: id,

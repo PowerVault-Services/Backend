@@ -3,7 +3,7 @@ import { Request, Response } from 'express';
 import path from 'path';
 import { sendEmailNow } from '../services/emailService';
 import fs from 'fs';
-import { ensureLocalFilePath, resolveEmailAttachment, storeIncomingReportUpload, storeIncomingUserUpload } from '../services/storageService';
+import { ensureLocalFilePath, resolveEmailAttachment, storeIncomingReportUpload, storeIncomingUserUpload, tryEnsureLocalFilePath } from '../services/storageService';
 import { collectJobReportFiles, createReportsZip, deleteJobCascade, parseJobIds } from '../utils/jobManagement';
 
 const prisma = new PrismaClient();
@@ -469,7 +469,8 @@ export async function sendStep3Email(req: Request, res: Response) {
     return res.status(400).json({ success: false, message: 'Report not uploaded' });
   }
 
-  const reportAbs = await ensureLocalFilePath(inspection.reportFileUrl);
+  const reportAbs = await tryEnsureLocalFilePath(inspection.reportFileUrl);
+  if (!reportAbs) return res.status(400).json({ success: false, message: 'Report file not found' });
 
   const send = await sendEmailNow({
     jobId: id,

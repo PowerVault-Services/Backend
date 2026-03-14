@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer';
 import { createTemporaryArtifactPath, storeGeneratedReportFromLocalFile } from './storageService';
+import { resolveFromProjectRoot } from '../config/runtimePaths';
 
 type EvidenceImage = { label?: string; filePath: string };
 type EvidenceGroup = {
@@ -81,8 +82,8 @@ function getFontFaceCss() {
   const candidates = [
     {
       family: 'ReportThai',
-      normal: path.join(process.cwd(), 'assets', 'fonts', 'THSarabunNew.ttf'),
-      bold: path.join(process.cwd(), 'assets', 'fonts', 'THSarabunNew Bold.ttf'),
+      normal: resolveFromProjectRoot('assets', 'fonts', 'THSarabunNew.ttf'),
+      bold: resolveFromProjectRoot('assets', 'fonts', 'THSarabunNew Bold.ttf'),
     },
     {
       family: 'ReportThai',
@@ -118,7 +119,7 @@ function getFontFaceCss() {
 }
 
 function getLogoDataUri() {
-  const logoPath = path.join(process.cwd(), 'assets', 'powervault-logo.png');
+  const logoPath = resolveFromProjectRoot('assets', 'powervault-logo.png');
   return fs.existsSync(logoPath) ? fileToDataUri(logoPath) : null;
 }
 
@@ -683,6 +684,7 @@ export async function generateCleaningReportPdf(data: {
   return storeGeneratedReportFromLocalFile(absPath, { jobType: 'cleaning', jobNo: data.jobNo });
 }
 
+
 export async function generateServiceReportPdf(data: {
   jobNo: string;
   projectName: string;
@@ -808,5 +810,5 @@ export async function generateServiceReportPdf(data: {
 
   const html = wrapHtml([formPage, uploadedFormPage, evidencePages].join(''));
   await renderPdfToFile(html, absPath);
-  return storeGeneratedReportFromLocalFile(absPath, { jobType: 'cleaning', jobNo: data.jobNo });
+  return storeGeneratedReportFromLocalFile(absPath, { jobType: 'service', jobNo: data.jobNo });
 }

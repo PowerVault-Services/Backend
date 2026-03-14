@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { deleteStoredFile, ensureLocalFilePath } from './storageService';
+import { deleteStoredFile, ensureLocalFilePath, tryEnsureLocalFilePath } from './storageService';
 
 const execFileAsync = promisify(execFile);
 
@@ -47,8 +47,8 @@ export async function buildReportsZipForJobs(args: {
               : job.serviceJob?.reportFileUrl;
         if (!reportFileUrl) return null;
 
-        const absPath = await ensureLocalFilePath(reportFileUrl);
-        if (!fs.existsSync(absPath)) return null;
+        const absPath = await tryEnsureLocalFilePath(reportFileUrl);
+        if (!absPath || !fs.existsSync(absPath)) return null;
 
         const ext = path.extname(absPath) || '.pdf';
         const sanitizedJobNo = (job.jobNo || `job-${job.id}`).replace(/[^a-zA-Z0-9-_]+/g, '_');

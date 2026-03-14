@@ -1,5 +1,5 @@
 // src/app.ts
-import 'dotenv/config';
+require('./config/loadEnv').loadEnv();
 
 import express, { Request, Response } from 'express';
 import cors from 'cors';
@@ -17,7 +17,9 @@ import alarmRoutes from './routes/alarmRoutes';
 import clientDataRoutes from './routes/clientDataRoutes';
 import reportRoutes from './routes/reportRoutes';
 import draftRoutes from './routes/draftRoutes';
-import { serveFileUrlViaGateway, storageFlagsSummary } from './services/storageService';
+import { getLoadedEnvPath } from './config/loadEnv';
+import { projectRoot } from './config/runtimePaths';
+import { serveFileUrlViaGateway, storageFlagsSummary, verifyObjectStorageAccess } from './services/storageService';
 
 const app = express();
 app.use(cors());
@@ -54,7 +56,21 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, async () => {
   console.log(`Server is running on port ${PORT}`);
-  console.log('📦 Storage flags:', storageFlagsSummary());
+  console.log('📁 Project root:', projectRoot);
+  console.log('🧪 Loaded env file:', getLoadedEnvPath() ?? 'not found (using process env / defaults)');
+  const storageSummary = storageFlagsSummary();
+  console.log('📦 Storage flags:', storageSummary);
+
+  if (storageSummary.driver === 'minio') {
+    const objectCheck = await verifyObjectStorageAccess();
+    if (objectCheck.ok) {
+      console.log('✅ Object storage auth check passed:', objectCheck.message);
+    } else if ('skipped' in objectCheck && objectCheck.skipped) {
+      console.log('⏭️ Object storage auth check skipped:', objectCheck.message);
+    } else {
+      console.error('❌ Object storage auth check failed:', objectCheck);
+    }
+  }
 
   try {
     await huaweiService.ensureLoggedIn();

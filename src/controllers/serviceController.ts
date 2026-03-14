@@ -2,7 +2,7 @@ import { PrismaClient, JobStatus, JobType } from '@prisma/client';
 import { Request, Response } from 'express';
 import path from 'path';
 import { sendEmailNow } from '../services/emailService';
-import { ensureLocalFilePath, resolveEmailAttachment, storeIncomingUserUpload } from '../services/storageService';
+import { ensureLocalFilePath, resolveEmailAttachment, storeIncomingUserUpload, tryEnsureLocalFilePath, tryResolveEmailAttachment } from '../services/storageService';
 import { generateServiceReportPdf } from '../services/reportService';
 import { collectJobReportFiles, createReportsZip, deleteJobCascade, parseJobIds } from '../utils/jobManagement';
 
@@ -342,6 +342,7 @@ export async function saveStep2Draft(req: Request, res: Response) {
   res.json({ success: true });
 }
 
+
 /**
  * POST /api/service/step2/send
  * body: { jobId }
@@ -361,11 +362,20 @@ export async function sendStep2Email(req: Request, res: Response) {
     return res.status(400).json({ success: false, message: 'Email draft incomplete (ต้องมี To/Subject/Body)' });
   }
 
-  const att = await Promise.all(
+  const missing: string[] = [];
+  const attResolved = await Promise.all(
     (job.attachments ?? [])
       .filter((a) => a.fileType === 'SERVICE_STEP2_ATTACHMENT')
-      .map((a) => resolveEmailAttachment(a.fileUrl)),
+      .map(async (a) => {
+        const attachment = await tryResolveEmailAttachment(a.fileUrl);
+        if (!attachment) {
+          missing.push(String(a.fileUrl ?? ''));
+          return null;
+        }
+        return attachment;
+      }),
   );
+  const att = attResolved.filter(Boolean) as { filename: string; path: string }[];
 
   const send = await sendEmailNow({
     jobId: id,
@@ -391,7 +401,10 @@ export async function sendStep2Email(req: Request, res: Response) {
     data: { status: JobStatus.ASSIGNED },
   });
 
-  res.json({ success: true });
+  return res.json({
+    success: true,
+    warning: missing.length ? { message: 'บางไฟล์แนบไม่พบ จึงไม่ถูกแนบในอีเมล', missing } : undefined,
+  });
 }
 
 /**
@@ -551,20 +564,31 @@ export async function generateReport(req: Request, res: Response) {
 
   const attachments = job.attachments ?? [];
 
+  const missingAttachments: string[] = [];
+
   const formAttachment = attachments
     .filter((a) => a.fileType === 'SERVICE_REPORT_FORM')
     .slice(-1)[0];
-  const form = formAttachment ? await ensureLocalFilePath(formAttachment.fileUrl) : undefined;
+  const form = formAttachment ? await tryEnsureLocalFilePath(formAttachment.fileUrl) : undefined;
+  if (formAttachment && !form) missingAttachments.push(String(formAttachment.fileUrl ?? ''));
 
-  const evidence = await Promise.all(
+  const evidenceResolved = await Promise.all(
     attachments
       .filter((a) => a.fileType === 'SERVICE_EVIDENCE')
       .slice(0, 12)
-      .map(async (a) => ({
-        label: 'รูปภาพ',
-        filePath: await ensureLocalFilePath(a.fileUrl),
-      })),
+      .map(async (a) => {
+        const filePath = await tryEnsureLocalFilePath(a.fileUrl);
+        if (!filePath) {
+          missingAttachments.push(String(a.fileUrl ?? ''));
+          return null;
+        }
+        return {
+          label: 'รูปภาพ',
+          filePath,
+        };
+      }),
   );
+  const evidence = evidenceResolved.filter(Boolean) as { label: string; filePath: string }[];
 
   const report = await generateServiceReportPdf({
     jobNo: job.jobNo,
@@ -646,7 +670,8 @@ export async function sendStep5Email(req: Request, res: Response) {
   const service = await prisma.serviceJob.findUnique({ where: { jobId: id } });
   if (!service?.reportFileUrl) return res.status(400).json({ success: false, message: 'Report not generated' });
 
-  const reportAbs = await ensureLocalFilePath(service.reportFileUrl);
+  const reportAbs = await tryEnsureLocalFilePath(service.reportFileUrl);
+  if (!reportAbs) return res.status(400).json({ success: false, message: 'Report file not found' });
 
   const send = await sendEmailNow({
     jobId: id,

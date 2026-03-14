@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import http, { IncomingHttpHeaders, IncomingMessage, RequestOptions } from 'http';
 import https from 'https';
 import { Request, Response } from 'express';
+import { projectRoot } from '../config/runtimePaths';
 
 export type StoredFile = {
   fileUrl: string;
@@ -25,6 +26,9 @@ type StorageConfig = {
   region: string;
   accessKey: string;
   secretKey: string;
+  accessKeySource: string;
+  secretKeySource: string;
+  warnings: string[];
   readFromObjectStorage: boolean;
   writeToObjectStorage: boolean;
   fallbackToDisk: boolean;
@@ -72,19 +76,69 @@ function readBool(value: string | undefined, fallback: boolean) {
   return fallback;
 }
 
+function readTrimmedEnv(name: string) {
+  const value = process.env[name];
+  if (value === undefined) return '';
+  return value.trim();
+}
+
+function pickEnv(names: string[]) {
+  for (const name of names) {
+    const value = readTrimmedEnv(name);
+    if (value) return { value, source: name };
+  }
+  return { value: '', source: '' };
+}
+
+function maskValue(value: string, left = 3, right = 2) {
+  if (!value) return '';
+  if (value.length <= left + right) return `${value.slice(0, 1)}***`;
+  return `${value.slice(0, left)}***${value.slice(-right)}`;
+}
+
+function isPlaceholderValue(value: string) {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return [
+    'your-access-key',
+    'your-secret-key',
+    'change-me',
+    'minioadmin',
+    'password',
+    'secret',
+  ].includes(normalized);
+}
+
 function readConfig(): StorageConfig {
-  const driver = (process.env.STORAGE_DRIVER ?? 'local').trim().toLowerCase() === 'minio' ? 'minio' : 'local';
-  const localRoot = path.resolve(process.cwd(), process.env.STORAGE_LOCAL_ROOT ?? 'uploads');
-  const publicBase = (process.env.STORAGE_PUBLIC_BASE ?? '/uploads').replace(/\/$/, '');
-  const endpointValue = process.env.MINIO_ENDPOINT ?? process.env.S3_ENDPOINT ?? '';
+  const driver = readTrimmedEnv('STORAGE_DRIVER').toLowerCase() === 'minio' ? 'minio' : 'local';
+  const localRoot = path.resolve(projectRoot, readTrimmedEnv('STORAGE_LOCAL_ROOT') || 'uploads');
+  const publicBase = (readTrimmedEnv('STORAGE_PUBLIC_BASE') || '/uploads').replace(/\/$/, '');
+
+  const endpointValue = pickEnv(['MINIO_ENDPOINT', 'S3_ENDPOINT']).value;
   const endpoint = endpointValue ? new URL(endpointValue) : null;
   if (endpoint && endpoint.port == '9001') {
     endpoint.port = '9000';
   }
-  const bucket = process.env.MINIO_BUCKET ?? process.env.BUCKET_NAME_PRIVATE ?? process.env.BUCKET_NAME_PUBLIC ?? process.env.BUCKET_NAME ?? '';
-  const region = process.env.MINIO_REGION ?? process.env.S3_REGION ?? process.env.AWS_REGION ?? 'us-east-1';
-  const accessKey = process.env.MINIO_ACCESS_KEY ?? process.env.S3_ACCESS_KEY ?? process.env.AWS_ACCESS_KEY_ID ?? '';
-  const secretKey = process.env.MINIO_SECRET_KEY ?? process.env.S3_SECRET_KEY ?? process.env.AWS_SECRET_ACCESS_KEY ?? '';
+
+  const bucket = pickEnv(['MINIO_BUCKET', 'BUCKET_NAME_PRIVATE', 'BUCKET_NAME_PUBLIC', 'BUCKET_NAME']).value;
+  const region = pickEnv(['MINIO_REGION', 'S3_REGION', 'AWS_REGION']).value || 'us-east-1';
+  const accessKeyPick = pickEnv(['MINIO_ACCESS_KEY', 'MINIO_ROOT_USER', 'MINIO_USER', 'S3_ACCESS_KEY', 'AWS_ACCESS_KEY_ID']);
+  const secretKeyPick = pickEnv(['MINIO_SECRET_KEY', 'MINIO_ROOT_PASSWORD', 'MINIO_PASSWORD', 'S3_SECRET_KEY', 'AWS_SECRET_ACCESS_KEY']);
+  const accessKey = accessKeyPick.value;
+  const secretKey = secretKeyPick.value;
+
+  const warnings: string[] = [];
+  if (driver === 'minio') {
+    if (!endpoint) warnings.push('MINIO endpoint is missing');
+    if (!bucket) warnings.push('MINIO bucket is missing');
+    if (!accessKey) warnings.push('MINIO access key is missing');
+    if (!secretKey) warnings.push('MINIO secret key is missing');
+    if (accessKey && isPlaceholderValue(accessKey)) warnings.push('MINIO access key still looks like a placeholder/default value');
+    if (secretKey && isPlaceholderValue(secretKey)) warnings.push('MINIO secret key still looks like a placeholder/default value');
+    if (accessKeyPick.source === 'AWS_ACCESS_KEY_ID' || secretKeyPick.source === 'AWS_SECRET_ACCESS_KEY') {
+      warnings.push('Using generic AWS_* credentials while STORAGE_DRIVER=minio; verify these are the CE Cloud MinIO credentials you actually want');
+    }
+  }
 
   const objectReady = driver === 'minio' && !!endpoint && !!bucket && !!accessKey && !!secretKey;
 
@@ -97,6 +151,9 @@ function readConfig(): StorageConfig {
     region,
     accessKey,
     secretKey,
+    accessKeySource: accessKeyPick.source,
+    secretKeySource: secretKeyPick.source,
+    warnings,
     readFromObjectStorage: readBool(process.env.READ_FROM_OBJECT_STORAGE, objectReady),
     writeToObjectStorage: readBool(process.env.WRITE_TO_OBJECT_STORAGE, objectReady),
     fallbackToDisk: readBool(process.env.FALLBACK_TO_DISK, true),
@@ -145,6 +202,31 @@ export function fileUrlToObjectKey(fileUrl: string) {
   return normalized.replace(/^\//, '');
 }
 
+function buildObjectKeyReadCandidates(fileUrl: string) {
+  const normalized = normalizeFileUrl(fileUrl);
+  const candidates = new Set<string>();
+
+  const primary = fileUrlToObjectKey(normalized);
+  if (primary) candidates.add(primary);
+
+  if (normalized.startsWith(`${storageConfig.publicBase}/`)) {
+    const directKey = normalized.replace(/^\//, '');
+    if (directKey) candidates.add(directKey);
+
+    const tail = normalized.slice(`${storageConfig.publicBase}/`.length).replace(/^\/+/, '');
+    if (tail && !normalized.startsWith(`${storageConfig.publicBase}/v2/`) && !normalized.startsWith(`${storageConfig.publicBase}/legacy/`)) {
+      candidates.add(`uploads/legacy/${tail}`);
+      candidates.add(`uploads/${tail}`);
+    }
+
+    if (normalized.startsWith(`${storageConfig.publicBase}/legacy/`)) {
+      candidates.add(directKey.replace(/^uploads\/legacy\//, 'uploads/'));
+    }
+  }
+
+  return Array.from(candidates).filter(Boolean);
+}
+
 export function objectKeyToFileUrl(objectKey: string) {
   const clean = objectKey.replace(/^\/+/, '');
   if (clean.startsWith('uploads/')) return `/${clean}`;
@@ -168,6 +250,139 @@ export function fileUrlToLocalPath(fileUrl: string) {
   }
 
   return path.join(storageConfig.localRoot, normalized.replace(/^\/+/, ''));
+}
+
+
+function buildLocalPathReadCandidates(fileUrl: string) {
+  const normalized = normalizeFileUrl(fileUrl);
+  const basename = path.basename(normalized);
+  const candidates = new Set<string>();
+
+  const primary = fileUrlToLocalPath(normalized);
+  if (primary) candidates.add(primary);
+
+  if (normalized.startsWith(`${storageConfig.publicBase}/`)) {
+    const tail = normalized.slice(`${storageConfig.publicBase}/`.length).replace(/^\/+/, '');
+    if (tail) {
+      candidates.add(path.join(storageConfig.localRoot, tail));
+      candidates.add(path.join(storageConfig.localRoot, 'legacy', tail.replace(/^legacy[\/]/, '')));
+    }
+  }
+
+  if (basename) {
+    candidates.add(path.join(storageConfig.localRoot, basename));
+    candidates.add(path.join(storageConfig.localRoot, 'legacy', basename));
+    candidates.add(path.join(projectRoot, 'uploads', basename));
+    candidates.add(path.join(projectRoot, 'uploads', 'legacy', basename));
+    candidates.add(path.join(projectRoot, 'public', 'uploads', basename));
+    candidates.add(path.join(projectRoot, 'public', 'uploads', 'legacy', basename));
+  }
+
+  return Array.from(candidates).filter(Boolean);
+}
+
+function findExistingLocalPathFromCandidates(fileUrl: string) {
+  for (const candidate of buildLocalPathReadCandidates(fileUrl)) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function findLocalFileByBasename(fileUrl: string) {
+  const basename = path.basename(normalizeFileUrl(fileUrl));
+  if (!basename) return null;
+
+  const roots = [
+    storageConfig.localRoot,
+    path.join(projectRoot, 'uploads'),
+    path.join(projectRoot, 'public', 'uploads'),
+  ];
+
+  const seen = new Set<string>();
+  const skipNames = new Set(['node_modules', '.git', 'src', 'dist']);
+
+  for (const root of roots) {
+    if (!root || !fs.existsSync(root)) continue;
+    const stack = [root];
+
+    while (stack.length) {
+      const dir = stack.pop()!;
+      const resolved = path.resolve(dir);
+      if (seen.has(resolved)) continue;
+      seen.add(resolved);
+
+      let entries: fs.Dirent[] = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isFile() && entry.name === basename) return fullPath;
+        if (entry.isDirectory() && !skipNames.has(entry.name)) stack.push(fullPath);
+      }
+    }
+  }
+
+  return null;
+}
+
+async function copyToCanonicalLocalPath(sourcePath: string, canonicalPath: string) {
+  if (path.resolve(sourcePath) === path.resolve(canonicalPath)) return canonicalPath;
+  ensureParentDir(canonicalPath);
+  await fsp.copyFile(sourcePath, canonicalPath);
+  return canonicalPath;
+}
+
+async function backfillObjectStorageFromLocalPath(fileUrl: string, sourcePath: string) {
+  if (!storageConfig.writeToObjectStorage || !objectStorageEnabled()) return;
+
+  const primaryKey = fileUrlToObjectKey(fileUrl);
+  if (!primaryKey) return;
+
+  try {
+    await headObject(primaryKey);
+    return;
+  } catch (error) {
+    if (!(error instanceof ObjectStorageNotFoundError)) return;
+  }
+
+  try {
+    const buffer = await fsp.readFile(sourcePath);
+    await putObjectFromBuffer(primaryKey, buffer, extToMime(path.extname(sourcePath)), {
+      recovered: 'true',
+      source: 'disk-search',
+    });
+    console.log('♻️ Recovered local file back into object storage:', { fileUrl, objectKey: primaryKey, sourcePath });
+  } catch (error) {
+    console.warn('⚠️ Failed to backfill recovered local file into object storage:', {
+      fileUrl,
+      objectKey: primaryKey,
+      sourcePath,
+      error: (error as Error).message,
+    });
+  }
+}
+
+async function recoverLocalFilePath(fileUrl: string, canonicalPath: string) {
+  const directHit = findExistingLocalPathFromCandidates(fileUrl);
+  if (directHit) {
+    const resolved = await copyToCanonicalLocalPath(directHit, canonicalPath);
+    await backfillObjectStorageFromLocalPath(fileUrl, resolved);
+    return resolved;
+  }
+
+  const recursiveHit = findLocalFileByBasename(fileUrl);
+  if (recursiveHit) {
+    const resolved = await copyToCanonicalLocalPath(recursiveHit, canonicalPath);
+    await backfillObjectStorageFromLocalPath(fileUrl, resolved);
+    console.log('🧭 Recovered file from local disk search:', { fileUrl, foundAt: recursiveHit, canonicalPath: resolved });
+    return resolved;
+  }
+
+  return null;
 }
 
 function extToMime(ext: string) {
@@ -226,6 +441,81 @@ function encodeS3Path(value: string) {
 
 function endpointHostHeader(endpoint: URL) {
   return endpoint.port ? `${endpoint.hostname}:${endpoint.port}` : endpoint.hostname;
+}
+
+function buildSignedBucketRequest(options: {
+  method: string;
+  query?: string;
+  headers?: Record<string, string>;
+  body?: Buffer;
+}) {
+  if (!storageConfig.endpoint) throw new Error('Object storage endpoint is not configured');
+
+  const endpoint = storageConfig.endpoint;
+  const method = options.method.toUpperCase();
+  const amzDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '').replace(/Z$/, 'Z');
+  const shortDate = amzDate.slice(0, 8);
+  const canonicalUri = `/${storageConfig.bucket}`;
+  const query = options.query ?? '';
+  const payloadHash = sha256Hex(options.body ?? Buffer.alloc(0));
+
+  const headers: Record<string, string> = {
+    host: endpointHostHeader(endpoint),
+    'x-amz-content-sha256': payloadHash,
+    'x-amz-date': amzDate,
+    ...(options.headers ?? {}),
+  };
+
+  const canonicalHeaders = Object.entries(headers)
+    .map(([k, v]) => [k.toLowerCase(), v.trim()] as const)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}:${v}\n`)
+    .join('');
+
+  const signedHeaders = Object.keys(headers)
+    .map((k) => k.toLowerCase())
+    .sort()
+    .join(';');
+
+  const canonicalRequest = [
+    method,
+    canonicalUri,
+    query,
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join('\n');
+
+  const scope = `${shortDate}/${storageConfig.region}/s3/aws4_request`;
+  const stringToSign = [
+    'AWS4-HMAC-SHA256',
+    amzDate,
+    scope,
+    sha256Hex(canonicalRequest),
+  ].join('\n');
+
+  const kDate = hmac(`AWS4${storageConfig.secretKey}`, shortDate);
+  const kRegion = hmac(kDate, storageConfig.region);
+  const kService = hmac(kRegion, 's3');
+  const kSigning = hmac(kService, 'aws4_request');
+  const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
+
+  const authorization = `AWS4-HMAC-SHA256 Credential=${storageConfig.accessKey}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+  headers.Authorization = authorization;
+
+  const requestPath = query ? `${canonicalUri}?${query}` : canonicalUri;
+  const transport = endpoint.protocol === 'https:' ? https : http;
+
+  const requestOptions: RequestOptions = {
+    protocol: endpoint.protocol,
+    hostname: endpoint.hostname,
+    port: endpoint.port,
+    method,
+    path: requestPath,
+    headers,
+  };
+
+  return { requestOptions, transport };
 }
 
 function buildSignedRequest(options: {
@@ -342,6 +632,21 @@ function requestObject(options: {
   });
 }
 
+async function verifyUploadedObjectReadable(objectKey: string) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await headObject(objectKey);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof ObjectStorageNotFoundError) || attempt === 3) break;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 200));
+    }
+  }
+  throw lastError;
+}
+
 export async function putObjectFromBuffer(objectKey: string, body: Buffer, contentType: string, metadata?: Record<string, string>) {
   const headers: Record<string, string> = {
     'content-type': contentType,
@@ -354,6 +659,7 @@ export async function putObjectFromBuffer(objectKey: string, body: Buffer, conte
 
   const res = await requestObject({ method: 'PUT', objectKey, headers, body });
   res.resume();
+  await verifyUploadedObjectReadable(objectKey);
 }
 
 export async function headObject(objectKey: string) {
@@ -376,8 +682,39 @@ export async function streamObject(objectKey: string) {
   return requestObject({ method: 'GET', objectKey });
 }
 
+async function streamObjectFromFileUrl(fileUrl: string) {
+  const candidates = buildObjectKeyReadCandidates(fileUrl);
+  let lastError: unknown;
+
+  for (const objectKey of candidates) {
+    try {
+      return await streamObject(objectKey);
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof ObjectStorageNotFoundError)) throw error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? new ObjectStorageNotFoundError(`${lastError.message} | fileUrl=${normalizeFileUrl(fileUrl)} | tried=${candidates.join(', ')}`)
+    : new ObjectStorageNotFoundError(`Object not found | fileUrl=${normalizeFileUrl(fileUrl)} | tried=${candidates.join(', ')}`);
+}
+
 export async function downloadObjectToLocalPath(objectKey: string, localPath: string) {
   const stream = await streamObject(objectKey);
+  ensureParentDir(localPath);
+  await new Promise<void>((resolve, reject) => {
+    const out = fs.createWriteStream(localPath);
+    stream.pipe(out);
+    stream.on('error', reject);
+    out.on('error', reject);
+    out.on('finish', () => resolve());
+  });
+  return localPath;
+}
+
+async function downloadObjectToLocalPathFromFileUrl(fileUrl: string, localPath: string) {
+  const stream = await streamObjectFromFileUrl(fileUrl);
   ensureParentDir(localPath);
   await new Promise<void>((resolve, reject) => {
     const out = fs.createWriteStream(localPath);
@@ -607,13 +944,34 @@ export async function ensureLocalFilePath(fileUrl: string) {
   const localPath = fileUrlToLocalPath(fileUrl);
   if (fs.existsSync(localPath)) return localPath;
 
+  const recoveredBeforeObjectRead = await recoverLocalFilePath(fileUrl, localPath);
+  if (recoveredBeforeObjectRead) return recoveredBeforeObjectRead;
+
+  let objectReadError: unknown = null;
   if (storageConfig.readFromObjectStorage && objectStorageEnabled()) {
-    const objectKey = fileUrlToObjectKey(fileUrl);
-    await downloadObjectToLocalPath(objectKey, localPath);
-    return localPath;
+    try {
+      await downloadObjectToLocalPathFromFileUrl(fileUrl, localPath);
+      return localPath;
+    } catch (error) {
+      objectReadError = error;
+      if (!(error instanceof ObjectStorageNotFoundError)) throw error;
+    }
   }
 
-  return localPath;
+  const recoveredAfterObjectRead = await recoverLocalFilePath(fileUrl, localPath);
+  if (recoveredAfterObjectRead) return recoveredAfterObjectRead;
+
+  if (objectReadError) throw objectReadError;
+  throw new ObjectStorageNotFoundError(`File not found on disk | fileUrl=${normalizeFileUrl(fileUrl)} | localPath=${localPath}`);
+}
+
+export async function tryEnsureLocalFilePath(fileUrl: string) {
+  try {
+    return await ensureLocalFilePath(fileUrl);
+  } catch (error) {
+    if (error instanceof ObjectStorageNotFoundError) return null;
+    throw error;
+  }
 }
 
 export async function deleteStoredFile(fileUrl: string) {
@@ -625,12 +983,24 @@ export async function deleteStoredFile(fileUrl: string) {
   }
 
   if (storageConfig.writeToObjectStorage && objectStorageEnabled()) {
-    await deleteObject(fileUrlToObjectKey(fileUrl));
+    const candidates = buildObjectKeyReadCandidates(fileUrl);
+    for (const objectKey of candidates) {
+      await deleteObject(objectKey);
+    }
   }
 }
 
 export async function resolveEmailAttachment(fileUrl: string, preferredName?: string) {
   const localPath = await ensureLocalFilePath(fileUrl);
+  return {
+    filename: preferredName || path.basename(localPath),
+    path: localPath,
+  };
+}
+
+export async function tryResolveEmailAttachment(fileUrl: string, preferredName?: string) {
+  const localPath = await tryEnsureLocalFilePath(fileUrl);
+  if (!localPath) return null;
   return {
     filename: preferredName || path.basename(localPath),
     path: localPath,
@@ -643,8 +1013,7 @@ export async function serveFileUrlViaGateway(fileUrl: string, req: Request, res:
 
   if (storageConfig.readFromObjectStorage && objectStorageEnabled()) {
     try {
-      const objectKey = fileUrlToObjectKey(normalized);
-      const upstream = await streamObject(objectKey);
+      const upstream = await streamObjectFromFileUrl(normalized);
       const headers = upstream.headers;
       if (headers['content-type']) res.setHeader('Content-Type', headers['content-type']);
       if (headers['content-length']) res.setHeader('Content-Length', headers['content-length']);
@@ -667,10 +1036,10 @@ export async function serveFileUrlViaGateway(fileUrl: string, req: Request, res:
     }
   }
 
-  const localPath = fileUrlToLocalPath(normalized);
-  if (fs.existsSync(localPath)) {
+  const recoveredLocalPath = await tryEnsureLocalFilePath(normalized);
+  if (recoveredLocalPath && fs.existsSync(recoveredLocalPath)) {
     if (method === 'HEAD') return res.status(200).end();
-    return res.sendFile(localPath);
+    return res.sendFile(recoveredLocalPath);
   }
 
   return res.status(404).json({ success: false, message: 'File not found' });
@@ -679,7 +1048,8 @@ export async function serveFileUrlViaGateway(fileUrl: string, req: Request, res:
 export function getStorageConfigForDebug() {
   return {
     ...storageConfig,
-    accessKey: storageConfig.accessKey ? `${storageConfig.accessKey.slice(0, 3)}***` : '',
+    projectRoot,
+    accessKey: maskValue(storageConfig.accessKey),
     secretKey: storageConfig.secretKey ? '***hidden***' : '',
   };
 }
@@ -710,7 +1080,49 @@ export function storageFlagsSummary() {
     fallbackToDisk: storageConfig.fallbackToDisk,
     keepLocalCopy: storageConfig.keepLocalCopy,
     objectStorageEnabled: objectStorageEnabled(),
+    accessKeySource: storageConfig.accessKeySource || '',
+    secretKeySource: storageConfig.secretKeySource || '',
+    accessKeyPreview: maskValue(storageConfig.accessKey),
+    hasSecretKey: !!storageConfig.secretKey,
+    warnings: storageConfig.warnings,
   };
+}
+
+export async function verifyObjectStorageAccess() {
+  if (!objectStorageEnabled() || !storageConfig.endpoint) {
+    return { ok: false, skipped: true, message: 'Object storage is not fully configured' };
+  }
+
+  const { requestOptions, transport } = buildSignedBucketRequest({
+    method: 'HEAD',
+  });
+
+  return new Promise<{ ok: boolean; statusCode?: number; message: string }>((resolve) => {
+    const req = transport.request(requestOptions, (res) => {
+      const status = res.statusCode ?? 500;
+      if (status >= 200 && status < 300) {
+        res.resume();
+        return resolve({ ok: true, statusCode: status, message: `Bucket ${storageConfig.bucket} is reachable` });
+      }
+
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      res.on('end', () => {
+        const bodyText = Buffer.concat(chunks).toString('utf8').trim();
+        resolve({
+          ok: false,
+          statusCode: status,
+          message: bodyText || `Bucket check failed with status ${status}`,
+        });
+      });
+    });
+
+    req.on('error', (error) => {
+      resolve({ ok: false, message: (error as Error).message });
+    });
+
+    req.end();
+  });
 }
 
 export type ObjectHeaders = IncomingHttpHeaders;

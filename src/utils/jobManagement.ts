@@ -6,6 +6,7 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { deleteStoredFile, ensureLocalFilePath } from '../services/storageService';
+import { projectRoot } from '../config/runtimePaths';
 
 const execFileAsync = promisify(execFile);
 
@@ -40,9 +41,9 @@ function uniqueName(baseName: string, used: Set<string>) {
 
 function fileUrlToAbsPath(fileUrl: string) {
   if (fileUrl.startsWith('/uploads/')) {
-    return path.join(process.cwd(), fileUrl.replace('/uploads/', 'uploads/'));
+    return path.join(projectRoot, fileUrl.replace('/uploads/', 'uploads/'));
   }
-  return path.isAbsolute(fileUrl) ? fileUrl : path.join(process.cwd(), fileUrl);
+  return path.isAbsolute(fileUrl) ? fileUrl : path.join(projectRoot, fileUrl);
 }
 
 export function parseJobIds(input: unknown): number[] {

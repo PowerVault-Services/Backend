@@ -1496,6 +1496,18 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 { "success": true }
 ```
 
+> NOTE: ถ้าบางไฟล์แนบหายใน storage อาจมี `warning` กลับมา เช่น
+
+```json
+{
+  "success": true,
+  "warning": {
+    "message": "บางไฟล์แนบไม่พบ จึงไม่ถูกแนบในอีเมล",
+    "missing": ["/uploads/xxx.pdf"]
+  }
+}
+```
+
 **Errors:**
 
 - `400` `{ "success": false, "message": "Email draft incomplete" }`
@@ -1560,6 +1572,8 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 }
 ```
 
+> NOTE: ถ้ารูป/ไฟล์บางส่วนหาไม่เจอระหว่าง generate report ระบบจะข้ามไฟล์นั้นและอาจส่ง `warning.missing` กลับมา
+
 #### GET `/api/cleaning/step4/download/:jobId`
 
 **Description:** Redirect ไปไฟล์ report จริง
@@ -1605,6 +1619,7 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 **Errors:**
 
 - `400` `{ "success": false, "message": "Report not generated" }`
+- `400` `{ "success": false, "message": "Report file not found" }`
 
 ### Inspection APIs (`/api/inspection`)
 
@@ -1831,6 +1846,12 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 { "success": true }
 ```
 
+**Errors:**
+
+- `400` `{ "success": false, "message": "Email draft incomplete (ต้องมี To/Subject/Body)" }`
+- `400` `{ "success": false, "message": "Report not uploaded" }`
+- `400` `{ "success": false, "message": "Report file not found" }`
+
 ### Service APIs (`/api/service`)
 
 #### GET `/api/service/projects`
@@ -2030,6 +2051,22 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 { "success": true }
 ```
 
+> NOTE: ถ้าบางไฟล์แนบหายใน storage อาจมี `warning` กลับมา เช่น
+
+```json
+{
+  "success": true,
+  "warning": {
+    "message": "บางไฟล์แนบไม่พบ จึงไม่ถูกแนบในอีเมล",
+    "missing": ["/uploads/xxx.pdf"]
+  }
+}
+```
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "Email draft incomplete (ต้องมี To/Subject/Body)" }`
+
 #### POST `/api/service/step3/draft`
 
 **Content-Type:** `multipart/form-data`
@@ -2116,6 +2153,7 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 **Errors:**
 
 - `400` `{ "success": false, "message": "Report not generated" }`
+- `400` `{ "success": false, "message": "Report file not found" }`
 
 ---
 
