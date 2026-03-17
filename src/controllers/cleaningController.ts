@@ -2,6 +2,7 @@ import { PrismaClient, JobStatus, JobType } from '@prisma/client';
 import { Request, Response } from 'express';
 import path from 'path';
 import { sendEmailNow } from '../services/emailService';
+import { applyEmailSignature, extractEmailSignatureInput } from '../services/emailSignatureService';
 import { ensureLocalFilePath, resolveEmailAttachment, storeIncomingUserUpload, tryEnsureLocalFilePath, tryResolveEmailAttachment } from '../services/storageService';
 import { generateCleaningReportPdf } from '../services/reportService';
 import { collectJobReportFiles, createReportsZip, deleteJobCascade, parseJobIds } from '../utils/jobManagement';
@@ -304,6 +305,7 @@ export async function saveStep2Draft(req: Request, res: Response) {
   const to = String((req.body as any).to ?? '');
   const subject = String((req.body as any).subject ?? '');
   const body = String((req.body as any).body ?? '');
+  const signature = extractEmailSignatureInput(req.body);
 
   if (!jobId) return res.status(400).json({ success: false, message: 'jobId is required' });
 
@@ -328,7 +330,7 @@ export async function saveStep2Draft(req: Request, res: Response) {
     data: {
       step2EmailTo: to || null,
       step2EmailSubject: subject || null,
-      step2EmailBody: body || null,
+      step2EmailBody: body ? applyEmailSignature(body, signature) : null,
     },
   });
 
@@ -603,6 +605,7 @@ export async function generateReport(req: Request, res: Response) {
  */
 export async function saveStep5Draft(req: Request, res: Response) {
   const { jobId, to, subject, body } = req.body ?? {};
+  const signature = extractEmailSignatureInput(req.body);
   const id = Number(jobId);
   if (!id) return res.status(400).json({ success: false, message: 'jobId is required' });
 
@@ -611,7 +614,7 @@ export async function saveStep5Draft(req: Request, res: Response) {
     data: {
       step5EmailTo: to ? String(to) : null,
       step5EmailSubject: subject ? String(subject) : null,
-      step5EmailBody: body ? String(body) : null,
+      step5EmailBody: body ? applyEmailSignature(String(body), signature) : null,
     },
   });
 
@@ -634,6 +637,7 @@ export async function downloadReportRedirect(req: Request, res: Response) {
  */
 export async function sendStep5Email(req: Request, res: Response) {
   const { jobId, to, subject, body } = req.body ?? {};
+  const signature = extractEmailSignatureInput(req.body);
   const id = Number(jobId);
 
   const job = await prisma.job.findUnique({ where: { id }, include: { site: true } });
@@ -650,7 +654,7 @@ export async function sendStep5Email(req: Request, res: Response) {
     step: 5,
     to: String(to),
     subject: String(subject),
-    html: String(body),
+    html: applyEmailSignature(String(body), signature),
     attachments: [{ filename: `Cleaning-Report-${job.jobNo}.pdf`, path: reportAbs }],
   });
 
@@ -661,7 +665,7 @@ export async function sendStep5Email(req: Request, res: Response) {
     data: {
       step5EmailTo: String(to),
       step5EmailSubject: String(subject),
-      step5EmailBody: String(body),
+      step5EmailBody: applyEmailSignature(String(body), signature),
       step5SentAt: new Date(),
       step5SentByUserId: 1,
     },

@@ -2,6 +2,7 @@ import { PrismaClient, JobStatus, JobType } from '@prisma/client';
 import { Request, Response } from 'express';
 import path from 'path';
 import { sendEmailNow } from '../services/emailService';
+import { applyEmailSignature, extractEmailSignatureInput } from '../services/emailSignatureService';
 import fs from 'fs';
 import { ensureLocalFilePath, resolveEmailAttachment, storeIncomingReportUpload, storeIncomingUserUpload, tryEnsureLocalFilePath } from '../services/storageService';
 import { collectJobReportFiles, createReportsZip, deleteJobCascade, parseJobIds } from '../utils/jobManagement';
@@ -285,6 +286,7 @@ export async function saveStep2Draft(req: Request, res: Response) {
   const to = pickTextField(req.body, 'to').trim();
   const subject = pickTextField(req.body, 'subject').trim();
   const body = pickTextField(req.body, 'body'); // อย่า trim html มากไป
+  const signature = extractEmailSignatureInput(req.body);
 
   if (!jobId) return res.status(400).json({ success: false, message: 'jobId is required' });
 
@@ -309,12 +311,12 @@ export async function saveStep2Draft(req: Request, res: Response) {
       jobId,
       step2EmailTo: to || null,
       step2EmailSubject: subject || null,
-      step2EmailBody: body || null,
+      step2EmailBody: body ? applyEmailSignature(body, signature) : null,
     },
     update: {
       step2EmailTo: to || null,
       step2EmailSubject: subject || null,
-      step2EmailBody: body || null,
+      step2EmailBody: body ? applyEmailSignature(body, signature) : null,
     },
   });
 
@@ -398,6 +400,7 @@ export async function saveStep3Draft(req: Request, res: Response) {
   const to = pickTextField(req.body, 'to').trim();
   const subject = pickTextField(req.body, 'subject').trim();
   const body = pickTextField(req.body, 'body');
+  const signature = extractEmailSignatureInput(req.body);
 
   if (!jobId) return res.status(400).json({ success: false, message: 'jobId is required' });
 
@@ -422,14 +425,14 @@ export async function saveStep3Draft(req: Request, res: Response) {
         reportCreatedAt: new Date(),
         step3EmailTo: to || null,
         step3EmailSubject: subject || null,
-        step3EmailBody: body || null,
+        step3EmailBody: body ? applyEmailSignature(body, signature) : null,
       },
       update: {
         reportFileUrl: fileUrl,
         reportCreatedAt: new Date(),
         step3EmailTo: to || null,
         step3EmailSubject: subject || null,
-        step3EmailBody: body || null,
+        step3EmailBody: body ? applyEmailSignature(body, signature) : null,
       },
     });
 
@@ -441,8 +444,8 @@ export async function saveStep3Draft(req: Request, res: Response) {
   // ไม่มีไฟล์ ก็เซฟเฉพาะ draft
   await prisma.inspectionJob.upsert({
     where: { jobId },
-    create: { jobId, step3EmailTo: to || null, step3EmailSubject: subject || null, step3EmailBody: body || null },
-    update: { step3EmailTo: to || null, step3EmailSubject: subject || null, step3EmailBody: body || null },
+    create: { jobId, step3EmailTo: to || null, step3EmailSubject: subject || null, step3EmailBody: body ? applyEmailSignature(body, signature) : null },
+    update: { step3EmailTo: to || null, step3EmailSubject: subject || null, step3EmailBody: body ? applyEmailSignature(body, signature) : null },
   });
 
   await bumpJobStep(jobId, 3);

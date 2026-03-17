@@ -1,5 +1,6 @@
 import { PrismaClient, JobStatus, JobType } from '@prisma/client';
 import { Request, Response } from 'express';
+import { getEmailSignaturePresets } from '../services/emailSignatureService';
 
 const prisma = new PrismaClient();
 
@@ -83,5 +84,21 @@ export async function listDrafts(req: Request, res: Response) {
       projectName: j.site?.name ?? null,
       updatedAt: j.updatedAt,
     })),
+  });
+}
+
+
+/**
+ * GET /api/drafts/email-signatures
+ * ใช้สำหรับ dropdown เลือกลายเซ็นท้ายอีเมล
+ */
+export async function listEmailSignatures(_req: Request, res: Response) {
+  res.json({
+    success: true,
+    data: {
+      supportsCustom: true,
+      defaultKey: 'palm',
+      items: getEmailSignaturePresets(),
+    },
   });
 }

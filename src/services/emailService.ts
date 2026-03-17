@@ -1,5 +1,11 @@
 import nodemailer from 'nodemailer';
 import prisma from '../config/prisma';
+import {
+  EmailSignatureInput,
+  applyEmailSignature,
+  emailHtmlUsesPowerVaultSignatureLogo,
+  getEmailSignatureLogoAttachment,
+} from './emailSignatureService';
 
 /**
  * ===== DEBUG: เช็ค ENV ตอนโหลดไฟล์ =====
@@ -41,7 +47,8 @@ export async function sendEmailNow(opts: {
   to: string;
   subject: string;
   html: string;
-  attachments?: { filename: string; path: string }[];
+  signature?: EmailSignatureInput;
+  attachments?: { filename: string; path: string; cid?: string }[];
 }) {
   console.log('📤 SEND_EMAIL_CALLED', {
     jobId: opts.jobId,
@@ -49,15 +56,28 @@ export async function sendEmailNow(opts: {
     to: opts.to,
     subject: opts.subject,
     attachments: opts.attachments?.length ?? 0,
+    signatureKey: opts.signature?.signatureKey ?? null,
+    signatureName: opts.signature?.signatureName ?? null,
   });
+
+  const finalHtml = applyEmailSignature(opts.html, opts.signature);
+  const finalAttachments = [...(opts.attachments ?? [])];
+  const signatureLogo = getEmailSignatureLogoAttachment();
+  if (
+    signatureLogo &&
+    emailHtmlUsesPowerVaultSignatureLogo(finalHtml) &&
+    !finalAttachments.some((item) => item.cid === signatureLogo.cid)
+  ) {
+    finalAttachments.push(signatureLogo);
+  }
 
   try {
     const info = await transporter.sendMail({
       from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
       to: opts.to,
       subject: opts.subject,
-      html: opts.html,
-      attachments: opts.attachments ?? [],
+      html: finalHtml,
+      attachments: finalAttachments,
       replyTo: process.env.SMTP_USER,
       headers: {
         'X-Entity-Ref-ID': String(opts.jobId ?? ''),
@@ -82,7 +102,7 @@ export async function sendEmailNow(opts: {
         step: opts.step,
         to: opts.to,
         subject: opts.subject,
-        bodyPreview: opts.html.slice(0, 500),
+        bodyPreview: finalHtml.slice(0, 500),
         status: 'SENT',
       },
     });
@@ -107,7 +127,7 @@ export async function sendEmailNow(opts: {
         step: opts.step,
         to: opts.to,
         subject: opts.subject,
-        bodyPreview: opts.html.slice(0, 500),
+        bodyPreview: finalHtml.slice(0, 500),
         status: 'FAILED',
         errorMessage: e?.message ?? String(e),
       },
