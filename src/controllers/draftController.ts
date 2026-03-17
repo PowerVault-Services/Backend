@@ -96,8 +96,9 @@ export async function listEmailSignatures(_req: Request, res: Response) {
   res.json({
     success: true,
     data: {
-      supportsCustom: true,
+      supportsCustomName: true,
       defaultKey: 'palm',
+      defaultName: 'palm',
       items: getEmailSignaturePresets(),
     },
   });

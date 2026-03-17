@@ -1471,6 +1471,7 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 - `jobId` (required)
 - `to`, `subject`, `body` (optional: save draft; แต่ต้องมีครบก่อนเรียก `/step2/send`)
+- `signatureName` (optional): ชื่อผู้ลงนามท้ายอีเมล (ระบบจะใช้ตอนประกอบลายเซ็นอีเมล)
 
 **Files:** `files` (file[], max 10)
 
@@ -1479,6 +1480,8 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 ```json
 { "success": true }
 ```
+
+> NOTE: ถ้าส่ง `signatureName` ใน `/step2/draft` ระบบจะบันทึก body ที่ต่อท้าย email signature ไว้ และตอน `/step2/send` จะส่งด้วยลายเซ็นนี้
 
 #### POST `/api/cleaning/step2/send`
 
@@ -1776,6 +1779,7 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 - `jobId` (required)
 - `to`, `subject`, `body` (optional: save draft; แต่ต้องมีครบก่อนเรียก `/step2/send`)
+- `signatureName` (optional): ชื่อผู้ลงนามท้ายอีเมล (ระบบจะใช้ตอนประกอบลายเซ็นอีเมล)
 
 **Files:** `attachments` (file[], max 20)
 
@@ -1784,6 +1788,8 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 ```json
 { "success": true }
 ```
+
+> NOTE: ถ้าส่ง `signatureName` ใน `/step2/draft` ระบบจะบันทึก body ที่ต่อท้าย email signature ไว้ และตอน `/step2/send` จะส่งด้วยลายเซ็นนี้
 
 #### POST `/api/inspection/step2/send`
 
@@ -2026,6 +2032,7 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 - `jobId` (required)
 - `to`, `subject`, `body` (optional: save draft; แต่ต้องมีครบก่อนเรียก `/step2/send`)
+- `signatureName` (optional): ชื่อผู้ลงนามท้ายอีเมล (ระบบจะใช้ตอนประกอบลายเซ็นอีเมล)
 
 **Files:** `attachments` (file[], max 20)
 
@@ -2034,6 +2041,8 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 ```json
 { "success": true }
 ```
+
+> NOTE: ถ้าส่ง `signatureName` ใน `/step2/draft` ระบบจะบันทึก body ที่ต่อท้าย email signature ไว้ และตอน `/step2/send` จะส่งด้วยลายเซ็นนี้
 
 #### POST `/api/service/step2/send`
 

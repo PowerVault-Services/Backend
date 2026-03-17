@@ -8,13 +8,6 @@ const SIGNATURE_END = '<!-- PV_EMAIL_SIGNATURE_END -->';
 export type EmailSignatureInput = {
   signatureKey?: string | null;
   signatureName?: string | null;
-  signatureRoleLabel?: string | null;
-  signaturePhone?: string | null;
-  signatureDepartment?: string | null;
-  signatureCompany?: string | null;
-  signatureAddress?: string | null;
-  signatureWebsite?: string | null;
-  signatureCountry?: string | null;
 };
 
 type EmailSignatureProfile = {
@@ -33,7 +26,7 @@ type EmailSignatureProfile = {
 const DEFAULT_PROFILE: EmailSignatureProfile = {
   key: 'palm',
   label: 'Palm',
-  name: 'Duangkamon Kuikeaw (Palm)',
+  name: 'PowerVault Support Team',
   roleLabel: 'Contract Person',
   phone: '0925359978',
   department: 'Support Service',
@@ -82,7 +75,7 @@ function hasGeneratedSignature(html: string) {
 
 export function hasExplicitEmailSignatureInput(input?: EmailSignatureInput | null) {
   if (!input) return false;
-  return Object.values(input).some((value) => String(value ?? '').trim() !== '');
+  return String(input.signatureKey ?? '').trim() !== '' || String(input.signatureName ?? '').trim() !== '';
 }
 
 export function extractEmailSignatureInput(raw: any): EmailSignatureInput | undefined {
@@ -91,13 +84,6 @@ export function extractEmailSignatureInput(raw: any): EmailSignatureInput | unde
   const picked: EmailSignatureInput = {
     signatureKey: raw.signatureKey ?? raw.signKey ?? raw.signerKey ?? null,
     signatureName: raw.signatureName ?? raw.signerName ?? raw.contactPersonName ?? null,
-    signatureRoleLabel: raw.signatureRoleLabel ?? raw.signaturePhoneLabel ?? raw.signerRoleLabel ?? null,
-    signaturePhone: raw.signaturePhone ?? raw.signerPhone ?? raw.contactPersonPhone ?? null,
-    signatureDepartment: raw.signatureDepartment ?? raw.signerDepartment ?? raw.department ?? null,
-    signatureCompany: raw.signatureCompany ?? raw.signerCompany ?? null,
-    signatureAddress: raw.signatureAddress ?? raw.signerAddress ?? null,
-    signatureWebsite: raw.signatureWebsite ?? raw.signerWebsite ?? null,
-    signatureCountry: raw.signatureCountry ?? raw.signerCountry ?? null,
   };
 
   return hasExplicitEmailSignatureInput(picked) ? picked : undefined;
@@ -110,13 +96,6 @@ function resolveEmailSignatureProfile(input?: EmailSignatureInput | null): Email
   return {
     ...preset,
     name: String(input?.signatureName ?? preset.name).trim() || preset.name,
-    roleLabel: String(input?.signatureRoleLabel ?? preset.roleLabel).trim() || preset.roleLabel,
-    phone: String(input?.signaturePhone ?? preset.phone).trim() || preset.phone,
-    department: String(input?.signatureDepartment ?? preset.department).trim() || preset.department,
-    company: String(input?.signatureCompany ?? preset.company).trim() || preset.company,
-    address: String(input?.signatureAddress ?? preset.address).trim() || preset.address,
-    website: String(input?.signatureWebsite ?? preset.website).trim() || preset.website,
-    country: String(input?.signatureCountry ?? preset.country).trim() || preset.country,
   };
 }
 
@@ -160,17 +139,10 @@ export function applyEmailSignature(html: string, input?: EmailSignatureInput | 
 }
 
 export function getEmailSignaturePresets() {
-  return PRESET_SIGNATURES.map(({ key, label, name, roleLabel, phone, department, company, address, website, country }) => ({
+  return PRESET_SIGNATURES.map(({ key, label, name }) => ({
     key,
     label,
     name,
-    roleLabel,
-    phone,
-    department,
-    company,
-    address,
-    website,
-    country,
   }));
 }
 
