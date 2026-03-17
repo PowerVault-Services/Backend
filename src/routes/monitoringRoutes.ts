@@ -3,8 +3,124 @@
 	import { huaweiOnDemand } from '../services/huaweiService';
 	import { syncPlantOnDemand } from '../services/syncService';
 	import { getEnergyManagementSeries, getMonitoringHomeRealtime } from '../services/monitoringHomeService';
+import { buildMonthRange, summarizeSitePrRange } from '../services/siteAnalyticsService';
 
 	const router = Router();
+
+	router.get('/pr/sites', async (req, res) => {
+		const startMonth = String(req.query.startMonth ?? '').trim();
+		const endMonth = String(req.query.endMonth ?? req.query.startMonth ?? '').trim();
+		const q = String(req.query.q ?? '').trim();
+		const requestedIds = String(req.query.siteIds ?? '').trim();
+
+		if (!startMonth) return res.status(400).json({ error: 'startMonth is required (YYYY-MM)' });
+
+		let months;
+		try {
+			months = buildMonthRange(startMonth, endMonth || startMonth);
+		} catch (e: any) {
+			return res.status(e?.statusCode ?? 400).json({ error: e?.message ?? 'Invalid month range' });
+		}
+
+		const siteIdList = requestedIds
+			? requestedIds.split(',').map((v) => Number(v.trim())).filter((v) => Number.isFinite(v))
+			: [];
+
+		const sites = await prisma.site.findMany({
+			where: {
+				...(siteIdList.length ? { id: { in: siteIdList } } : {}),
+				...(q
+					? {
+						OR: [
+							{ name: { contains: q, mode: 'insensitive' } },
+							{ plantCode: { contains: q, mode: 'insensitive' } },
+						],
+					}
+					: {}),
+			},
+			select: { id: true, name: true, plantCode: true, capacityKWp: true },
+			orderBy: { name: 'asc' },
+			take: 200,
+		});
+
+		const rows = await Promise.all(
+			sites.map(async (site) => {
+				const summary = await summarizeSitePrRange(site.id, startMonth, endMonth || startMonth);
+				return {
+					siteId: site.id,
+					plantName: site.name,
+					plantCode: site.plantCode,
+					systemSizeKWp: site.capacityKWp,
+					period: { startMonth, endMonth: endMonth || startMonth },
+					totals: summary.totals,
+					months: summary.rows,
+				};
+			}),
+		);
+
+		return res.json({ data: { months, list: rows } });
+	});
+
+	router.get('/pr/export', async (req, res) => {
+		const startMonth = String(req.query.startMonth ?? '').trim();
+		const endMonth = String(req.query.endMonth ?? req.query.startMonth ?? '').trim();
+		const requestedIds = String(req.query.siteIds ?? '').trim();
+		if (!startMonth) return res.status(400).json({ error: 'startMonth is required (YYYY-MM)' });
+		if (!requestedIds) return res.status(400).json({ error: 'siteIds is required' });
+
+		const siteIds = requestedIds.split(',').map((v) => Number(v.trim())).filter((v) => Number.isFinite(v));
+		const sites = await prisma.site.findMany({
+			where: { id: { in: siteIds } },
+			select: { id: true, name: true, plantCode: true },
+			orderBy: { name: 'asc' },
+		});
+
+		const esc = (value: any) => {
+			const str = value == null ? '' : String(value);
+			return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+		};
+
+		const lines = [
+			[
+				'plantName',
+				'plantCode',
+				'periodStart',
+				'periodEnd',
+				'irradiationActual',
+				'irradiationForecast',
+				'irradiationVarPct',
+				'productionActual',
+				'productionForecast',
+				'productionVarPct',
+				'prActual',
+				'prForecast',
+				'prVarPct',
+			].join(','),
+		];
+
+		for (const site of sites) {
+			const summary = await summarizeSitePrRange(site.id, startMonth, endMonth || startMonth);
+			lines.push([
+				site.name,
+				site.plantCode,
+				startMonth,
+				endMonth || startMonth,
+				summary.totals.irradiation.actual,
+				summary.totals.irradiation.forecast,
+				summary.totals.irradiation.varPct,
+				summary.totals.production.actual,
+				summary.totals.production.forecast,
+				summary.totals.production.varPct,
+				summary.totals.pr.actual,
+				summary.totals.pr.forecast,
+				summary.totals.pr.varPct,
+			].map(esc).join(','));
+		}
+
+		res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+		res.setHeader('Content-Disposition', `attachment; filename="pr-summary-${startMonth}-${endMonth || startMonth}.csv"`);
+		return res.send(lines.join('\n'));
+	});
 
 	router.get('/pr', async (req, res) => {
 		const siteId = Number(req.query.siteId);

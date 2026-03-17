@@ -21,6 +21,24 @@ function toNum(v: any) {
   return Number.isFinite(n) ? n : null;
 }
 
+function normalizeWorkTimeText(input: { startTime?: any; endTime?: any; workTimeText?: any }) {
+  const start = String(input.startTime ?? '').trim();
+  const end = String(input.endTime ?? '').trim();
+  if (start && end) return `${start}-${end}`;
+  const workTimeText = String(input.workTimeText ?? '').trim();
+  return workTimeText || null;
+}
+
+function splitWorkTimeText(workTimeText?: string | null) {
+  const raw = String(workTimeText ?? '').trim();
+  const match = raw.match(/^([^\-]+)\s*-\s*([^\-]+)$/);
+  return {
+    startTime: match ? match[1].trim() : null,
+    endTime: match ? match[2].trim() : null,
+    workTimeText: raw || null,
+  };
+}
+
 function makeJobNo() {
   // ตัวอย่าง: CLN-20260208-123456 (คุณจะปรับให้เหมือนของเดิมก็ได้)
   const d = new Date();
@@ -102,6 +120,7 @@ export async function listCleaningJobs(req: Request, res: Response) {
     const projectName = String(req.query.projectName ?? '').trim();
     const status = String(req.query.status ?? '').trim();
     const contractor = String(req.query.contractor ?? '').trim();
+    const problem = String(req.query.problem ?? '').trim();
 
     const systemSizeKWp = toNum(req.query.systemSizeKWp);
     const pvModuleEA = toNum(req.query.pvModuleEA);
@@ -115,6 +134,7 @@ export async function listCleaningJobs(req: Request, res: Response) {
     if (jobNo) whereJob.jobNo = { contains: jobNo, mode: 'insensitive' };
     if (projectType) whereJob.projectType = { contains: projectType, mode: 'insensitive' };
     if (contractor) whereJob.contractor = { contains: contractor, mode: 'insensitive' };
+    if (problem) whereJob.details = { contains: problem, mode: 'insensitive' };
     if (status) whereJob.status = status as any;
 
     const whereCleaning: any = {};
@@ -162,7 +182,9 @@ export async function listCleaningJobs(req: Request, res: Response) {
         pvModuleEA: j.cleaningJob?.pvModuleEA ?? null,
         date: j.cleaningJob?.workDate ?? null,
         time: j.cleaningJob?.workTimeText ?? null,
+        ...splitWorkTimeText(j.cleaningJob?.workTimeText ?? null),
         contractor: j.contractor ?? null,
+        problem: j.details ?? null,
         status: j.status,
       })),
     });
@@ -185,8 +207,12 @@ export async function createDraftStep1(req: Request, res: Response) {
     contactEmail,
     workDate,      // "2026-02-08"
     workTimeText,  // "10:00"
+    startTime,
+    endTime,
+    contractor,
     customerName,
     note,
+    problem,
   } = req.body ?? {};
 
   if (!siteId) return res.status(400).json({ success: false, message: 'siteId is required' });
@@ -195,6 +221,7 @@ export async function createDraftStep1(req: Request, res: Response) {
   if (!site) return res.status(404).json({ success: false, message: 'Site not found' });
 
   const dt = workDate ? new Date(String(workDate)) : null;
+  const normalizedWorkTimeText = normalizeWorkTimeText({ startTime, endTime, workTimeText });
 
   // create new draft
   if (!jobId) {
@@ -207,6 +234,9 @@ export async function createDraftStep1(req: Request, res: Response) {
         step: 1,
         scheduledDate: dt,
         siteId: site.id,
+        projectType: projectType ?? null,
+        contractor: contractor ?? null,
+        details: problem ?? null,
         createdById: 1, // TODO: ต่อ auth แล้วเอาจาก token
       },
     });
@@ -222,7 +252,7 @@ export async function createDraftStep1(req: Request, res: Response) {
       contactPhone: contactPhone ?? site.contactPhone ?? null,
       contactEmail: contactEmail ?? site.contactEmail ?? null,
       workDate: dt,
-      workTimeText: workTimeText ?? null,
+      workTimeText: normalizedWorkTimeText,
       customerName: customerName ?? null,
       note: note ?? null,
     },
@@ -241,6 +271,9 @@ export async function createDraftStep1(req: Request, res: Response) {
       scheduledDate: dt,
       siteId: site.id,
       title: `Cleaning - ${site.name}`,
+      projectType: projectType ?? null,
+      contractor: contractor ?? null,
+      details: problem ?? null,
       step: 1,
     },
   });
@@ -257,7 +290,7 @@ export async function createDraftStep1(req: Request, res: Response) {
       contactPhone: contactPhone ?? site.contactPhone ?? null,
       contactEmail: contactEmail ?? site.contactEmail ?? null,
       workDate: dt,
-      workTimeText: workTimeText ?? null,
+      workTimeText: normalizedWorkTimeText,
       customerName: customerName ?? null,
       note: note ?? null,
     },
@@ -270,7 +303,7 @@ export async function createDraftStep1(req: Request, res: Response) {
       contactPhone: contactPhone ?? site.contactPhone ?? null,
       contactEmail: contactEmail ?? site.contactEmail ?? null,
       workDate: dt,
-      workTimeText: workTimeText ?? null,
+      workTimeText: normalizedWorkTimeText,
       customerName: customerName ?? null,
       note: note ?? null,
     },
@@ -292,7 +325,7 @@ export async function getCleaningJob(req: Request, res: Response) {
   if (!job) return res.status(404).json({ success: false, message: 'Job not found' });
 
   const cleaning = await prisma.cleaningJob.findUnique({ where: { jobId } });
-  res.json({ success: true, data: { job, cleaning } });
+  res.json({ success: true, data: { job, cleaning, timeRange: splitWorkTimeText(cleaning?.workTimeText ?? null) } });
 }
 
 /**

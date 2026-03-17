@@ -1,6 +1,6 @@
 # Solar Backend (Frontend API)
 
-Backend นี้เป็น Express + Prisma + PostgreSQL และมี API สำหรับหน้า FE หลายโมดูล (homepage, monitoring, stock, jobs, report center, client data)
+Backend นี้เป็น Express + Prisma + PostgreSQL และมี API สำหรับหน้า FE หลายโมดูล (homepage, monitoring, alarms/admin alarms, stock, jobs, report center, client data)
 
 ---
 
@@ -563,6 +563,68 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 - `400` `{ "error": "Invalid range" }`
 - `400` `{ "error": "Invalid stringNo" }`
 
+### GET `/api/monitoring/pr/sites`
+
+**Description:** สรุป PR หลาย site ตามช่วงเดือน (ใช้ทำตารางเปรียบเทียบหลายโครงการ)
+
+**Auth:** None
+
+**Query params:**
+
+- `startMonth` (required): `YYYY-MM`
+- `endMonth` (optional): `YYYY-MM` (default = `startMonth`)
+- `siteIds` (optional): comma-separated เช่น `1,2,3`
+- `q` (optional): search by `site.name` หรือ `plantCode`
+
+**Response 200 (example):**
+
+```json
+{
+  "data": {
+    "months": ["2026-01", "2026-02"],
+    "list": [
+      {
+        "siteId": 1,
+        "plantName": "Solar Farm A",
+        "plantCode": "PLANT-001",
+        "systemSizeKWp": 500,
+        "period": { "startMonth": "2026-01", "endMonth": "2026-02" },
+        "totals": {
+          "irradiation": { "actual": 10.2, "forecast": 9.8, "varPct": 4.082 },
+          "production": { "actual": 5100, "forecast": 5000, "varPct": 2.0 },
+          "pr": { "actual": 46.3, "forecast": 45.8, "varPct": 1.092 }
+        },
+        "months": []
+      }
+    ]
+  }
+}
+```
+
+**Errors:**
+
+- `400` `{ "error": "startMonth is required (YYYY-MM)" }`
+- `400` `{ "error": "Invalid month range" }`
+
+### GET `/api/monitoring/pr/export`
+
+**Description:** Export PR summary หลาย site เป็น CSV
+
+**Auth:** None
+
+**Query params:**
+
+- `startMonth` (required): `YYYY-MM`
+- `endMonth` (optional): `YYYY-MM` (default = `startMonth`)
+- `siteIds` (required): comma-separated เช่น `1,2,3`
+
+**Response 200:** `text/csv` พร้อม `Content-Disposition: attachment`
+
+**Errors:**
+
+- `400` `{ "error": "startMonth is required (YYYY-MM)" }`
+- `400` `{ "error": "siteIds is required" }`
+
 ### GET `/api/monitoring/pr`
 
 **Description:** PR page (Irradiation / Production / Performance Ratio) — Actual from Huawei + Forecast from DB
@@ -900,7 +962,59 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 ---
 
+## Admin Alarm APIs (`/api/admin`)
+
+ชุด endpoint นี้ behavior หลักเหมือน `/api/alarms` (list/details/ack/delete/export) แต่ใช้แยกสำหรับหน้าฝั่ง admin และรองรับ filter `plantName` เพิ่มใน list/export
+
+### GET `/api/admin`
+
+**Description:** List alarms สำหรับหน้าฝั่ง admin
+
+**Query params:**
+
+- เหมือน `/api/alarms`
+- `plantName` (optional): contains search จากชื่อ site (`site.name`)
+
+### GET `/api/admin/:id`
+
+**Description:** Alarm details (เหมือน `/api/alarms/:id`)
+
+### POST `/api/admin/:id/acknowledge`
+
+**Description:** Acknowledge alarm (เหมือน `/api/alarms/:id/acknowledge`)
+
+### DELETE `/api/admin/:id`
+
+**Description:** Soft-delete alarm (เหมือน `/api/alarms/:id`)
+
+### GET `/api/admin/export`
+
+**Description:** Export CSV (เหมือน `/api/alarms/export`) และรองรับ `plantName`
+
+---
+
 ## Stock APIs (`/api/stock`)
+
+### GET `/api/stock/projects`
+
+**Description:** ดึงรายชื่อ project จาก site master สำหรับ dropdown ในงานเบิกจ่าย
+
+**Auth:** None
+
+**Query params:**
+
+- `q` (optional): search by `site.name` หรือ `plantCode`
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": [
+    { "siteId": 1, "project": "Solar Farm A", "plantCode": "PLANT-001" }
+  ]
+}
+```
 
 ### GET `/api/stock/meta`
 
@@ -998,7 +1112,7 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 - `page` (optional, default `1`)
 - `pageSize` (optional, default `20`)
-- Filters (optional): `q`, `categoryId`, `unitId`, `productId`, `dateFrom`, `dateTo`
+- Filters (optional): `q`, `sku`, `productName`, `project`, `categoryId`, `unitId`, `productId`, `dateFrom`, `dateTo`
 
 **Response 200 (example):**
 
@@ -1042,7 +1156,9 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 { "productId": 1, "quantity": 20 }
 ```
 
-**Request body (optional fields):** `txDate`, `project`, `receiver`, `vendor`, `insuranceCompany`, `insuranceNo`, `note`
+**Request body (optional fields):** `txDate`, `project`, `siteId`, `receiver`, `vendor`, `insuranceCompany`, `insuranceNo`, `note`
+
+> NOTE: ถ้าส่ง `siteId` แต่ไม่ส่ง `project` backend จะเติมชื่อ project จาก `site.name` อัตโนมัติ
 
 **Response 200 (example):**
 
@@ -1105,6 +1221,16 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 ```json
 { "success": true, "data": { "id": 1000, "type": "OUT", "productId": 1, "quantity": 5, "txDate": "2026-02-03T01:00:00.000Z" } }
 ```
+
+**Request body (optional fields):** `txDate`, `project`, `siteId`, `receiver`, `vendor`, `insuranceCompany`, `insuranceNo`, `note`, `jobId`
+
+> NOTE: `POST /api/stock/deduct` เป็น alias ของ `POST /api/stock/out`
+
+### GET `/api/stock/deduct`
+
+**Description:** Alias ของ `GET /api/stock/out`
+
+**Query params / Response:** เหมือน `GET /api/stock/out`
 
 **Errors:**
 
@@ -1344,6 +1470,7 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 - `systemSizeKWp` (exact)
 - `pvModuleEA` (exact)
 - `contractor` (contains)
+- `problem` (contains)
 - `status` (exact)
 - `date`: `YYYY-MM-DD` (match work date)
 
@@ -1363,7 +1490,10 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
       "pvModuleEA": 1200,
       "date": "2026-03-03T00:00:00.000Z",
       "time": "10:00",
+      "startTime": "10:00",
+      "endTime": "12:00",
       "contractor": "Vendor X",
+      "problem": "Inverter trip",
       "status": "DRAFT"
     }
   ]
@@ -1412,7 +1542,10 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
   "contactPhone": "0812345678",
   "contactEmail": "customer@example.com",
   "workDate": "2026-02-15",
-  "workTimeText": "10:00",
+  "startTime": "10:00",
+  "endTime": "12:00",
+  "contractor": "Vendor X",
+  "problem": "Inverter trip",
   "customerName": "Robinson Chachoengsao",
   "note": "เข้าหน้างานทางประตู A"
 }
@@ -1435,7 +1568,14 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 **Response 200 (example):**
 
 ```json
-{ "success": true, "data": { "job": { "id": 123, "jobNo": "CLN-..." }, "cleaning": { "jobId": 123 } } }
+{
+  "success": true,
+  "data": {
+    "job": { "id": 123, "jobNo": "CLN-..." },
+    "cleaning": { "jobId": 123 },
+    "timeRange": { "startTime": "10:00", "endTime": "12:00", "workTimeText": "10:00-12:00" }
+  }
+}
 ```
 
 #### PUT `/api/cleaning/job/:jobId`
@@ -1668,6 +1808,8 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 - `projectName` (contains)
 - `systemSizeKWp` (exact)
 - `pvModuleEA` (exact)
+- `contractor` (contains)
+- `problem` (contains)
 - `status` (exact)
 - `date`: `YYYY-MM-DD` (match work date)
 
@@ -1687,6 +1829,10 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
       "pvModuleEA": 1200,
       "date": "2026-03-03T00:00:00.000Z",
       "time": "10:00",
+      "startTime": "10:00",
+      "endTime": "12:00",
+      "contractor": "Vendor X",
+      "problem": "String alarm",
       "status": "DRAFT"
     }
   ]
@@ -1729,7 +1875,14 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 **Request body (example):**
 
 ```json
-{ "siteId": 1, "workDate": "2026-02-15", "workTimeText": "10:00" }
+{
+  "siteId": 1,
+  "workDate": "2026-02-15",
+  "startTime": "10:00",
+  "endTime": "12:00",
+  "contractor": "Vendor X",
+  "problem": "String alarm"
+}
 ```
 
 **Response 200 (example):**
@@ -1743,7 +1896,14 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 **Response 200 (example):**
 
 ```json
-{ "success": true, "data": { "job": { "id": 555, "jobNo": "INSP-..." }, "inspection": { "jobId": 555 } } }
+{
+  "success": true,
+  "data": {
+    "job": { "id": 555, "jobNo": "INSP-..." },
+    "inspection": { "jobId": 555 },
+    "timeRange": { "startTime": "10:00", "endTime": "12:00", "workTimeText": "10:00-12:00" }
+  }
+}
 ```
 
 #### PUT `/api/inspection/job/:jobId`
@@ -1904,6 +2064,8 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 - `pvModuleEA` (exact)
 - `status` (exact)
 - `service` (contains; currently match บาง field เช่น note)
+- `contractor` (contains)
+- `problem` (contains)
 - `date`: `YYYY-MM-DD` (match work date)
 
 **Response 200 (example):**
@@ -1922,6 +2084,10 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
       "pvModuleEA": 1200,
       "date": "2026-03-03T00:00:00.000Z",
       "time": "10:00",
+      "startTime": "10:00",
+      "endTime": "12:00",
+      "contractor": "Vendor X",
+      "problem": "Battery warning",
       "status": "DRAFT"
     }
   ]
@@ -1964,7 +2130,15 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 **Request body (example):**
 
 ```json
-{ "siteId": 1, "workDate": "2026-02-15", "workTimeText": "10:00", "note": "..." }
+{
+  "siteId": 1,
+  "workDate": "2026-02-15",
+  "startTime": "10:00",
+  "endTime": "12:00",
+  "contractor": "Vendor X",
+  "problem": "Battery warning",
+  "note": "..."
+}
 ```
 
 **Response 200 (example):**
@@ -1994,7 +2168,8 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
       "systemSizeKWp": 500,
       "workTimeText": "10:00",
       "note": "..."
-    }
+    },
+    "timeRange": { "startTime": "10:00", "endTime": "12:00", "workTimeText": "10:00-12:00" }
   }
 }
 ```
@@ -2179,6 +2354,8 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 - `siteId`: number
 - `startMonth`: `YYYY-MM`
 - `endMonth`: `YYYY-MM`
+- `jobType`: `CLEANING | SERVICE | INSPECTION`
+- `q`: search by `job title` / `jobNo` / `site.name`
 
 **Response 200 (example):**
 
@@ -2203,6 +2380,49 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
   }
 }
 ```
+
+### GET `/api/reports/energy-yield/sites`
+
+**Description:** List sites สำหรับ dropdown หน้า Energy Yield
+
+**Auth:** None
+
+**Query params (optional):**
+
+- `q`: search by `name` หรือ `plantCode`
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": [
+    { "siteId": 1, "plantName": "Solar Farm A", "plantCode": "PLANT-001", "systemSizeKWp": 500 }
+  ]
+}
+```
+
+### GET `/api/reports/energy-yield/:siteId`
+
+**Description:** ข้อมูล Energy Yield รายวันของเดือนที่เลือก พร้อม chart data + PR report
+
+**Auth:** None
+
+**Path params:**
+
+- `siteId` (required, number)
+
+**Query params:**
+
+- `month` (required): `YYYY-MM`
+
+**Response 200:** `{ "success": true, "data": { site, month, monthTable, charts, summary, prReport } }`
+
+**Errors:**
+
+- `400` `{ "success": false, "message": "Invalid siteId" }`
+- `400` `{ "success": false, "message": "month is required (YYYY-MM)" }`
+- `404` `{ "success": false, "message": "Site not found" }`
 
 ---
 
@@ -2266,6 +2486,8 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
   "warrantyEnd": "2028-12-31"
 }
 ```
+
+> NOTE: Endpoint นี้รองรับ alias ของขนาดระบบด้วย (`capacityKwp`, `systemSizeKWp`, `systemSizeKwp`)
 
 **Response 200 (example):**
 
@@ -2537,10 +2759,17 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 }
 ```
 
+รองรับ key alias ของ array ด้วย: `forecastRows`, `forecastMonthlyRows`, `forecast`, `rows`
+
 **Response 200 (example):**
 
 ```json
-{ "success": true }
+{
+  "success": true,
+  "data": [
+    { "siteId": 1, "month": 1, "globalKwhM2": 5.1, "eGridKwh": 2500, "prRatio": 48 }
+  ]
+}
 ```
 
 #### PUT `/api/client-data/projects/:siteId/forecast/warranty-energy`
@@ -2548,13 +2777,31 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 **Request body (example):**
 
 ```json
-{ "rows": [{ "year": 2026, "warrantyEnergyKwh": 123456 }] }
+{ "rows": [{ "year": 2026, "degradationPct": 0.5, "annualProductionKwh": 250000, "warrantyEnergyOutputKwh": 248000 }] }
 ```
 
 **Response 200 (example):**
 
 ```json
 { "success": true }
+```
+
+#### POST `/api/client-data/projects/:siteId/forecast/defaults`
+
+**Description:** regenerate ค่า forecast รายเดือน default 12 เดือน (ลบของเดิมแล้วสร้างใหม่)
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "created": true,
+    "rows": [
+      { "siteId": 1, "month": 1, "globalKwhM2": 0, "eGridKwh": 0, "prRatio": 0 }
+    ]
+  }
+}
 ```
 
 ### Other tab
@@ -2564,7 +2811,7 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 **Request body (example):**
 
 ```json
-{ "title": "Note", "value": "Some text", "remark": "..." }
+{ "status": "OPEN", "description": "Some text", "remark": "..." }
 ```
 
 **Response 200 (example):**
@@ -2575,8 +2822,8 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
   "data": {
     "id": 1,
     "siteId": 1,
-    "title": "Note",
-    "value": "Some text",
+    "status": "OPEN",
+    "description": "Some text",
     "remark": "..."
   }
 }
@@ -2587,7 +2834,7 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 **Request body (example):**
 
 ```json
-{ "value": "Updated" }
+{ "status": "DONE", "description": "Updated" }
 ```
 
 #### DELETE `/api/client-data/other/:rowId`

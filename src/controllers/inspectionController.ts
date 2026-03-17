@@ -26,6 +26,24 @@ function makeJobNo() {
 }
 
 // อ่าน field จาก multipart แบบ "case-insensitive" กันพลาด (เช่น Subject, subject )
+function normalizeWorkTimeText(input: { startTime?: any; endTime?: any; workTimeText?: any }) {
+  const start = String(input.startTime ?? '').trim();
+  const end = String(input.endTime ?? '').trim();
+  if (start && end) return `${start}-${end}`;
+  const raw = String(input.workTimeText ?? '').trim();
+  return raw || null;
+}
+
+function splitWorkTimeText(workTimeText?: string | null) {
+  const raw = String(workTimeText ?? '').trim();
+  const match = raw.match(/^([^\-]+)\s*-\s*([^\-]+)$/);
+  return {
+    startTime: match ? match[1].trim() : null,
+    endTime: match ? match[2].trim() : null,
+    workTimeText: raw || null,
+  };
+}
+
 function pickTextField(body: any, key: string): string {
   if (!body) return '';
   if (typeof body[key] === 'string') return body[key];
@@ -108,6 +126,8 @@ export async function listInspectionJobs(req: Request, res: Response) {
     const projectType = String(req.query.projectType ?? '').trim();
     const projectName = String(req.query.projectName ?? '').trim();
     const status = String(req.query.status ?? '').trim();
+    const contractor = String(req.query.contractor ?? '').trim();
+    const problem = String(req.query.problem ?? '').trim();
 
     const systemSizeKWp = Number.isFinite(Number(req.query.systemSizeKWp)) ? Number(req.query.systemSizeKWp) : null;
     const pvModuleEA = Number.isFinite(Number(req.query.pvModuleEA)) ? Number(req.query.pvModuleEA) : null;
@@ -120,6 +140,8 @@ export async function listInspectionJobs(req: Request, res: Response) {
     if (jobNo) whereJob.jobNo = { contains: jobNo, mode: 'insensitive' };
     if (projectType) whereJob.projectType = { contains: projectType, mode: 'insensitive' };
     if (status) whereJob.status = status as any;
+    if (contractor) whereJob.contractor = { contains: contractor, mode: 'insensitive' };
+    if (problem) whereJob.details = { contains: problem, mode: 'insensitive' };
 
     const whereIns: any = {};
     if (projectName) whereIns.projectName = { contains: projectName, mode: 'insensitive' };
@@ -166,6 +188,9 @@ export async function listInspectionJobs(req: Request, res: Response) {
         pvModuleEA: j.inspectionJob?.pvModuleEA ?? null,
         date: j.inspectionJob?.workDate ?? null,
         time: j.inspectionJob?.workTimeText ?? null,
+        ...splitWorkTimeText(j.inspectionJob?.workTimeText ?? null),
+        contractor: j.contractor ?? null,
+        problem: j.details ?? null,
         status: j.status,
       })),
     });
@@ -178,7 +203,7 @@ export async function listInspectionJobs(req: Request, res: Response) {
  * POST /api/inspection/step1
  */
 export async function createDraftStep1(req: Request, res: Response) {
-  const { jobId, siteId, projectType, contactPhone, contactEmail, workDate, workTimeText, customerName, note } =
+  const { jobId, siteId, projectType, contactPhone, contactEmail, workDate, workTimeText, startTime, endTime, contractor, customerName, note, problem } =
     req.body ?? {};
 
   if (!siteId) return res.status(400).json({ success: false, message: 'siteId is required' });
@@ -187,6 +212,7 @@ export async function createDraftStep1(req: Request, res: Response) {
   if (!site) return res.status(404).json({ success: false, message: 'Site not found' });
 
   const dt = workDate ? new Date(String(workDate)) : null;
+  const normalizedWorkTimeText = normalizeWorkTimeText({ startTime, endTime, workTimeText });
 
   if (!jobId) {
     const created = await prisma.job.create({
@@ -198,6 +224,9 @@ export async function createDraftStep1(req: Request, res: Response) {
         step: 1,
         scheduledDate: dt,
         siteId: site.id,
+        projectType: projectType ?? null,
+        contractor: contractor ?? null,
+        details: problem ?? null,
         createdById: 1, // TODO auth
       },
     });
@@ -207,13 +236,13 @@ export async function createDraftStep1(req: Request, res: Response) {
         jobId: created.id,
         projectName: site.name,
         systemSizeKWp: site.capacityKWp,
-        pvModuleEA: null,
+        pvModuleEA: site.pvModuleCount ?? null,
         locationText: site.address ?? null,
         projectType: projectType ?? null,
-        contactPhone: contactPhone ?? null,
-        contactEmail: contactEmail ?? null,
+        contactPhone: contactPhone ?? site.contactPhone ?? null,
+        contactEmail: contactEmail ?? site.contactEmail ?? null,
         workDate: dt,
-        workTimeText: workTimeText ?? null,
+        workTimeText: normalizedWorkTimeText,
         customerName: customerName ?? null,
         note: note ?? null,
       },
@@ -227,7 +256,7 @@ export async function createDraftStep1(req: Request, res: Response) {
 
   await prisma.job.update({
     where: { id: j.id },
-    data: { scheduledDate: dt, siteId: site.id, title: `Inspection - ${site.name}`, step: 1 },
+    data: { scheduledDate: dt, siteId: site.id, title: `Inspection - ${site.name}`, projectType: projectType ?? null, contractor: contractor ?? null, details: problem ?? null, step: 1 },
   });
 
   await prisma.inspectionJob.upsert({
@@ -236,13 +265,13 @@ export async function createDraftStep1(req: Request, res: Response) {
       jobId: j.id,
       projectName: site.name,
       systemSizeKWp: site.capacityKWp,
-      pvModuleEA: null,
+      pvModuleEA: site.pvModuleCount ?? null,
       locationText: site.address ?? null,
       projectType: projectType ?? null,
-      contactPhone: contactPhone ?? null,
-      contactEmail: contactEmail ?? null,
+      contactPhone: contactPhone ?? site.contactPhone ?? null,
+      contactEmail: contactEmail ?? site.contactEmail ?? null,
       workDate: dt,
-      workTimeText: workTimeText ?? null,
+      workTimeText: normalizedWorkTimeText,
       customerName: customerName ?? null,
       note: note ?? null,
     },
@@ -251,10 +280,10 @@ export async function createDraftStep1(req: Request, res: Response) {
       systemSizeKWp: site.capacityKWp,
       locationText: site.address ?? null,
       projectType: projectType ?? null,
-      contactPhone: contactPhone ?? null,
-      contactEmail: contactEmail ?? null,
+      contactPhone: contactPhone ?? site.contactPhone ?? null,
+      contactEmail: contactEmail ?? site.contactEmail ?? null,
       workDate: dt,
-      workTimeText: workTimeText ?? null,
+      workTimeText: normalizedWorkTimeText,
       customerName: customerName ?? null,
       note: note ?? null,
     },
@@ -273,7 +302,7 @@ export async function getInspectionJob(req: Request, res: Response) {
   if (!job) return res.status(404).json({ success: false, message: 'Job not found' });
 
   const inspection = await prisma.inspectionJob.findUnique({ where: { jobId } });
-  res.json({ success: true, data: { job, inspection } });
+  res.json({ success: true, data: { job, inspection, timeRange: splitWorkTimeText(inspection?.workTimeText ?? null) } });
 }
 
 /**

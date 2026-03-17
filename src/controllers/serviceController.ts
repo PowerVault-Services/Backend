@@ -16,6 +16,24 @@ async function bumpJobStep(jobId: number, next: number) {
   await prisma.job.update({ where: { id: jobId }, data: { step, status: JobStatus.DRAFT } });
 }
 
+function normalizeWorkTimeText(input: { startTime?: any; endTime?: any; workTimeText?: any }) {
+  const start = String(input.startTime ?? '').trim();
+  const end = String(input.endTime ?? '').trim();
+  if (start && end) return `${start}-${end}`;
+  const raw = String(input.workTimeText ?? '').trim();
+  return raw || null;
+}
+
+function splitWorkTimeText(workTimeText?: string | null) {
+  const raw = String(workTimeText ?? '').trim();
+  const match = raw.match(/^([^\-]+)\s*-\s*([^\-]+)$/);
+  return {
+    startTime: match ? match[1].trim() : null,
+    endTime: match ? match[2].trim() : null,
+    workTimeText: raw || null,
+  };
+}
+
 function makeJobNo() {
   const d = new Date();
   const y = d.getFullYear();
@@ -99,6 +117,8 @@ export async function listServiceJobs(req: Request, res: Response) {
     const projectName = String(req.query.projectName ?? '').trim();
     const status = String(req.query.status ?? '').trim();
     const service = String(req.query.service ?? '').trim();
+    const contractor = String(req.query.contractor ?? '').trim();
+    const problem = String(req.query.problem ?? '').trim();
 
     const systemSizeKWp = Number.isFinite(Number(req.query.systemSizeKWp)) ? Number(req.query.systemSizeKWp) : null;
     const pvModuleEA = Number.isFinite(Number(req.query.pvModuleEA)) ? Number(req.query.pvModuleEA) : null;
@@ -111,6 +131,8 @@ export async function listServiceJobs(req: Request, res: Response) {
     if (jobNo) whereJob.jobNo = { contains: jobNo, mode: 'insensitive' };
     if (projectType) whereJob.projectType = { contains: projectType, mode: 'insensitive' };
     if (status) whereJob.status = status as any;
+    if (contractor) whereJob.contractor = { contains: contractor, mode: 'insensitive' };
+    if (problem) whereJob.details = { contains: problem, mode: 'insensitive' };
 
     const whereSvc: any = {};
     if (projectName) whereSvc.projectName = { contains: projectName, mode: 'insensitive' };
@@ -164,6 +186,9 @@ export async function listServiceJobs(req: Request, res: Response) {
         pvModuleEA: j.serviceJob?.pvModuleEA ?? null,
         date: j.serviceJob?.workDate ?? null,
         time: j.serviceJob?.workTimeText ?? null,
+        ...splitWorkTimeText(j.serviceJob?.workTimeText ?? null),
+        contractor: j.contractor ?? null,
+        problem: j.details ?? null,
         status: j.status,
       })),
     });
@@ -185,8 +210,12 @@ export async function createDraftStep1(req: Request, res: Response) {
     contactEmail,
     workDate,
     workTimeText,
+    startTime,
+    endTime,
+    contractor,
     customerName,
     note,
+    problem,
   } = req.body ?? {};
 
   if (!siteId) return res.status(400).json({ success: false, message: 'siteId is required' });
@@ -195,6 +224,7 @@ export async function createDraftStep1(req: Request, res: Response) {
   if (!site) return res.status(404).json({ success: false, message: 'Site not found' });
 
   const dt = workDate ? new Date(String(workDate)) : null;
+  const normalizedWorkTimeText = normalizeWorkTimeText({ startTime, endTime, workTimeText });
 
   // create new draft
   if (!jobId) {
@@ -207,6 +237,9 @@ export async function createDraftStep1(req: Request, res: Response) {
         step: 1,
         scheduledDate: dt,
         siteId: site.id,
+        projectType: projectType ?? null,
+        contractor: contractor ?? null,
+        details: problem ?? null,
         createdById: 1, // TODO: auth
       },
     });
@@ -222,7 +255,7 @@ export async function createDraftStep1(req: Request, res: Response) {
         contactPhone: contactPhone ?? site.contactPhone ?? null,
         contactEmail: contactEmail ?? site.contactEmail ?? null,
         workDate: dt,
-        workTimeText: workTimeText ?? null,
+        workTimeText: normalizedWorkTimeText,
         customerName: customerName ?? null,
         note: note ?? null,
       },
@@ -241,6 +274,9 @@ export async function createDraftStep1(req: Request, res: Response) {
       scheduledDate: dt,
       siteId: site.id,
       title: `Service - ${site.name}`,
+      projectType: projectType ?? null,
+      contractor: contractor ?? null,
+      details: problem ?? null,
       step: 1,
     },
   });
@@ -257,7 +293,7 @@ export async function createDraftStep1(req: Request, res: Response) {
       contactPhone: contactPhone ?? site.contactPhone ?? null,
       contactEmail: contactEmail ?? site.contactEmail ?? null,
       workDate: dt,
-      workTimeText: workTimeText ?? null,
+      workTimeText: normalizedWorkTimeText,
       customerName: customerName ?? null,
       note: note ?? null,
     },
@@ -270,7 +306,7 @@ export async function createDraftStep1(req: Request, res: Response) {
       contactPhone: contactPhone ?? site.contactPhone ?? null,
       contactEmail: contactEmail ?? site.contactEmail ?? null,
       workDate: dt,
-      workTimeText: workTimeText ?? null,
+      workTimeText: normalizedWorkTimeText,
       customerName: customerName ?? null,
       note: note ?? null,
     },
@@ -298,7 +334,7 @@ export async function getServiceJob(req: Request, res: Response) {
   if (!job) return res.status(404).json({ success: false, message: 'Job not found' });
 
   const service = await prisma.serviceJob.findUnique({ where: { jobId } });
-  res.json({ success: true, data: { job, service } });
+  res.json({ success: true, data: { job, service, timeRange: splitWorkTimeText(service?.workTimeText ?? null) } });
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   upsertLayout,
   upsertForecastMonthly,
   upsertForecastYearly,
+  generateForecastDefaults,
   createOtherRow,
   updateOtherRow,
   deleteOtherRow,
@@ -67,6 +68,7 @@ router.post(
 
 // Forecast
 router.put('/projects/:siteId/forecast/pvsyst', upsertForecastMonthly);
+router.post('/projects/:siteId/forecast/defaults', generateForecastDefaults);
 router.put('/projects/:siteId/forecast/warranty-energy', upsertForecastYearly);
 
 // Other tab

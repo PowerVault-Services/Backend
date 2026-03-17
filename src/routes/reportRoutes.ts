@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import prisma from '../config/prisma';
+import { buildEnergyYieldPayload } from '../services/siteAnalyticsService';
 
 const router = Router();
 
@@ -20,6 +21,8 @@ router.get('/', async (req, res) => {
 
   const startMonth = req.query.startMonth != null ? String(req.query.startMonth) : null;
   const endMonth = req.query.endMonth != null ? String(req.query.endMonth) : null;
+  const jobType = req.query.jobType != null ? String(req.query.jobType).trim().toUpperCase() : null;
+  const q = req.query.q != null ? String(req.query.q).trim() : null;
 
   let createdAtFilter: any = undefined;
   if (startMonth || endMonth) {
@@ -28,9 +31,7 @@ router.get('/', async (req, res) => {
     if (startMonth && !startParsed) return res.status(400).json({ error: 'Invalid startMonth (expected YYYY-MM)' });
     if (endMonth && !endParsed) return res.status(400).json({ error: 'Invalid endMonth (expected YYYY-MM)' });
 
-    // If only endMonth is provided -> start is very old
     const gte = startParsed?.start ?? new Date('2000-01-01T00:00:00.000Z');
-    // endMonth endExclusive; if not provided -> now + 1 year
     const lt = endParsed?.endExclusive ?? new Date(new Date().getFullYear() + 1, 0, 1);
     createdAtFilter = { gte, lt };
   }
@@ -39,6 +40,16 @@ router.get('/', async (req, res) => {
     where: {
       ...(siteId ? { siteId } : {}),
       ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
+      ...(jobType ? { type: jobType as any } : {}),
+      ...(q
+        ? {
+            OR: [
+              { title: { contains: q, mode: 'insensitive' } },
+              { jobNo: { contains: q, mode: 'insensitive' } },
+              { site: { name: { contains: q, mode: 'insensitive' } } },
+            ],
+          }
+        : {}),
     },
     include: {
       site: { select: { id: true, name: true } },
@@ -47,7 +58,7 @@ router.get('/', async (req, res) => {
       inspectionJob: { select: { reportFileUrl: true, reportCreatedAt: true } },
     },
     orderBy: { createdAt: 'desc' },
-    take: 200,
+    take: 500,
   });
 
   const docs = jobs
@@ -78,6 +89,50 @@ router.get('/', async (req, res) => {
     .filter((d) => d.previewUrl);
 
   res.json({ success: true, data: { list: docs } });
+});
+
+router.get('/energy-yield/sites', async (req, res) => {
+  const q = String(req.query.q ?? '').trim();
+  const where: any = q
+    ? {
+        OR: [
+          { name: { contains: q, mode: 'insensitive' } },
+          { plantCode: { contains: q, mode: 'insensitive' } },
+        ],
+      }
+    : {};
+
+  const sites = await prisma.site.findMany({
+    where,
+    select: { id: true, name: true, plantCode: true, capacityKWp: true },
+    orderBy: { name: 'asc' },
+    take: 500,
+  });
+
+  res.json({
+    success: true,
+    data: sites.map((site) => ({
+      siteId: site.id,
+      plantName: site.name,
+      plantCode: site.plantCode,
+      systemSizeKWp: site.capacityKWp,
+    })),
+  });
+});
+
+router.get('/energy-yield/:siteId', async (req, res) => {
+  const siteId = Number(req.params.siteId);
+  if (!Number.isFinite(siteId)) return res.status(400).json({ success: false, message: 'Invalid siteId' });
+
+  const month = String(req.query.month ?? '').trim();
+  if (!month) return res.status(400).json({ success: false, message: 'month is required (YYYY-MM)' });
+
+  try {
+    const data = await buildEnergyYieldPayload(siteId, month);
+    return res.json({ success: true, data });
+  } catch (e: any) {
+    return res.status(e?.statusCode ?? 500).json({ success: false, message: e?.message ?? 'Internal error' });
+  }
 });
 
 export default router;
