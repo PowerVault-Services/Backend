@@ -174,8 +174,15 @@ export function pickAlarmClient(batchIndex: number): HuaweiService {
   return getPreferredClientOrderForPurpose('alarm', batchIndex)[0] ?? huaweiAlarm;
 }
 
+let onDemandRoundRobin = 0;
+
 export function pickOnDemandClient(): HuaweiService {
-  return getPreferredClientOrderForPurpose('ondemand')[0] ?? huaweiOnDemand;
+  const candidates = getDistinctHuaweiClients('ondemand', onDemandRoundRobin);
+  onDemandRoundRobin = (onDemandRoundRobin + 1) % Math.max(1, candidates.length);
+
+  // Prefer a client that is NOT in cooldown
+  const available = candidates.filter((c) => c.getCooldownRemainingMs() <= 0);
+  return (available.length > 0 ? available[0] : candidates[0]) ?? huaweiOnDemand;
 }
 
 export function getStationAccessSnapshot() {

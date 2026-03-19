@@ -74,6 +74,7 @@ type CacheEntry<T> = {
 
 const auxDeviceMetaCache = new Map<string, CacheEntry<HuaweiDeviceLite[]>>();
 const auxRealtimeCache = new Map<string, CacheEntry<AuxRealtimeBundle>>();
+const auxRealtimeInflight = new Map<string, Promise<AuxRealtimeBundle>>();
 
 function parseNum(value: unknown): number | null {
   if (value == null || value === '') return null;
@@ -298,12 +299,7 @@ async function getAuxDevices(site: SiteRecord): Promise<HuaweiDeviceLite[]> {
   return devices;
 }
 
-async function fetchAuxRealtime(site: SiteRecord, refreshMode: 'auto' | 'force'): Promise<AuxRealtimeBundle> {
-  const cached = auxRealtimeCache.get(site.plantCode);
-  if (refreshMode !== 'force' && cached && cached.expiresAt > Date.now()) {
-    return cached.value;
-  }
-
+async function fetchAuxRealtimeInner(site: SiteRecord, refreshMode: 'auto' | 'force'): Promise<AuxRealtimeBundle> {
   const refreshed = await maybeRefreshSiteRealtime(site, refreshMode);
   const devices = await getAuxDevices(refreshed.site);
   const client = pickOnDemandClient();
@@ -337,6 +333,25 @@ async function fetchAuxRealtime(site: SiteRecord, refreshMode: 'auto' | 'force')
   });
 
   return bundle;
+}
+
+async function fetchAuxRealtime(site: SiteRecord, refreshMode: 'auto' | 'force'): Promise<AuxRealtimeBundle> {
+  const cached = auxRealtimeCache.get(site.plantCode);
+  if (refreshMode !== 'force' && cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  // Coalesce concurrent requests for the same site
+  const inflightKey = `${site.plantCode}::${refreshMode}`;
+  const pending = auxRealtimeInflight.get(inflightKey);
+  if (pending) return pending;
+
+  const task = fetchAuxRealtimeInner(site, refreshMode).finally(() => {
+    auxRealtimeInflight.delete(inflightKey);
+  });
+
+  auxRealtimeInflight.set(inflightKey, task);
+  return task;
 }
 
 function firstRealtime(bundle: AuxRealtimeBundle, devTypeId: AuxDeviceType): HuaweiRealtimeRow | null {

@@ -1,11 +1,11 @@
 	import { Router } from 'express';
 	import prisma from '../config/prisma';
-	import { huaweiOnDemand } from '../services/huaweiService';
 	import { getFleetSyncCoverageSnapshot, syncPlantOnDemand } from '../services/syncService';
 	import { getEnergyManagementSeries, getMonitoringHomeRealtime } from '../services/monitoringHomeService';
 import { buildMonthRange, summarizeSitePrRange, loadCachedMonthlyActuals, refreshAndCacheMonthlyActuals } from '../services/siteAnalyticsService';
 import { getAlarmReconciliationSnapshot } from '../services/alarmSyncService';
 import { getCronStatus } from '../jobs/cron';
+import { getCachedPlantKpi } from '../services/huaweiKpiCache';
 
 	const router = Router();
 
@@ -218,7 +218,8 @@ import { getCronStatus } from '../jobs/cron';
 			const collectTime = resolveCollectTime();
 
 			if (granularity === 'month') {
-				const raw: any = await huaweiOnDemand.postRaw('/thirdData/getKpiStationMonth', {
+				const raw: any = await getCachedPlantKpi({
+					endpoint: '/thirdData/getKpiStationMonth',
 					stationCodes: site.plantCode,
 					collectTime,
 				});
@@ -233,7 +234,8 @@ import { getCronStatus } from '../jobs/cron';
 			}
 
 			if (granularity === 'day') {
-				const raw: any = await huaweiOnDemand.postRaw('/thirdData/getKpiStationDay', {
+				const raw: any = await getCachedPlantKpi({
+					endpoint: '/thirdData/getKpiStationDay',
 					stationCodes: site.plantCode,
 					collectTime,
 				});
@@ -250,7 +252,8 @@ import { getCronStatus } from '../jobs/cron';
 			}
 
 			if (granularity === 'year') {
-				const raw: any = await huaweiOnDemand.postRaw('/thirdData/getKpiStationYear', {
+				const raw: any = await getCachedPlantKpi({
+					endpoint: '/thirdData/getKpiStationYear',
 					stationCodes: site.plantCode,
 					collectTime,
 				});
