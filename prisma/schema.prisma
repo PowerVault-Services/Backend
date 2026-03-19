@@ -649,3 +649,35 @@ model ServiceEntry {
 
   @@index([siteId, job])
 }
+
+// =======================
+// HUAWEI SYNC STATE
+// =======================
+
+model HuaweiSyncJob {
+  id                  Int       @id @default(autoincrement())
+  jobName             String    @unique
+  running             Boolean   @default(false)
+  lastStartAt         DateTime?
+  lastEndAt           DateTime?
+  lastSuccessAt       DateTime?
+  lastErrorAt         DateTime?
+  lastError           String?
+  lastResult          Json?
+  consecutiveFailures Int       @default(0)
+  updatedAt           DateTime  @updatedAt
+
+  @@map("huawei_sync_jobs")
+}
+
+model HuaweiSyncStation {
+  id          Int      @id @default(autoincrement())
+  kind        String
+  stationCode String
+  lastSeenAt  DateTime
+  updatedAt   DateTime @updatedAt
+
+  @@unique([kind, stationCode])
+  @@index([kind, lastSeenAt])
+  @@map("huawei_sync_stations")
+}

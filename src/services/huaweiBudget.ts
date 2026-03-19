@@ -1,7 +1,7 @@
 // -------- Global Request Budget --------
 // Prevents all jobs from collectively exceeding API rate limits per window.
 const BUDGET_WINDOW_MS = Math.max(10_000, Number(process.env.HUAWEI_BUDGET_WINDOW_MS ?? 60_000));
-const BUDGET_MAX_REQUESTS = Math.max(1, Number(process.env.HUAWEI_BUDGET_MAX_REQUESTS ?? 0));
+const BUDGET_MAX_REQUESTS = Number(process.env.HUAWEI_BUDGET_MAX_REQUESTS ?? 0);
 const budgetTimestamps: number[] = [];
 
 function pruneExpiredBudgetEntries(now: number) {
