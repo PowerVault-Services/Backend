@@ -3,7 +3,7 @@
 	import { huaweiOnDemand } from '../services/huaweiService';
 	import { getFleetSyncCoverageSnapshot, syncPlantOnDemand } from '../services/syncService';
 	import { getEnergyManagementSeries, getMonitoringHomeRealtime } from '../services/monitoringHomeService';
-import { buildMonthRange, summarizeSitePrRange } from '../services/siteAnalyticsService';
+import { buildMonthRange, summarizeSitePrRange, loadCachedMonthlyActuals, refreshAndCacheMonthlyActuals } from '../services/siteAnalyticsService';
 import { getAlarmReconciliationSnapshot } from '../services/alarmSyncService';
 import { getCronStatus } from '../jobs/cron';
 
@@ -25,19 +25,19 @@ import { getCronStatus } from '../jobs/cron';
 	});
 
 	router.get('/pr/sites', async (req, res) => {
-		const startMonth = String(req.query.startMonth ?? '').trim();
-		const endMonth = String(req.query.endMonth ?? req.query.startMonth ?? '').trim();
+		const now = new Date();
+		const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+		const startMonth = String(req.query.startMonth ?? '').trim() || currentMonth;
+		const endMonth = String(req.query.endMonth ?? '').trim() || startMonth;
 		const q = String(req.query.q ?? '').trim();
 		const requestedIds = String(req.query.siteIds ?? '').trim();
 
 		let months: ReturnType<typeof buildMonthRange> = [];
-		const hasMonthFilter = !!startMonth;
-		if (hasMonthFilter) {
-			try {
-				months = buildMonthRange(startMonth, endMonth || startMonth);
-			} catch (e: any) {
-				return res.status(e?.statusCode ?? 400).json({ error: e?.message ?? 'Invalid month range' });
-			}
+		try {
+			months = buildMonthRange(startMonth, endMonth);
+		} catch (e: any) {
+			return res.status(e?.statusCode ?? 400).json({ error: e?.message ?? 'Invalid month range' });
 		}
 
 		const siteIdList = requestedIds
@@ -61,33 +61,32 @@ import { getCronStatus } from '../jobs/cron';
 			take: 200,
 		});
 
+		// 1) Load cached actuals from DB (instant)
+		const plantCodes = sites.map((s) => s.plantCode).filter((c): c is string => !!c);
+		const cachedActuals = await loadCachedMonthlyActuals(plantCodes, months);
+
 		const rows = await Promise.all(
 			sites.map(async (site) => {
-				if (!hasMonthFilter) {
-					return {
-						siteId: site.id,
-						plantName: site.name,
-						plantCode: site.plantCode,
-						systemSizeKWp: site.capacityKWp,
-						period: null,
-						totals: null,
-						months: [],
-					};
-				}
-				const summary = await summarizeSitePrRange(site.id, startMonth, endMonth || startMonth);
+				const siteActuals = (site.plantCode ? cachedActuals.get(site.plantCode) : undefined) ?? new Map();
+				const summary = await summarizeSitePrRange(site.id, startMonth, endMonth, siteActuals);
 				return {
 					siteId: site.id,
 					plantName: site.name,
 					plantCode: site.plantCode,
 					systemSizeKWp: site.capacityKWp,
-					period: { startMonth, endMonth: endMonth || startMonth },
+					period: { startMonth, endMonth },
 					totals: summary.totals,
 					months: summary.rows,
 				};
 			}),
 		);
 
-		return res.json({ data: { months, list: rows } });
+		// 2) Respond immediately with DB-cached data
+		res.json({ data: { months, list: rows } });
+
+		// 3) Background: refresh cache from Huawei API for next request
+		const siteIdByPlantCode = new Map(sites.filter((s) => s.plantCode).map((s) => [s.plantCode!, s.id]));
+		refreshAndCacheMonthlyActuals(plantCodes, months, siteIdByPlantCode).catch(() => {});
 	});
 
 	router.get('/pr/export', async (req, res) => {

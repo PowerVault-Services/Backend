@@ -4,7 +4,8 @@
       "Bash(npx tsc:*)",
       "Bash(wc -l d:/Backend/src/**/*.ts)",
       "Bash(xargs grep:*)",
-      "Bash(grep -r \"HUAWEI.*STATE\\\\|SYNC.*STATE\" /d/Backend/src --include=*.ts)"
+      "Bash(grep -r \"HUAWEI.*STATE\\\\|SYNC.*STATE\" /d/Backend/src --include=*.ts)",
+      "Bash(npx prisma:*)"
     ]
   }
 }

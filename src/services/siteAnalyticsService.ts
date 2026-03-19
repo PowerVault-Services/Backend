@@ -166,25 +166,173 @@ export async function fetchSiteMonthlyActualMap(siteId: number, months: MonthRan
   const site = await prisma.site.findUnique({ where: { id: siteId }, select: { plantCode: true } });
   if (!site?.plantCode) return new Map();
 
-  const years = Array.from(new Set(months.map((item) => item.year))).sort((a, b) => a - b);
-  const results = await Promise.allSettled(
-    years.map((year) => huaweiOnDemand.postRaw<any>('/thirdData/getKpiStationMonth', {
-      stationCodes: site.plantCode,
-      collectTime: new Date(year, 11, 31, 12, 0, 0, 0).getTime(),
-    })),
-  );
+  const bulk = await fetchBulkMonthlyActualMap([site.plantCode], months);
+  return bulk.get(site.plantCode) ?? new Map();
+}
 
-  const map = new Map<string, MonthlyActualRow>();
-  for (const result of results) {
-    if (result.status !== 'fulfilled') continue;
-    const rows = Array.isArray(result.value?.data) ? result.value.data : [];
-    for (const row of rows) {
-      const item = mapMonthlyHuaweiRow(row);
-      if (!item) continue;
-      map.set(item.key, item);
+/**
+ * Fetch monthly KPI for multiple stations in batched Huawei calls.
+ * Returns Map<plantCode, Map<monthKey, MonthlyActualRow>>.
+ * Huawei supports comma-separated stationCodes — this avoids 1-request-per-site.
+ */
+export async function fetchBulkMonthlyActualMap(
+  plantCodes: string[],
+  months: MonthRangeItem[],
+): Promise<Map<string, Map<string, MonthlyActualRow>>> {
+  const result = new Map<string, Map<string, MonthlyActualRow>>();
+  if (!plantCodes.length || !months.length) return result;
+
+  const years = Array.from(new Set(months.map((item) => item.year))).sort((a, b) => a - b);
+  const CHUNK_SIZE = 100;
+
+  for (let i = 0; i < plantCodes.length; i += CHUNK_SIZE) {
+    const chunk = plantCodes.slice(i, i + CHUNK_SIZE);
+    const stationCodesStr = chunk.join(',');
+
+    const apiResults = await Promise.allSettled(
+      years.map((year) => huaweiOnDemand.postRaw<any>('/thirdData/getKpiStationMonth', {
+        stationCodes: stationCodesStr,
+        collectTime: new Date(year, 11, 31, 12, 0, 0, 0).getTime(),
+      })),
+    );
+
+    for (const res of apiResults) {
+      if (res.status !== 'fulfilled') continue;
+      const rows = Array.isArray(res.value?.data) ? res.value.data : [];
+      for (const row of rows) {
+        const stationCode = String(row?.stationCode ?? '').trim();
+        if (!stationCode) continue;
+        const item = mapMonthlyHuaweiRow(row);
+        if (!item) continue;
+
+        let siteMap = result.get(stationCode);
+        if (!siteMap) {
+          siteMap = new Map();
+          result.set(stationCode, siteMap);
+        }
+        siteMap.set(item.key, item);
+      }
     }
   }
-  return map;
+
+  return result;
+}
+
+// -------- DB Cache for Monthly Actuals --------
+
+/**
+ * Load cached monthly actuals from DB for given sites & months.
+ * Returns same shape as fetchBulkMonthlyActualMap: Map<plantCode, Map<monthKey, MonthlyActualRow>>.
+ */
+export async function loadCachedMonthlyActuals(
+  plantCodes: string[],
+  months: MonthRangeItem[],
+): Promise<Map<string, Map<string, MonthlyActualRow>>> {
+  const result = new Map<string, Map<string, MonthlyActualRow>>();
+  if (!plantCodes.length || !months.length) return result;
+
+  const yearMonthPairs = months.map((m) => ({ year: m.year, month: m.month }));
+  const years = Array.from(new Set(yearMonthPairs.map((p) => p.year)));
+
+  const rows = await prisma.siteMonthlyActual.findMany({
+    where: {
+      plantCode: { in: plantCodes },
+      year: { in: years },
+    },
+    select: {
+      plantCode: true, year: true, month: true, key: true,
+      collectTime: true, irradiation: true, production: true, pr: true,
+      gridImport: true, gridExport: true, consumption: true, revenue: true, selfProvide: true,
+    },
+  });
+
+  const monthKeys = new Set(months.map((m) => m.key));
+  for (const row of rows) {
+    if (!monthKeys.has(row.key)) continue;
+    let siteMap = result.get(row.plantCode);
+    if (!siteMap) {
+      siteMap = new Map();
+      result.set(row.plantCode, siteMap);
+    }
+    siteMap.set(row.key, {
+      year: row.year,
+      month: row.month,
+      key: row.key,
+      collectTime: row.collectTime ?? 0,
+      irradiation: row.irradiation,
+      production: row.production,
+      pr: row.pr,
+      gridImport: row.gridImport,
+      gridExport: row.gridExport,
+      consumption: row.consumption,
+      revenue: row.revenue,
+      selfProvide: row.selfProvide,
+    });
+  }
+  return result;
+}
+
+/**
+ * Fetch from Huawei API and upsert results into the DB cache.
+ * Uses the same bulk logic but persists to SiteMonthlyActual.
+ */
+export async function refreshAndCacheMonthlyActuals(
+  plantCodes: string[],
+  months: MonthRangeItem[],
+  siteIdByPlantCode: Map<string, number>,
+): Promise<void> {
+  if (!plantCodes.length || !months.length) return;
+
+  try {
+    const bulkData = await fetchBulkMonthlyActualMap(plantCodes, months);
+
+    const upserts: Promise<any>[] = [];
+    for (const [plantCode, monthMap] of bulkData) {
+      const siteId = siteIdByPlantCode.get(plantCode);
+      if (!siteId) continue;
+      for (const [_key, actual] of monthMap) {
+        upserts.push(
+          prisma.siteMonthlyActual.upsert({
+            where: { siteId_year_month: { siteId, year: actual.year, month: actual.month } },
+            update: {
+              plantCode,
+              key: actual.key,
+              collectTime: actual.collectTime,
+              irradiation: actual.irradiation,
+              production: actual.production,
+              pr: actual.pr,
+              gridImport: actual.gridImport,
+              gridExport: actual.gridExport,
+              consumption: actual.consumption,
+              revenue: actual.revenue,
+              selfProvide: actual.selfProvide,
+            },
+            create: {
+              siteId,
+              plantCode,
+              year: actual.year,
+              month: actual.month,
+              key: actual.key,
+              collectTime: actual.collectTime,
+              irradiation: actual.irradiation,
+              production: actual.production,
+              pr: actual.pr,
+              gridImport: actual.gridImport,
+              gridExport: actual.gridExport,
+              consumption: actual.consumption,
+              revenue: actual.revenue,
+              selfProvide: actual.selfProvide,
+            },
+          }),
+        );
+      }
+    }
+
+    await Promise.all(upserts);
+    console.log(`✅ [PR Cache] Refreshed ${upserts.length} monthly actuals from Huawei`);
+  } catch (err) {
+    console.error('❌ [PR Cache] Failed to refresh monthly actuals:', err);
+  }
 }
 
 export async function fetchSiteDailyActualMap(siteId: number, month: MonthRangeItem): Promise<Map<number, DailyActualRow>> {
@@ -210,10 +358,15 @@ export async function fetchSiteDailyActualMap(siteId: number, month: MonthRangeI
   }
 }
 
-export async function summarizeSitePrRange(siteId: number, startMonth: string, endMonth?: string | null) {
+export async function summarizeSitePrRange(
+  siteId: number,
+  startMonth: string,
+  endMonth?: string | null,
+  preloadedActuals?: Map<string, MonthlyActualRow>,
+) {
   const months = buildMonthRange(startMonth, endMonth);
   const forecastTemplate = await getForecastTemplate(siteId);
-  const actualMap = await fetchSiteMonthlyActualMap(siteId, months);
+  const actualMap = preloadedActuals ?? await fetchSiteMonthlyActualMap(siteId, months);
 
   const detailRows = months.map((period) => {
     const actual = actualMap.get(period.key) ?? null;

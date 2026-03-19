@@ -138,6 +138,7 @@ model Site {
   layouts               SiteLayout[]
   forecastMonthly       SiteForecastMonthly[]
   forecastYearly        SiteForecastYearly[]
+  monthlyActuals        SiteMonthlyActual[]
   otherRows             SiteOtherRow[]
   serviceEntries        ServiceEntry[]
 
@@ -598,6 +599,34 @@ model SiteForecastMonthly {
   @@index([siteId, month])
 }
 
+
+model SiteMonthlyActual {
+  id Int @id @default(autoincrement())
+
+  siteId    Int
+  site      Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  plantCode String
+
+  year  Int
+  month Int
+  key   String   // "YYYY-MM"
+
+  collectTime    Float?
+  irradiation    Float?
+  production     Float?
+  pr             Float?
+  gridImport     Float?
+  gridExport     Float?
+  consumption    Float?
+  revenue        Float?
+  selfProvide    Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, year, month])
+  @@index([plantCode, year, month])
+}
 
 model SiteForecastYearly {
   id Int @id @default(autoincrement())
