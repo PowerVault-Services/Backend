@@ -75,6 +75,9 @@ function clampInt(value: number, min: number, max: number) {
 }
 
 const FULL_SWEEP_LOOKBACK_DAYS = clampInt(Number(process.env.HUAWEI_ALARM_LOOKBACK_DAYS ?? 30), 1, 30);
+const INCREMENTAL_LOOKBACK_HOURS = clampInt(Number(process.env.HUAWEI_ALARM_INCREMENTAL_LOOKBACK_HOURS ?? 6), 1, 72);
+const FULL_SWEEP_INTERVAL_MS = Math.max(60_000, Number(process.env.HUAWEI_ALARM_FULL_SWEEP_INTERVAL_MS ?? 6 * 60 * 60_000));
+let lastFullSweepAt = 0;
 const ONDEMAND_WINDOW_DAYS = clampInt(Number(process.env.HUAWEI_ALARM_ONDEMAND_WINDOW_DAYS ?? 30), 1, 30);
 const ONDEMAND_MAX_LOOKBACK_DAYS = clampInt(Number(process.env.HUAWEI_ALARM_ONDEMAND_MAX_LOOKBACK_DAYS ?? 180), ONDEMAND_WINDOW_DAYS, 365);
 const ALARM_BATCH_SIZE = clampInt(Number(process.env.HUAWEI_ALARM_BATCH_SIZE ?? 100), 1, 100);
@@ -451,8 +454,19 @@ async function confirmAndMaybeClearMissingActiveAlarms(
 
 export async function syncActiveAlarms() {
   const now = Date.now();
-  const beginTime = now - FULL_SWEEP_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+  const isFullSweep = lastFullSweepAt === 0 || now - lastFullSweepAt >= FULL_SWEEP_INTERVAL_MS;
+  const lookbackMs = isFullSweep
+    ? FULL_SWEEP_LOOKBACK_DAYS * 24 * 60 * 60 * 1000
+    : INCREMENTAL_LOOKBACK_HOURS * 60 * 60 * 1000;
+  const beginTime = now - lookbackMs;
   const endTime = now;
+
+  if (isFullSweep) {
+    console.log(`🔍 [ALARM] Full sweep (${FULL_SWEEP_LOOKBACK_DAYS}d lookback)`);
+    lastFullSweepAt = now;
+  } else {
+    console.log(`⚡ [ALARM] Incremental sweep (${INCREMENTAL_LOOKBACK_HOURS}h lookback)`);
+  }
 
   const knownStationCodes = hasKnownHuaweiStationInventory() ? getKnownHuaweiStationCodes() : [];
   const sites = await prisma.site.findMany({

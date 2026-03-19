@@ -1,4 +1,5 @@
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
+import { isBudgetExhausted, recordBudgetRequest } from './huaweiBudget';
 
 
 type RetryRequestConfig = InternalAxiosRequestConfig & {
@@ -66,6 +67,7 @@ class HuaweiService {
 
   // เริ่มต้นสูงไว้ก่อน (tenant บางที่ limit ต่ำมาก)
   private minIntervalMs = Number(process.env.HUAWEI_MIN_INTERVAL_MS ?? 6500);
+  private baseMinIntervalMs = Number(process.env.HUAWEI_MIN_INTERVAL_MS ?? 6500);
 
   // ถ้าโดน 407/403/429 ให้พักทั้งระบบจนถึงเวลานี้
   private cooldownUntil = 0;
@@ -76,6 +78,7 @@ class HuaweiService {
   private lastResponseAt: number | null = null;
   private lastErrorAt: number | null = null;
   private lastRateLimitAt: number | null = null;
+  private lastDecayCheckAt = 0;
 
   /**
    * โหมด log (เปิดด้วย HUAWEI_API_DEBUG=1)
@@ -106,12 +109,36 @@ class HuaweiService {
         await sleep(jitter(wait));
       }
 
+      // Decay minIntervalMs back toward base when no 407 for 10+ minutes
+      const DECAY_QUIET_MS = 10 * 60_000;
+      const DECAY_CHECK_INTERVAL_MS = 60_000;
+      if (
+        now - this.lastDecayCheckAt > DECAY_CHECK_INTERVAL_MS &&
+        this.minIntervalMs > this.baseMinIntervalMs &&
+        (this.lastRateLimitAt == null || now - this.lastRateLimitAt > DECAY_QUIET_MS)
+      ) {
+        this.lastDecayCheckAt = now;
+        const newMin = Math.max(this.baseMinIntervalMs, Math.floor(this.minIntervalMs * 0.85));
+        if (newMin !== this.minIntervalMs) {
+          console.log(`🐇 [${this.label}] Decaying Huawei minIntervalMs: ${this.minIntervalMs} -> ${newMin}`);
+          this.minIntervalMs = newMin;
+        }
+      }
+
+      // Global budget gate: wait if budget exhausted
+      while (isBudgetExhausted()) {
+        console.warn(`🛑 [${this.label}] Global request budget exhausted. Waiting 5s...`);
+        await sleep(5_000);
+      }
+
       const waitMyTurn = this.throttleChain.then(async () => {
         await sleep(jitter(this.minIntervalMs));
       });
 
       this.throttleChain = waitMyTurn.catch(() => undefined);
       await waitMyTurn;
+
+      recordBudgetRequest();
 
       if (this.token) {
         config.headers = config.headers ?? {};
@@ -172,7 +199,7 @@ class HuaweiService {
             this.minIntervalMs = newMin;
           }
 
-          if (originalRequest._retryCount <= 8) {
+          if (originalRequest._retryCount <= 3) {
             console.warn(`[${this.label}] Huawei rate limit (407). Cooling down ${delay}ms then retry...`);
             await sleep(jitter(delay));
             return this.client(originalRequest);
@@ -215,6 +242,7 @@ class HuaweiService {
       labels: this.getLabels(),
       hasToken: !!this.token,
       minIntervalMs: this.minIntervalMs,
+      baseMinIntervalMs: this.baseMinIntervalMs,
       cooldownRemainingMs: this.getCooldownRemainingMs(),
       lastRequestAt: this.lastRequestAt,
       lastResponseAt: this.lastResponseAt,

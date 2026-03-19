@@ -195,3 +195,4 @@ export function resolveDynamicDevicePlantsPerTick() {
   const maxPlants = Math.max(minPlants, Number(process.env.HUAWEI_MAX_DEVICE_PLANTS_PER_TICK ?? Math.max(8, distinctClients * perAccount)));
   return Math.max(minPlants, Math.min(maxPlants, Math.max(1, distinctClients) * perAccount));
 }
+

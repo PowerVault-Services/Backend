@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { syncInverterData, syncSiteRealtimeTick } from '../services/syncService';
 import { syncActiveAlarms } from '../services/alarmSyncService';
 import { huaweiClients } from '../services/huaweiPool';
+import { getBudgetSnapshot } from '../services/huaweiBudget';
 import { ensureSyncStateHydrated, getSyncStateSnapshot, markJobFailure, markJobStart, markJobSuccess } from '../services/syncStateService';
 
 let siteRealtimeRunning = false;
@@ -139,6 +140,7 @@ export function getCronStatus() {
       watchdogIntervalMs: WATCHDOG_INTERVAL_MS,
       watchdogStaleMs: WATCHDOG_STALE_MS,
     },
+    budget: getBudgetSnapshot(),
   };
 }
 

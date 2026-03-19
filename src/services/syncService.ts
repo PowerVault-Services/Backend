@@ -15,7 +15,7 @@ import {
   replaceKnownHuaweiStationCodes,
   resolveDynamicDevicePlantsPerTick,
 } from './huaweiPool';
-import { getStalestStationCodes, getSyncStateSnapshot, markStations } from './syncStateService';
+import { getStalestStationCodes, getStationLastSeenMs, getSyncStateSnapshot, markStations } from './syncStateService';
 
 type SiteLite = {
   id: number;
@@ -597,16 +597,24 @@ async function syncPlantDevices(
 
       registerStationAccess(site.plantCode, client);
 
+      // Collect all parsed data first, then batch DB writes
+      const parsedItems: Array<{
+        devId: string;
+        inv: { id: number; lastDailyEnergy: number | null };
+        activePowerVal: number | null;
+        dayEnergy: number | null;
+        runState: number | null;
+        totalEnergy: number | null;
+        temperature: number | null;
+        powerFactor: number | null;
+        item: any;
+        map: any;
+      }> = [];
+
       for (const item of end5.data) {
         const devId = String(item.devId ?? '');
         const map = item.dataItemMap ?? {};
-
-        const activePowerVal = parseNum(map.active_power);
-        const dayEnergy = parseNum(map.day_cap);
         const runState = parseNum(map.run_state);
-        const totalEnergy = parseNum(map.total_cap);
-        const temperature = parseNum(map.temperature);
-        const powerFactor = parseNum(map.power_factor);
 
         if (runState != null) {
           runStateCount.set(runState, (runStateCount.get(runState) ?? 0) + 1);
@@ -615,51 +623,77 @@ async function syncPlantDevices(
         const inv = inverterByHuaweiDevId.get(devId);
         if (!inv) continue;
 
-        const derivedStatus = deriveInverterStatus(runState);
-        await prisma.inverter.update({
-          where: { id: inv.id },
-          data: {
-            ...(activePowerVal != null ? { activePower: activePowerVal } : {}),
-            lastDailyEnergy: dayEnergy ?? inv.lastDailyEnergy,
-            status: derivedStatus,
-            runState: runState != null ? Math.trunc(runState) : null,
-            lastSyncAt: new Date(),
-          },
+        parsedItems.push({
+          devId,
+          inv,
+          activePowerVal: parseNum(map.active_power),
+          dayEnergy: parseNum(map.day_cap),
+          runState,
+          totalEnergy: parseNum(map.total_cap),
+          temperature: parseNum(map.temperature),
+          powerFactor: parseNum(map.power_factor),
+          item,
+          map,
         });
+      }
 
-        if (activePowerVal != null) {
-          siteCurrentPowerKW += activePowerVal;
+      // Batch: update inverters + upsert snapshots in a single transaction
+      const txOps: any[] = [];
+      for (const p of parsedItems) {
+        const derivedStatus = deriveInverterStatus(p.runState);
+        txOps.push(
+          prisma.inverter.update({
+            where: { id: p.inv.id },
+            data: {
+              ...(p.activePowerVal != null ? { activePower: p.activePowerVal } : {}),
+              lastDailyEnergy: p.dayEnergy ?? p.inv.lastDailyEnergy,
+              status: derivedStatus,
+              runState: p.runState != null ? Math.trunc(p.runState) : null,
+              lastSyncAt: new Date(),
+            },
+          })
+        );
+
+        if (p.activePowerVal != null) {
+          siteCurrentPowerKW += p.activePowerVal;
           hasCurrentPower = true;
         }
+      }
 
+      if (txOps.length > 0) {
+        await prisma.$transaction(txOps);
+      }
+
+      // Upsert snapshots + string data (need snap.id so done sequentially per item, but batched strings)
+      for (const p of parsedItems) {
         const snap = await prisma.inverterKpiSnapshot.upsert({
-          where: { inverterId_ts: { inverterId: inv.id, ts } },
+          where: { inverterId_ts: { inverterId: p.inv.id, ts } },
           create: {
-            inverterId: inv.id,
+            inverterId: p.inv.id,
             ts,
-            activePower: activePowerVal ?? 0,
-            dayEnergy: dayEnergy ?? 0,
-            totalEnergy,
-            runState: runState != null ? Math.trunc(runState) : null,
-            temperature,
-            powerFactor,
-            raw: item,
+            activePower: p.activePowerVal ?? 0,
+            dayEnergy: p.dayEnergy ?? 0,
+            totalEnergy: p.totalEnergy,
+            runState: p.runState != null ? Math.trunc(p.runState) : null,
+            temperature: p.temperature,
+            powerFactor: p.powerFactor,
+            raw: p.item,
           } as any,
           update: {
-            activePower: activePowerVal ?? 0,
-            dayEnergy: dayEnergy ?? 0,
-            totalEnergy,
-            runState: runState != null ? Math.trunc(runState) : null,
-            temperature,
-            powerFactor,
-            raw: item,
+            activePower: p.activePowerVal ?? 0,
+            dayEnergy: p.dayEnergy ?? 0,
+            totalEnergy: p.totalEnergy,
+            runState: p.runState != null ? Math.trunc(p.runState) : null,
+            temperature: p.temperature,
+            powerFactor: p.powerFactor,
+            raw: p.item,
           } as any,
         });
 
         const rows: any[] = [];
         for (let n = 1; n <= STRING_SLOT_COUNT; n++) {
-          const voltage = parseNum(map[`pv${n}_u`]);
-          const current = parseNum(map[`pv${n}_i`]);
+          const voltage = parseNum(p.map[`pv${n}_u`]);
+          const current = parseNum(p.map[`pv${n}_i`]);
           rows.push({
             snapshotId: snap.id,
             stringNo: n,
@@ -734,6 +768,9 @@ function shouldSkipRemoteSyncForPlant(plantCode: string) {
   return hasKnownHuaweiStationInventory() && !isKnownHuaweiStationCode(plantCode);
 }
 
+const SITE_REALTIME_STALE_MS = Number(process.env.HUAWEI_SITE_REALTIME_STALE_MS ?? 4 * 60_000);
+const SITE_REALTIME_MAX_PER_TICK = Math.max(1, Number(process.env.HUAWEI_SITE_REALTIME_MAX_PER_TICK ?? 0));
+
 export async function syncSiteRealtimeTick() {
   console.log('⏳ Starting Site Realtime Sync Tick...');
   try {
@@ -753,7 +790,23 @@ export async function syncSiteRealtimeTick() {
       console.log(`🧹 Skip ${skippedLocalOnlySites} local-only/test sites from site realtime sync (not found in Huawei inventory)`);
     }
 
-    const batches = chunk(plantCodes, SITE_REALTIME_BATCH_SIZE);
+    // Staleness filter: only sync stations not synced within SITE_REALTIME_STALE_MS
+    const maxPerTick = SITE_REALTIME_MAX_PER_TICK > 0 ? SITE_REALTIME_MAX_PER_TICK : plantCodes.length;
+    const staleCodes = getStalestStationCodes('siteRealtime', plantCodes, maxPerTick);
+    const now = Date.now();
+    const staleFiltered = staleCodes.filter((code) => {
+      const lastSeen = getStationLastSeenMs('siteRealtime', code);
+      return lastSeen == null || now - lastSeen >= SITE_REALTIME_STALE_MS;
+    });
+
+    if (staleFiltered.length === 0) {
+      console.log(`✅ Site realtime sync: all ${plantCodes.length} stations are fresh (staleMs=${SITE_REALTIME_STALE_MS}). Skip.`);
+      return;
+    }
+
+    console.log(`📋 Site realtime: ${staleFiltered.length}/${plantCodes.length} stations are stale (threshold=${SITE_REALTIME_STALE_MS}ms)`);
+
+    const batches = chunk(staleFiltered, SITE_REALTIME_BATCH_SIZE);
     let totalSynced = 0;
     let totalMissing = 0;
     for (let i = 0; i < batches.length; i++) {
@@ -762,7 +815,7 @@ export async function syncSiteRealtimeTick() {
       totalMissing += result.missing;
     }
 
-    console.log(`✅ Site realtime sync done: ${totalSynced} rows across ${batches.length} batches (missing=${totalMissing})`);
+    console.log(`✅ Site realtime sync done: ${totalSynced} rows across ${batches.length} batches (missing=${totalMissing}, total=${plantCodes.length})`);
   } catch (error: any) {
     console.error('❌ Site realtime sync failed:', error?.message ?? error);
   }
