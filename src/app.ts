@@ -4,7 +4,7 @@ require('./config/loadEnv').loadEnv();
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import authRoutes from './routes/authRoutes';
-import { startCronJobs } from './jobs/cron';
+import { getCronStatus, startCronJobs } from './jobs/cron';
 import { huaweiService } from './services/huaweiService';
 // import huaweiDebugRoutes from './routes/huaweiDebugRoutes';
 import monitoringRoutes from './routes/monitoringRoutes';
@@ -54,6 +54,40 @@ app.get('/', (req: Request, res: Response) => {
   res.send('Hello! Solar Energy Backend is Running 🚀');
 });
 
+
+app.get('/healthz', async (_req: Request, res: Response) => {
+  const cronStatus = getCronStatus();
+  const now = Date.now();
+  const maxLagMs = Number(process.env.HUAWEI_SYNC_HEALTH_MAX_LAG_MS ?? 20 * 60_000);
+  const jobEntries = Object.entries(cronStatus.jobs).map(([jobName, job]) => ({
+    jobName,
+    running: job.running,
+    lastAttemptAt: job.lastAttemptAt,
+    lastSuccessAt: job.lastSuccessAt,
+    lagMs: job.lastSuccessAt ? Math.max(0, now - job.lastSuccessAt) : null,
+  }));
+
+  const unhealthyJobs = jobEntries.filter((job) => job.lagMs == null || job.lagMs > maxLagMs);
+  const ok = unhealthyJobs.length === 0;
+
+  return res.status(ok ? 200 : 503).json({
+    ok,
+    now,
+    maxLagMs,
+    jobs: jobEntries,
+    unhealthyJobs,
+  });
+});
+
+app.get('/readyz', async (_req: Request, res: Response) => {
+  try {
+    await huaweiService.ensureLoggedIn();
+    return res.json({ ok: true });
+  } catch (error: any) {
+    return res.status(503).json({ ok: false, error: error?.message ?? String(error) });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, async () => {
@@ -80,5 +114,5 @@ app.listen(PORT, async () => {
     console.error('❌ Huawei initial login failed:', err);
   }
 
-  startCronJobs();
+  void startCronJobs();
 });

@@ -1,5 +1,5 @@
 import prisma from '../config/prisma';
-import { pickOnDemandClient } from './huaweiPool';
+import { hasKnownHuaweiStationInventory, isKnownHuaweiStationCode, pickOnDemandClient } from './huaweiPool';
 import { getCachedPlantKpi } from './huaweiKpiCache';
 import { syncPlantOnDemand } from './syncService';
 
@@ -278,6 +278,10 @@ async function getAuxDevices(site: SiteRecord): Promise<HuaweiDeviceLite[]> {
   const cached = auxDeviceMetaCache.get(site.plantCode);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.value;
+  }
+
+  if (hasKnownHuaweiStationInventory() && !isKnownHuaweiStationCode(site.plantCode)) {
+    return [];
   }
 
   const client = pickOnDemandClient();

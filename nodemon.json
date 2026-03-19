@@ -1,0 +1,14 @@
+{
+  "watch": ["src", "prisma", ".env"],
+  "ext": "ts,json",
+  "ignore": [
+    "dist/**",
+    "data/**",
+    "uploads/**",
+    "coverage/**",
+    "node_modules/**",
+    "*.log"
+  ],
+  "exec": "ts-node src/app.ts",
+  "delay": "1500"
+}

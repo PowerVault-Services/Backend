@@ -72,6 +72,10 @@ class HuaweiService {
 
   // login rate guard (เอกสาร: จำกัด 5 ครั้ง / 10 นาที)
   private loginAttempts: number[] = []; // timestamps (ms)
+  private lastRequestAt: number | null = null;
+  private lastResponseAt: number | null = null;
+  private lastErrorAt: number | null = null;
+  private lastRateLimitAt: number | null = null;
 
   /**
    * โหมด log (เปิดด้วย HUAWEI_API_DEBUG=1)
@@ -113,7 +117,9 @@ class HuaweiService {
         config.headers = config.headers ?? {};
         config.headers['xsrf-token'] = this.token;
       }
-      
+
+      this.lastRequestAt = Date.now();
+
       if (this.debug) {
         const method = (config.method ?? 'GET').toUpperCase();
         console.log(`➡️  [${this.label}] ${method} ${config.url ?? ''}`);
@@ -123,8 +129,12 @@ class HuaweiService {
 
     // Response error handler (HTTP error cases)
     this.client.interceptors.response.use(
-      (r) => r,
+      (r) => {
+        this.lastResponseAt = Date.now();
+        return r;
+      },
       async (error: AxiosError) => {
+        this.lastErrorAt = Date.now();
         const originalRequest = error.config as RetryRequestConfig | undefined;
         if (!originalRequest) return Promise.reject(error);
 
@@ -154,6 +164,7 @@ class HuaweiService {
           const delay = retryAfterMs != null ? Math.max(baseDelay, retryAfterMs) : baseDelay;
 
           this.cooldownUntil = Date.now() + delay;
+          this.lastRateLimitAt = Date.now();
 
           const newMin = Math.min(15_000, Math.floor(this.minIntervalMs * 1.25));
           if (newMin !== this.minIntervalMs) {
@@ -190,6 +201,29 @@ class HuaweiService {
     return { ...this.stats };
   }
 
+  public getCooldownRemainingMs() {
+    return Math.max(0, this.cooldownUntil - Date.now());
+  }
+
+  public isCoolingDown() {
+    return this.getCooldownRemainingMs() > 0;
+  }
+
+  public getRuntimeStatus() {
+    return {
+      accountKey: this.getAccountKey(),
+      labels: this.getLabels(),
+      hasToken: !!this.token,
+      minIntervalMs: this.minIntervalMs,
+      cooldownRemainingMs: this.getCooldownRemainingMs(),
+      lastRequestAt: this.lastRequestAt,
+      lastResponseAt: this.lastResponseAt,
+      lastErrorAt: this.lastErrorAt,
+      lastRateLimitAt: this.lastRateLimitAt,
+      stats: this.getStats(),
+    };
+  }
+
   public resetStats() {
     this.stats = {
       login: 0,
@@ -214,6 +248,7 @@ class HuaweiService {
         : Number(process.env.HUAWEI_SYSTEM_BUSY_PAUSE_MS ?? 60_000));
 
     this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + delayMs);
+    this.lastRateLimitAt = Date.now();
 
     const factor = kind === 'personal' ? 1.25 : 1.15;
     const newMin = Math.min(20_000, Math.floor(this.minIntervalMs * factor));

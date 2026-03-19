@@ -1,11 +1,28 @@
 	import { Router } from 'express';
 	import prisma from '../config/prisma';
 	import { huaweiOnDemand } from '../services/huaweiService';
-	import { syncPlantOnDemand } from '../services/syncService';
+	import { getFleetSyncCoverageSnapshot, syncPlantOnDemand } from '../services/syncService';
 	import { getEnergyManagementSeries, getMonitoringHomeRealtime } from '../services/monitoringHomeService';
 import { buildMonthRange, summarizeSitePrRange } from '../services/siteAnalyticsService';
+import { getAlarmReconciliationSnapshot } from '../services/alarmSyncService';
+import { getCronStatus } from '../jobs/cron';
 
 	const router = Router();
+
+
+	router.get('/sync/status', async (_req, res) => {
+		return res.json({ ok: true, data: getCronStatus() });
+	});
+
+	router.get('/sync/coverage', async (_req, res) => {
+		const snapshot = await getFleetSyncCoverageSnapshot();
+		return res.json({ ok: true, data: snapshot });
+	});
+
+	router.get('/sync/alarm-reconciliation', async (_req, res) => {
+		const snapshot = await getAlarmReconciliationSnapshot();
+		return res.json({ ok: true, data: snapshot });
+	});
 
 	router.get('/pr/sites', async (req, res) => {
 		const startMonth = String(req.query.startMonth ?? '').trim();
@@ -13,13 +30,14 @@ import { buildMonthRange, summarizeSitePrRange } from '../services/siteAnalytics
 		const q = String(req.query.q ?? '').trim();
 		const requestedIds = String(req.query.siteIds ?? '').trim();
 
-		if (!startMonth) return res.status(400).json({ error: 'startMonth is required (YYYY-MM)' });
-
-		let months;
-		try {
-			months = buildMonthRange(startMonth, endMonth || startMonth);
-		} catch (e: any) {
-			return res.status(e?.statusCode ?? 400).json({ error: e?.message ?? 'Invalid month range' });
+		let months: ReturnType<typeof buildMonthRange> = [];
+		const hasMonthFilter = !!startMonth;
+		if (hasMonthFilter) {
+			try {
+				months = buildMonthRange(startMonth, endMonth || startMonth);
+			} catch (e: any) {
+				return res.status(e?.statusCode ?? 400).json({ error: e?.message ?? 'Invalid month range' });
+			}
 		}
 
 		const siteIdList = requestedIds
@@ -45,6 +63,17 @@ import { buildMonthRange, summarizeSitePrRange } from '../services/siteAnalytics
 
 		const rows = await Promise.all(
 			sites.map(async (site) => {
+				if (!hasMonthFilter) {
+					return {
+						siteId: site.id,
+						plantName: site.name,
+						plantCode: site.plantCode,
+						systemSizeKWp: site.capacityKWp,
+						period: null,
+						totals: null,
+						months: [],
+					};
+				}
 				const summary = await summarizeSitePrRange(site.id, startMonth, endMonth || startMonth);
 				return {
 					siteId: site.id,
