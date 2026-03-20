@@ -5,7 +5,16 @@
       "Bash(wc -l d:/Backend/src/**/*.ts)",
       "Bash(xargs grep:*)",
       "Bash(grep -r \"HUAWEI.*STATE\\\\|SYNC.*STATE\" /d/Backend/src --include=*.ts)",
-      "Bash(npx prisma:*)"
+      "Bash(npx prisma:*)",
+      "Bash(find /d/Backend -type f -name *.prisma)",
+      "Bash(find /d/Backend -type f \\\\\\(-name *.model.ts -o -name *.entity.ts -o -name *.schema.ts \\\\\\))",
+      "Bash(find /d/Backend/src -type f -name *.ts)",
+      "Bash(ls -1 /d/Backend/docs/seq-*.puml)",
+      "Bash(find /d/Backend/src -name *.test.ts -o -name *.spec.ts)",
+      "Bash(find /d/Backend -maxdepth 2 -type f \\\\\\(-name .github -o -name *.yml -o -name *.yaml -o -name Dockerfile -o -name .gitignore \\\\\\))",
+      "Bash(npm install:*)",
+      "Bash(npx jest:*)",
+      "Bash(find D:/Backend -type f \\\\\\(-name .env* -o -name *.env \\\\\\))"
     ]
   }
 }

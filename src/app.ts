@@ -1,6 +1,9 @@
 // src/app.ts
 require('./config/loadEnv').loadEnv();
 
+import { validateEnv } from './config/env';
+validateEnv();
+
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import authRoutes from './routes/authRoutes';

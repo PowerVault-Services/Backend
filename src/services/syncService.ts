@@ -1,5 +1,8 @@
 import prisma from '../config/prisma';
+import { createLogger } from '../config/logger';
 import { HuaweiDevice, HuaweiService } from './huaweiService';
+
+const log = createLogger('sync');
 import {
   describeHuaweiClient,
   getPreferredClientOrderForPurpose,
@@ -70,10 +73,20 @@ function snapTsNow(slotMs: number): Date {
   return new Date(slot);
 }
 
+const SYNC_TIMEZONE = process.env.HUAWEI_SYNC_TIMEZONE ?? 'Asia/Bangkok';
+
 function startOfLocalDay(d = new Date()): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: SYNC_TIMEZONE,
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(d);
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
+  const s = Number(parts.find((p) => p.type === 'second')?.value ?? 0);
+  return new Date(d.getTime() - (h * 3_600_000 + m * 60_000 + s * 1_000 + d.getMilliseconds()));
 }
 
 function parseNum(value: unknown): number | null {
@@ -111,6 +124,7 @@ function deriveInverterStatus(runState: number | null | undefined): 'Normal' | '
 
 const DEV_BATCH_SIZE = Math.min(100, Math.max(1, Number(process.env.HUAWEI_DEV_BATCH_SIZE ?? 100)));
 const SITE_REALTIME_BATCH_SIZE = Math.min(100, Math.max(1, Number(process.env.HUAWEI_SITE_REALTIME_BATCH_SIZE ?? 100)));
+const SITE_REALTIME_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HUAWEI_SITE_REALTIME_CONCURRENCY ?? 2)));
 const MIN_TICK_INTERVAL_MS = Number(process.env.HUAWEI_MIN_TICK_INTERVAL_MS ?? 60_000);
 const SNAPSHOT_SLOT_MS = Number(process.env.HUAWEI_SNAPSHOT_SLOT_MS ?? 5 * 60_000);
 const STATION_CACHE_TTL_MS = Number(process.env.HUAWEI_STATION_CACHE_TTL_MS ?? 6 * 60 * 60 * 1000);
@@ -128,16 +142,22 @@ const INVERTER_DEV_TYPE_IDS = new Set(
     .filter((x) => Number.isFinite(x))
 );
 
-const DEBUG = String(process.env.SYNC_DEBUG ?? '').trim() === '1';
-
 let lastTickAt = 0;
 let deviceSyncCursor = 0;
 let stationCache: { expiresAt: number; stationCodes: string[] } | null = null;
-const retryQueue: string[] = [];
+const RETRY_QUEUE_MAX = Math.max(10, Math.min(5000, Number(process.env.HUAWEI_RETRY_QUEUE_MAX ?? 500)));
+const retryQueue = new Set<string>();
 const onDemandSyncInflight = new Map<string, Promise<any>>();
 
 function enqueueRetry(stationCode: string) {
-  if (!retryQueue.includes(stationCode)) retryQueue.unshift(stationCode);
+  // Re-add to move to end (Set preserves insertion order)
+  retryQueue.delete(stationCode);
+  retryQueue.add(stationCode);
+  // Evict oldest if over limit
+  if (retryQueue.size > RETRY_QUEUE_MAX) {
+    const oldest = retryQueue.values().next().value;
+    if (oldest) retryQueue.delete(oldest);
+  }
 }
 
 function normalizeOnDemandOptions(opts?: SyncPlantOnDemandOptions) {
@@ -169,57 +189,27 @@ function handleFailCode(client: HuaweiService, failCode: any, context: string, s
   if (!Number.isFinite(code)) return false;
 
   if (code === 407) {
-    console.warn(`🚫 ${context} rate-limited (407) ${stationCode ? `station=${stationCode}` : ''}`);
+    log.warn(`${context} rate-limited (407)`, { stationCode, failCode: 407 });
     if (stationCode) enqueueRetry(stationCode);
     client.notifyRateLimit({ kind: 'personal', delayMs: PERSONAL_RATE_LIMIT_PAUSE_MS, reason: `${context} failCode=407` });
     return true;
   }
 
   if (code === 403 || code === 429) {
-    console.warn(`⛔ ${context} system busy (${code}) ${stationCode ? `station=${stationCode}` : ''}`);
+    log.warn(`${context} system busy`, { stationCode, failCode: code });
     if (stationCode) enqueueRetry(stationCode);
     client.notifyRateLimit({ kind: 'system', delayMs: SYSTEM_BUSY_PAUSE_MS, reason: `${context} failCode=${code}` });
     return true;
   }
 
   if (code === 305) {
-    console.warn(`🔑 ${context} token expired (305) ${stationCode ? `station=${stationCode}` : ''}`);
+    log.warn(`${context} token expired (305)`, { stationCode });
     if (stationCode) enqueueRetry(stationCode);
     client.ensureLoggedIn({ force: true }).catch(() => undefined);
     return true;
   }
 
   return false;
-}
-
-async function upsertStationMetadata(st: any) {
-  const code = pickStationCode(st);
-  if (!code) return null;
-
-  await prisma.site.upsert({
-    where: { plantCode: code },
-    create: {
-      plantCode: code,
-      name: (st.plantName ?? st.stationName ?? code).toString(),
-      address: (st.plantAddress ?? st.stationAddr ?? undefined) as any,
-      latitude: st.latitude != null ? Number(st.latitude) : undefined,
-      longitude: st.longitude != null ? Number(st.longitude) : undefined,
-      capacityKWp: st.capacity != null ? Number(st.capacity) : 0,
-      gridConnectionDate: parseDate(st.gridConnectionDate) ?? undefined,
-      siteMetaSyncedAt: new Date(),
-    },
-    update: {
-      name: (st.plantName ?? st.stationName ?? code).toString(),
-      address: (st.plantAddress ?? st.stationAddr ?? undefined) as any,
-      latitude: st.latitude != null ? Number(st.latitude) : undefined,
-      longitude: st.longitude != null ? Number(st.longitude) : undefined,
-      capacityKWp: st.capacity != null ? Number(st.capacity) : undefined,
-      gridConnectionDate: parseDate(st.gridConnectionDate) ?? undefined,
-      siteMetaSyncedAt: new Date(),
-    },
-  } as any);
-
-  return code;
 }
 
 async function refreshStationsIfNeeded(force = false): Promise<string[]> {
@@ -250,12 +240,43 @@ async function refreshStationsIfNeeded(force = false): Promise<string[]> {
         const pageCount = Number(res?.data?.pageCount ?? 0);
         if (list.length === 0) break;
 
-        for (const st of list) {
-          const code = await upsertStationMetadata(st);
-          if (!code) continue;
-          stationCodes.add(code);
-          registerStationAccess(code, stationClient);
-          fetchedForClient += 1;
+        const validStations = list
+          .map((st) => ({ st, code: pickStationCode(st) }))
+          .filter((x): x is { st: any; code: string } => !!x.code);
+
+        if (validStations.length > 0) {
+          await prisma.$transaction(
+            validStations.map(({ st, code }) =>
+              prisma.site.upsert({
+                where: { plantCode: code },
+                create: {
+                  plantCode: code,
+                  name: (st.plantName ?? st.stationName ?? code).toString(),
+                  address: (st.plantAddress ?? st.stationAddr ?? undefined) as any,
+                  latitude: st.latitude != null ? Number(st.latitude) : undefined,
+                  longitude: st.longitude != null ? Number(st.longitude) : undefined,
+                  capacityKWp: st.capacity != null ? Number(st.capacity) : 0,
+                  gridConnectionDate: parseDate(st.gridConnectionDate) ?? undefined,
+                  siteMetaSyncedAt: new Date(),
+                },
+                update: {
+                  name: (st.plantName ?? st.stationName ?? code).toString(),
+                  address: (st.plantAddress ?? st.stationAddr ?? undefined) as any,
+                  latitude: st.latitude != null ? Number(st.latitude) : undefined,
+                  longitude: st.longitude != null ? Number(st.longitude) : undefined,
+                  capacityKWp: st.capacity != null ? Number(st.capacity) : undefined,
+                  gridConnectionDate: parseDate(st.gridConnectionDate) ?? undefined,
+                  siteMetaSyncedAt: new Date(),
+                },
+              } as any)
+            )
+          );
+
+          for (const { code } of validStations) {
+            stationCodes.add(code);
+            registerStationAccess(code, stationClient);
+          }
+          fetchedForClient += validStations.length;
         }
 
         if (pageCount > 0) {
@@ -270,9 +291,9 @@ async function refreshStationsIfNeeded(force = false): Promise<string[]> {
       if (fetchedForClient > 0) {
         successfulClients += 1;
       }
-      console.log(`✅ Station inventory via ${describeHuaweiClient(stationClient)}: ${fetchedForClient} rows`);
+      log.info('Station inventory fetched', { client: describeHuaweiClient(stationClient), rows: fetchedForClient });
     } catch (e: any) {
-      console.warn(`⚠️ Cannot refresh stations via ${describeHuaweiClient(stationClient)}:`, e?.message ?? e);
+      log.warn('Cannot refresh stations', { client: describeHuaweiClient(stationClient), error: e?.message ?? e });
     }
   }
 
@@ -281,15 +302,15 @@ async function refreshStationsIfNeeded(force = false): Promise<string[]> {
     const ttl = successfulClients === stationClients.length ? STATION_CACHE_TTL_MS : Math.min(STATION_CACHE_TTL_MS, 30 * 60 * 1000);
     stationCache = { expiresAt: now + ttl, stationCodes: uniq };
     replaceKnownHuaweiStationCodes(uniq);
-    console.log(`✅ Station cache refreshed: ${uniq.length} stations across ${successfulClients}/${stationClients.length} clients (ttl=${ttl}ms)`);
+    log.info('Station cache refreshed', { count: uniq.length, successfulClients, totalClients: stationClients.length, ttlMs: ttl });
     return uniq;
   }
 
-  console.warn('⚠️ Cannot refresh stations from Huawei (will fallback to DB)');
+  log.warn('Cannot refresh stations from Huawei, falling back to DB');
   const sites = (await prisma.site.findMany({ select: { plantCode: true }, orderBy: [{ createdAt: 'asc' }], take: 5000 } as any)) as any[];
   const codes = sites.map((s) => s.plantCode).filter(Boolean);
   stationCache = { expiresAt: now + 10 * 60_000, stationCodes: codes };
-  console.log(`✅ Using DB fallback station codes: ${codes.length} stations (short ttl=10min)`);
+  log.info('Using DB fallback station codes', { count: codes.length, ttlMs: 600_000 });
   return codes;
 }
 
@@ -353,7 +374,7 @@ async function ensurePlantDeviceMetadata(site: SiteLite, client: HuaweiService, 
     handleFailCode(client, end4?.failCode, 'getDevList', site.plantCode);
     noteStationFailure(site.plantCode, client);
     if (cached.length > 0) {
-      console.warn(`⚠️ Falling back to cached device metadata for ${site.plantCode}`);
+      log.warn('Falling back to cached device metadata', { plantCode: site.plantCode });
       return cached;
     }
     throw new Error(`getDevList failed (failCode=${end4?.failCode})`);
@@ -365,29 +386,33 @@ async function ensurePlantDeviceMetadata(site: SiteLite, client: HuaweiService, 
     .map(normalizeDeviceTarget)
     .filter(Boolean) as DeviceTarget[];
 
-  for (const inv of inverterTargets) {
-    await prisma.inverter.upsert({
-      where: { serialNumber: inv.serialNumber },
-      create: {
-        serialNumber: inv.serialNumber,
-        name: inv.devName,
-        model: inv.model,
-        siteId: site.id,
-        huaweiDevId: inv.devId,
-        huaweiDevTypeId: inv.devTypeId,
-        stationCode: site.plantCode,
-        softwareVersion: inv.softwareVersion ?? undefined,
-      },
-      update: {
-        name: inv.devName,
-        model: inv.model,
-        siteId: site.id,
-        huaweiDevId: inv.devId,
-        huaweiDevTypeId: inv.devTypeId,
-        stationCode: site.plantCode,
-        softwareVersion: inv.softwareVersion ?? undefined,
-      },
-    } as any);
+  if (inverterTargets.length > 0) {
+    await prisma.$transaction(
+      inverterTargets.map((inv) =>
+        prisma.inverter.upsert({
+          where: { serialNumber: inv.serialNumber },
+          create: {
+            serialNumber: inv.serialNumber,
+            name: inv.devName,
+            model: inv.model,
+            siteId: site.id,
+            huaweiDevId: inv.devId,
+            huaweiDevTypeId: inv.devTypeId,
+            stationCode: site.plantCode,
+            softwareVersion: inv.softwareVersion ?? undefined,
+          },
+          update: {
+            name: inv.devName,
+            model: inv.model,
+            siteId: site.id,
+            huaweiDevId: inv.devId,
+            huaweiDevTypeId: inv.devTypeId,
+            stationCode: site.plantCode,
+            softwareVersion: inv.softwareVersion ?? undefined,
+          },
+        } as any)
+      )
+    );
   }
 
   await prisma.site.update({
@@ -397,9 +422,7 @@ async function ensurePlantDeviceMetadata(site: SiteLite, client: HuaweiService, 
 
   registerStationAccess(site.plantCode, client);
 
-  if (DEBUG) {
-    console.log(`🧰 Refreshed device metadata for ${site.plantCode} via ${describeHuaweiClient(client)}: ${inverterTargets.length} inverter targets`);
-  }
+  log.debug('Refreshed device metadata', { plantCode: site.plantCode, client: describeHuaweiClient(client), inverterCount: inverterTargets.length });
 
   return inverterTargets.length > 0 ? inverterTargets : cached;
 }
@@ -520,14 +543,14 @@ async function syncSiteRealtimeBatch(plantCodes: string[], batchIndex: number) {
         return isMissing;
       });
     } catch (error: any) {
-      console.warn(`⚠️ getStationRealKpi failed via ${describeHuaweiClient(client)}:`, error?.message ?? error);
+      log.warn('getStationRealKpi failed', { client: describeHuaweiClient(client), error: error?.message ?? error });
       remaining.forEach((code) => noteStationFailure(code, client));
     }
   }
 
   if (remaining.length > 0) {
     remaining.forEach((code) => enqueueRetry(code));
-    console.warn(`⚠️ Site realtime batch incomplete: missing ${remaining.length}/${plantCodes.length} plants after multi-account reconciliation`);
+    log.warn('Site realtime batch incomplete', { missing: remaining.length, total: plantCodes.length });
   }
 
   return { synced: totalSynced, missing: remaining.length };
@@ -664,37 +687,49 @@ async function syncPlantDevices(
         await prisma.$transaction(txOps);
       }
 
-      // Upsert snapshots + string data (need snap.id so done sequentially per item, but batched strings)
-      for (const p of parsedItems) {
-        const snap = await prisma.inverterKpiSnapshot.upsert({
-          where: { inverterId_ts: { inverterId: p.inv.id, ts } },
-          create: {
-            inverterId: p.inv.id,
-            ts,
-            activePower: p.activePowerVal ?? 0,
-            dayEnergy: p.dayEnergy ?? 0,
-            totalEnergy: p.totalEnergy,
-            runState: p.runState != null ? Math.trunc(p.runState) : null,
-            temperature: p.temperature,
-            powerFactor: p.powerFactor,
-            raw: p.item,
-          } as any,
-          update: {
-            activePower: p.activePowerVal ?? 0,
-            dayEnergy: p.dayEnergy ?? 0,
-            totalEnergy: p.totalEnergy,
-            runState: p.runState != null ? Math.trunc(p.runState) : null,
-            temperature: p.temperature,
-            powerFactor: p.powerFactor,
-            raw: p.item,
-          } as any,
-        });
+      // Batch upsert all KPI snapshots in one transaction
+      const snapResults = parsedItems.length > 0
+        ? await prisma.$transaction(
+            parsedItems.map((p) =>
+              prisma.inverterKpiSnapshot.upsert({
+                where: { inverterId_ts: { inverterId: p.inv.id, ts } },
+                create: {
+                  inverterId: p.inv.id,
+                  ts,
+                  activePower: p.activePowerVal ?? 0,
+                  dayEnergy: p.dayEnergy ?? 0,
+                  totalEnergy: p.totalEnergy,
+                  runState: p.runState != null ? Math.trunc(p.runState) : null,
+                  temperature: p.temperature,
+                  powerFactor: p.powerFactor,
+                  raw: p.item,
+                } as any,
+                update: {
+                  activePower: p.activePowerVal ?? 0,
+                  dayEnergy: p.dayEnergy ?? 0,
+                  totalEnergy: p.totalEnergy,
+                  runState: p.runState != null ? Math.trunc(p.runState) : null,
+                  temperature: p.temperature,
+                  powerFactor: p.powerFactor,
+                  raw: p.item,
+                } as any,
+              })
+            )
+          )
+        : [];
 
-        const rows: any[] = [];
+      // Batch all string snapshot operations: collect deletes + rows, then execute together
+      const stringDeleteOps: any[] = [];
+      const allStringRows: any[] = [];
+      for (let idx = 0; idx < parsedItems.length; idx++) {
+        const snap = snapResults[idx];
+        const p = parsedItems[idx];
+        stringDeleteOps.push(prisma.inverterStringSnapshot.deleteMany({ where: { snapshotId: snap.id } }));
         for (let n = 1; n <= STRING_SLOT_COUNT; n++) {
           const voltage = parseNum(p.map[`pv${n}_u`]);
           const current = parseNum(p.map[`pv${n}_i`]);
-          rows.push({
+          if (voltage == null && current == null) continue; // skip disconnected strings to reduce writes
+          allStringRows.push({
             snapshotId: snap.id,
             stringNo: n,
             voltage,
@@ -702,11 +737,12 @@ async function syncPlantDevices(
             status: deriveStringStatus(voltage, current),
           });
         }
-
-        await prisma.$transaction([
-          prisma.inverterStringSnapshot.deleteMany({ where: { snapshotId: snap.id } }),
-          prisma.inverterStringSnapshot.createMany({ data: rows }),
-        ]);
+      }
+      if (stringDeleteOps.length > 0) {
+        await prisma.$transaction(stringDeleteOps);
+      }
+      if (allStringRows.length > 0) {
+        await prisma.inverterStringSnapshot.createMany({ data: allStringRows });
       }
     }
   }
@@ -756,7 +792,7 @@ async function syncPlantDevicesWithFailover(
     } catch (error: any) {
       lastError = error;
       noteStationFailure(site.plantCode, client);
-      console.warn(`⚠️ Device sync failed for ${site.plantCode} via ${describeHuaweiClient(client)}:`, error?.message ?? error);
+      log.warn('Device sync failed', { plantCode: site.plantCode, client: describeHuaweiClient(client), error: error?.message ?? error });
     }
   }
 
@@ -772,12 +808,12 @@ const SITE_REALTIME_STALE_MS = Number(process.env.HUAWEI_SITE_REALTIME_STALE_MS 
 const SITE_REALTIME_MAX_PER_TICK = Math.max(1, Number(process.env.HUAWEI_SITE_REALTIME_MAX_PER_TICK ?? 0));
 
 export async function syncSiteRealtimeTick() {
-  console.log('⏳ Starting Site Realtime Sync Tick...');
+  log.info('Starting Site Realtime Sync Tick');
   try {
     const stationCodes = await refreshStationsIfNeeded();
     const plantCodes = stationCodes.filter((code): code is string => !!code);
     if (plantCodes.length === 0) {
-      console.log('⚠️ No Huawei inventory sites to sync for site realtime.');
+      log.warn('No Huawei inventory sites to sync for site realtime');
       return;
     }
 
@@ -787,7 +823,7 @@ export async function syncSiteRealtimeTick() {
       },
     } as any);
     if (skippedLocalOnlySites > 0) {
-      console.log(`🧹 Skip ${skippedLocalOnlySites} local-only/test sites from site realtime sync (not found in Huawei inventory)`);
+      log.info('Skipping local-only/test sites from site realtime sync', { count: skippedLocalOnlySites });
     }
 
     // Staleness filter: only sync stations not synced within SITE_REALTIME_STALE_MS
@@ -800,33 +836,38 @@ export async function syncSiteRealtimeTick() {
     });
 
     if (staleFiltered.length === 0) {
-      console.log(`✅ Site realtime sync: all ${plantCodes.length} stations are fresh (staleMs=${SITE_REALTIME_STALE_MS}). Skip.`);
+      log.info('Site realtime sync: all stations fresh, skipping', { total: plantCodes.length, staleMs: SITE_REALTIME_STALE_MS });
       return;
     }
 
-    console.log(`📋 Site realtime: ${staleFiltered.length}/${plantCodes.length} stations are stale (threshold=${SITE_REALTIME_STALE_MS}ms)`);
+    log.info('Site realtime stale stations', { stale: staleFiltered.length, total: plantCodes.length, thresholdMs: SITE_REALTIME_STALE_MS });
 
     const batches = chunk(staleFiltered, SITE_REALTIME_BATCH_SIZE);
     let totalSynced = 0;
     let totalMissing = 0;
-    for (let i = 0; i < batches.length; i++) {
-      const result = await syncSiteRealtimeBatch(batches[i], i);
-      totalSynced += result.synced;
-      totalMissing += result.missing;
-    }
+    let batchCursor = 0;
+    const workers = Array.from({ length: Math.min(SITE_REALTIME_CONCURRENCY, batches.length) }, async () => {
+      while (batchCursor < batches.length) {
+        const i = batchCursor++;
+        const result = await syncSiteRealtimeBatch(batches[i], i);
+        totalSynced += result.synced;
+        totalMissing += result.missing;
+      }
+    });
+    await Promise.all(workers);
 
-    console.log(`✅ Site realtime sync done: ${totalSynced} rows across ${batches.length} batches (missing=${totalMissing}, total=${plantCodes.length})`);
+    log.info('Site realtime sync done', { synced: totalSynced, batches: batches.length, missing: totalMissing, total: plantCodes.length });
   } catch (error: any) {
-    console.error('❌ Site realtime sync failed:', error?.message ?? error);
+    log.error('Site realtime sync failed', { error: error?.message ?? error });
   }
 }
 
 export const syncMonitoringTick = async () => {
-  console.log('⏳ Starting Device Sync Tick...');
+  log.info('Starting Device Sync Tick');
 
   const now = Date.now();
   if (lastTickAt && now - lastTickAt < MIN_TICK_INTERVAL_MS) {
-    console.log(`⏭️ Skip device sync tick (min interval ${MIN_TICK_INTERVAL_MS}ms not reached)`);
+    log.info('Skip device sync tick, min interval not reached', { minIntervalMs: MIN_TICK_INTERVAL_MS });
     return;
   }
   lastTickAt = now;
@@ -836,7 +877,7 @@ export const syncMonitoringTick = async () => {
   try {
     const stationCodes = await refreshStationsIfNeeded();
     if (stationCodes.length === 0) {
-      console.log('⚠️ No station codes available for device sync.');
+      log.warn('No station codes available for device sync');
       return;
     }
 
@@ -846,15 +887,16 @@ export const syncMonitoringTick = async () => {
       },
     } as any);
     if (skippedLocalOnlySites > 0) {
-      console.log(`🧹 Skip ${skippedLocalOnlySites} local-only/test sites from device sync (not found in Huawei inventory)`);
+      log.info('Skipping local-only/test sites from device sync', { count: skippedLocalOnlySites });
     }
 
     const maxPlantsPerTick = resolveDynamicDevicePlantsPerTick();
     const picked = new Set<string>();
-    while (picked.size < maxPlantsPerTick && retryQueue.length > 0) {
-      const code = retryQueue.shift();
-      if (code) picked.add(code);
+    for (const code of retryQueue) {
+      if (picked.size >= maxPlantsPerTick) break;
+      picked.add(code);
     }
+    for (const code of picked) retryQueue.delete(code);
 
     const staleCandidates = getStalestStationCodes('device', stationCodes, maxPlantsPerTick * 2, { exclude: picked });
     for (const code of staleCandidates) {
@@ -870,7 +912,7 @@ export const syncMonitoringTick = async () => {
     }
 
     if (picked.size === 0) {
-      console.log('⚠️ No sites selected for device sync.');
+      log.warn('No sites selected for device sync');
       return;
     }
 
@@ -890,23 +932,23 @@ export const syncMonitoringTick = async () => {
             includeInventory: true,
             includeDeviceDetail: true,
           });
-          console.log(`✅ Device sync done for ${site.plantCode} via ${result.clientLabel ?? 'UNKNOWN'}: ${result.inverters} inverter targets`);
+          log.info('Device sync done', { plantCode: site.plantCode, client: result.clientLabel ?? 'UNKNOWN', inverters: result.inverters });
         } catch (e: any) {
           enqueueRetry(site.plantCode);
-          console.warn(`⚠️ Device sync failed for ${site.plantCode}:`, e?.message ?? e);
+          log.warn('Device sync failed', { plantCode: site.plantCode, error: e?.message ?? e });
         }
       }
     });
 
     await Promise.all(workers);
   } catch (error: any) {
-    console.error('❌ Device Sync Tick Failed:', error?.message ?? error);
+    log.error('Device Sync Tick Failed', { error: error?.message ?? error });
   } finally {
-    console.log('📊 Huawei API call summary:', {
-      MAIN: huaweiClients.main.getStats(),
-      BACKUP: huaweiClients.backup.getStats(),
-      ALARM: huaweiClients.alarm.getStats(),
-      ONDEMAND: huaweiClients.ondemand.getStats(),
+    log.info('Huawei API call summary', {
+      main: huaweiClients.main.getStats(),
+      backup: huaweiClients.backup.getStats(),
+      alarm: huaweiClients.alarm.getStats(),
+      ondemand: huaweiClients.ondemand.getStats(),
     });
 
     if (runStateCount.size > 0) {
@@ -915,13 +957,11 @@ export const syncMonitoringTick = async () => {
         .slice(0, 20)
         .map(([k, v]) => `${k}:${v}`)
         .join(', ');
-      console.log(`📈 run_state distribution (top): ${top}`);
-      console.log(`ℹ️ Tune fault mapping via env: HUAWEI_FAULT_RUN_STATES="..."`);
+      log.info('run_state distribution', { top });
+      log.info('Tune fault mapping via env HUAWEI_FAULT_RUN_STATES');
     }
 
-    if (DEBUG) {
-      console.log('📌 retryQueue size:', retryQueue.length, retryQueue.slice(0, 10));
-    }
+    log.debug('retryQueue snapshot', { size: retryQueue.size, sample: Array.from(retryQueue).slice(0, 10) });
   }
 };
 
@@ -942,7 +982,7 @@ export async function syncPlantOnDemand(plantCode: string, opts?: SyncPlantOnDem
     if (!site) throw new Error(`Site not found for plantCode=${plantCode}`);
 
     if (shouldSkipRemoteSyncForPlant(plantCode)) {
-      console.warn(`🧹 [ONDEMAND] Skip remote Huawei sync for ${plantCode} because it is not present in the latest Huawei station inventory`);
+      log.warn('ONDEMAND: skip remote sync, plant not in Huawei inventory', { plantCode });
       return {
         ok: true,
         plantCode,
@@ -959,7 +999,7 @@ export async function syncPlantOnDemand(plantCode: string, opts?: SyncPlantOnDem
       };
     }
 
-    console.log(`⚡ [ONDEMAND/${describeHuaweiClient(client)}] Refresh plant ${plantCode} (${site.name ?? ''})`, normalized);
+    log.info('ONDEMAND: refresh plant', { plantCode, siteName: site.name ?? '', client: describeHuaweiClient(client), ...normalized });
 
     let siteRealtimeRefreshed = false;
     if (normalized.includeSiteRealtime) {
@@ -967,7 +1007,7 @@ export async function syncPlantOnDemand(plantCode: string, opts?: SyncPlantOnDem
         const siteRealtimeResult = await syncSiteRealtimeBatch([plantCode], 0);
         siteRealtimeRefreshed = siteRealtimeResult.synced > 0;
       } catch (e: any) {
-        console.warn(`⚠️ [ONDEMAND] Site realtime refresh failed for ${plantCode}:`, e?.message ?? e);
+        log.warn('ONDEMAND: site realtime refresh failed', { plantCode, error: e?.message ?? e });
       }
     }
 
@@ -1072,3 +1112,20 @@ export async function getFleetSyncCoverageSnapshot() {
     sample,
   };
 }
+
+// ── Exported for unit testing only ──
+export const __testUtils = {
+  chunk,
+  snapTsNow,
+  startOfLocalDay,
+  parseNum,
+  parseDate,
+  deriveStringStatus,
+  deriveInverterStatus,
+  enqueueRetry,
+  retryQueue,
+  normalizeOnDemandOptions,
+  makeOnDemandInflightKey,
+  pickStationCode,
+  normalizeDeviceTarget,
+};

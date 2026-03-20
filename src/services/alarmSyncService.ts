@@ -1,5 +1,8 @@
 import prisma from '../config/prisma';
+import { createLogger } from '../config/logger';
 import { HuaweiService } from './huaweiService';
+
+const log = createLogger('alarm');
 import {
   describeHuaweiClient,
   getKnownHuaweiStationCodes,
@@ -82,6 +85,7 @@ const ONDEMAND_WINDOW_DAYS = clampInt(Number(process.env.HUAWEI_ALARM_ONDEMAND_W
 const ONDEMAND_MAX_LOOKBACK_DAYS = clampInt(Number(process.env.HUAWEI_ALARM_ONDEMAND_MAX_LOOKBACK_DAYS ?? 180), ONDEMAND_WINDOW_DAYS, 365);
 const ALARM_BATCH_SIZE = clampInt(Number(process.env.HUAWEI_ALARM_BATCH_SIZE ?? 100), 1, 100);
 const CLEAR_MISS_THRESHOLD = clampInt(Number(process.env.HUAWEI_ALARM_CLEAR_MISS_THRESHOLD ?? 2), 1, 10);
+const CLEAR_MIN_ABSENCE_MS = Math.max(0, Number(process.env.HUAWEI_ALARM_CLEAR_MIN_ABSENCE_MS ?? 60 * 60_000)); // default 1 hour
 
 type AlarmWindow = { beginTime: number; endTime: number };
 
@@ -160,10 +164,12 @@ async function upsertAlarmRows(
       : [];
   const existingByKey = new Map(existingRows.map((row) => [String(row.huaweiAlarmId ?? ''), row.raw]));
 
-  let upserted = 0;
   const stationCodes = new Set<string>();
   const keySet = new Set<string>();
   const nowIso = new Date().toISOString();
+
+  const upsertOps: any[] = [];
+  const accessCodes: string[] = [];
 
   for (const a of list) {
     const key = makeHuaweiAlarmKey(a);
@@ -185,36 +191,44 @@ async function upsertAlarmRows(
       lastConfirmedPresentAt: nowIso,
     });
 
-    await prisma.alarm.upsert({
-      where: { huaweiAlarmId: key },
-      create: {
-        huaweiAlarmId: key,
-        siteId: site?.id,
-        inverterId: inv?.id,
-        name: a?.alarmName ?? null,
-        severity: severity ?? null,
-        status: 'ACTIVE',
-        occurredAt,
-        clearedAt: null,
-        raw,
-      },
-      update: {
-        siteId: site?.id ?? undefined,
-        inverterId: inv?.id ?? undefined,
-        name: a?.alarmName ?? undefined,
-        severity: severity ?? undefined,
-        status: 'ACTIVE',
-        occurredAt: occurredAt ?? undefined,
-        clearedAt: null,
-        raw,
-      },
-    });
+    upsertOps.push(
+      prisma.alarm.upsert({
+        where: { huaweiAlarmId: key },
+        create: {
+          huaweiAlarmId: key,
+          siteId: site?.id,
+          inverterId: inv?.id,
+          name: a?.alarmName ?? null,
+          severity: severity ?? null,
+          status: 'ACTIVE',
+          occurredAt,
+          clearedAt: null,
+          raw,
+        },
+        update: {
+          siteId: site?.id ?? undefined,
+          inverterId: inv?.id ?? undefined,
+          name: a?.alarmName ?? undefined,
+          severity: severity ?? undefined,
+          status: 'ACTIVE',
+          occurredAt: occurredAt ?? undefined,
+          clearedAt: null,
+          raw,
+        },
+      })
+    );
 
-    upserted += 1;
-    if (stationCode) registerStationAccess(stationCode, client);
+    if (stationCode) accessCodes.push(stationCode);
   }
 
-  return { fetched: list.length, upserted, keys: keySet, stationCodes };
+  // Batch all alarm upserts in chunks of 50 to avoid oversized transactions
+  for (let i = 0; i < upsertOps.length; i += 50) {
+    await prisma.$transaction(upsertOps.slice(i, i + 50));
+  }
+
+  for (const code of accessCodes) registerStationAccess(code, client);
+
+  return { fetched: list.length, upserted: upsertOps.length, keys: keySet, stationCodes };
 }
 
 async function fetchAlarmList(
@@ -232,7 +246,9 @@ async function fetchAlarmList(
   });
 
   if (!res?.success) {
-    console.warn(`⚠️ [ALARM] Huawei getAlarmList failed via ${describeHuaweiClient(client)} (${logContext})`, {
+    log.warn('Huawei getAlarmList failed', {
+      client: describeHuaweiClient(client),
+      context: logContext,
       failCode: (res as any)?.failCode,
       message: (res as any)?.message,
       batchSize: stationCodes.length,
@@ -319,7 +335,7 @@ async function queryAlarmStations(
     }
 
     if (!successfullyQueried) {
-      console.warn(`⚠️ [ALARM] No client could query alarms for batch (${opts.logContext}) window ${windowIndex + 1}/${opts.windows.length}`);
+      log.warn('No client could query alarms for batch', { context: opts.logContext, window: `${windowIndex + 1}/${opts.windows.length}` });
     }
   }
 
@@ -419,6 +435,20 @@ async function confirmAndMaybeClearMissingActiveAlarms(
       });
 
       if (nextMissCount >= CLEAR_MISS_THRESHOLD) {
+        // Guard: don't clear if last confirmed present too recently (API may have returned partial data)
+        const lastPresentAt = syncMeta.lastConfirmedPresentAt ? new Date(String(syncMeta.lastConfirmedPresentAt)).getTime() : 0;
+        const absenceMs = Date.now() - lastPresentAt;
+        if (CLEAR_MIN_ABSENCE_MS > 0 && lastPresentAt > 0 && absenceMs < CLEAR_MIN_ABSENCE_MS) {
+          pending += 1;
+          updates.push(
+            prisma.alarm.update({
+              where: { id: alarm.id },
+              data: { raw: mergedRaw },
+            })
+          );
+          continue;
+        }
+
         cleared += 1;
         updates.push(
           prisma.alarm.update({
@@ -462,10 +492,10 @@ export async function syncActiveAlarms() {
   const endTime = now;
 
   if (isFullSweep) {
-    console.log(`🔍 [ALARM] Full sweep (${FULL_SWEEP_LOOKBACK_DAYS}d lookback)`);
+    log.info('Alarm full sweep', { lookbackDays: FULL_SWEEP_LOOKBACK_DAYS });
     lastFullSweepAt = now;
   } else {
-    console.log(`⚡ [ALARM] Incremental sweep (${INCREMENTAL_LOOKBACK_HOURS}h lookback)`);
+    log.info('Alarm incremental sweep', { lookbackHours: INCREMENTAL_LOOKBACK_HOURS });
   }
 
   const knownStationCodes = hasKnownHuaweiStationInventory() ? getKnownHuaweiStationCodes() : [];
@@ -509,7 +539,7 @@ export async function syncActiveAlarms() {
     const batches = chunk(group.stationCodes, ALARM_BATCH_SIZE);
 
     for (const batch of batches) {
-      console.log(`🔁 [${describeHuaweiClient(group.client)}] Sync alarm batch: ${batch.length} plants (first=${batch[0]})`);
+      log.info('Sync alarm batch', { client: describeHuaweiClient(group.client), batchSize: batch.length, first: batch[0] });
       const result = await queryAlarmStations(batch, siteMap, invBySn, {
         syncMode: 'full',
         windows: [{ beginTime, endTime }],
@@ -523,7 +553,7 @@ export async function syncActiveAlarms() {
       totalUpserted += result.upserted;
       result.keys.forEach((key) => seenKeys.add(key));
 
-      console.log(`📥 [ALARM] Batch alarms=${result.fetched}`);
+      log.info('Alarm batch result', { fetched: result.fetched });
       batchIndex += 1;
     }
   }
@@ -552,7 +582,7 @@ export async function syncAlarmsForStationsOnDemand(stationCodes: string[], look
     : requestedStationCodes;
   const skippedStationCodes = knownStationCodeSet ? requestedStationCodes.filter((code) => !knownStationCodeSet.has(code)) : [];
   if (skippedStationCodes.length > 0) {
-    console.warn(`🧹 [ONDEMAND] Skip alarm sync for ${skippedStationCodes.length} local-only/test sites not present in Huawei inventory: ${skippedStationCodes.slice(0, 10).join(', ')}`);
+    log.warn('ONDEMAND: skip alarm sync for sites not in Huawei inventory', { count: skippedStationCodes.length, sample: skippedStationCodes.slice(0, 10) });
   }
   if (uniqueStationCodes.length === 0) return { ok: true, fetched: 0, upserted: 0, cleared: 0, confirmed: 0, pending: 0, skippedStationCodes };
 
@@ -580,7 +610,7 @@ export async function syncAlarmsForStationsOnDemand(stationCodes: string[], look
   let upserted = 0;
   const seenKeys = new Set<string>();
 
-  console.log(`⚡ [ONDEMAND] Refresh alarms for plants=${uniqueStationCodes.length} (first=${uniqueStationCodes[0]}) windows=${windows.length}`);
+  log.info('ONDEMAND: refresh alarms', { plants: uniqueStationCodes.length, first: uniqueStationCodes[0], windows: windows.length });
 
   const batches = chunk(uniqueStationCodes, ALARM_BATCH_SIZE);
   for (let i = 0; i < batches.length; i += 1) {
@@ -680,3 +710,16 @@ export async function getAlarmReconciliationSnapshot() {
     topSites,
   };
 }
+
+// ── Exported for unit testing only ──
+export const __testUtils = {
+  chunk,
+  toDate,
+  summarizeTopPlants,
+  makeHuaweiAlarmKey,
+  asObject,
+  extractSyncMeta,
+  mergeAlarmRaw,
+  clampInt,
+  buildRollingWindows,
+};
