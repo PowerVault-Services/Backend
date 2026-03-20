@@ -1,0 +1,37 @@
+@startuml Stock Management - Stock Summary
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Stock\nController" as Ctrl
+participant "Prisma\n(Product)" as ProdDB
+participant "Prisma\n(Stock\nTransaction)" as TxDB
+
+User -> FE : View stock summary
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/stock/summary\n?q=search&categoryId=1
+activate Ctrl
+
+Ctrl -> ProdDB : findMany({where: filters})
+activate ProdDB
+ProdDB --> Ctrl : products[]
+deactivate ProdDB
+
+Ctrl -> TxDB : groupBy({productId,\ntype, _sum: {qty}})
+activate TxDB
+TxDB --> Ctrl : aggregates
+deactivate TxDB
+
+Ctrl -> Ctrl : calculate onHand:\nSUM(IN) - SUM(OUT) - SUM(DEDUCT)
+
+Ctrl --> FE : 200 {products with onHand quantities}
+deactivate Ctrl
+
+FE --> User : Display stock summary
+deactivate FE
+deactivate User
+
+@enduml

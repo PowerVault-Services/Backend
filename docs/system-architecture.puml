@@ -1,0 +1,89 @@
+@startuml System Architecture
+!include <C4/C4_Context>
+' ──────────────────────────────────────────────
+' Solar O&M — System Architecture (Current)
+' ──────────────────────────────────────────────
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName  "Segoe UI"
+skinparam componentStyle   rectangle
+skinparam linetype         ortho
+skinparam padding          8
+skinparam nodesep          60
+skinparam ranksep          50
+
+skinparam rectangle {
+  RoundCorner      15
+  FontSize         13
+  StereotypeFontSize 11
+}
+
+skinparam agent {
+  RoundCorner 15
+}
+
+title Solar O&M System — Architecture Diagram\n
+
+' ── Actors ──
+actor "Monitor /\nOperator" as USER #333333
+
+' ══════════════════════════════════════════════
+' FRONTEND SERVICES
+' ══════════════════════════════════════════════
+rectangle "FRONTEND SERVICES" as FE_BOX #E8F5E9 {
+  rectangle "React + Vite" as REACT #FFFFFF
+  rectangle "TailwindCSS" as TW #FFFFFF
+}
+
+' ══════════════════════════════════════════════
+' BACKEND SERVICES
+' ══════════════════════════════════════════════
+rectangle "BACKEND SERVICES" as BE_BOX #E3F2FD {
+  rectangle "Express 5\n(TypeScript)" as EXPRESS #FFFFFF
+
+  rectangle "Prisma ORM" as PRISMA #FFFFFF
+
+  rectangle "Internal Services" as INT_SVC #F3E5F5 {
+    rectangle "Cron Jobs\n(node-cron)" as CRON #FFFFFF
+    rectangle "Email\n(Nodemailer)" as EMAIL #FFFFFF
+    rectangle "PDF Generation\n(PDFKit + Puppeteer)" as PDF #FFFFFF
+    rectangle "File Storage\n(Multer)" as STORAGE #FFFFFF
+    rectangle "Huawei Pool\n& Budget Manager" as HPOOL #FFFFFF
+  }
+}
+
+' ══════════════════════════════════════════════
+' DATABASE SERVICES
+' ══════════════════════════════════════════════
+rectangle "DATABASE SERVICES" as DB_BOX #FFF3E0 {
+  database "PostgreSQL 14\n(Docker Alpine)" as PG #FFFFFF
+}
+
+' ══════════════════════════════════════════════
+' EXTERNAL API
+' ══════════════════════════════════════════════
+rectangle "EXTERNAL API" as EXT_BOX #FFEBEE {
+  rectangle "Huawei\nFusionSolar API" as HUAWEI #FFFFFF
+}
+
+' ══════════════════════════════════════════════
+' CONNECTIONS
+' ══════════════════════════════════════════════
+
+USER -right-> FE_BOX  : HTTPS
+
+FE_BOX -right-> EXPRESS : REST API\n(JSON)
+
+EXPRESS -down-> PRISMA
+PRISMA -right-> PG : SQL\n(port 5433→5432)
+
+EXPRESS -down-> INT_SVC
+
+HPOOL -down-> HUAWEI : HTTPS\n(Token Pool)
+CRON -down-> HPOOL   : Scheduled\nSync
+
+EMAIL -[hidden]right-> PDF
+PDF -[hidden]right-> STORAGE
+CRON -[hidden]right-> EMAIL
+
+@enduml

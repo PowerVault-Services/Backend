@@ -1,0 +1,178 @@
+@startuml ERD_Chen_Job_Workflow
+' ============================================================
+' Solar O&M — Job & Workflow (Chen Notation)
+' ============================================================
+
+top to bottom direction
+
+skinparam defaultFontSize 11
+skinparam linetype polyline
+
+skinparam rectangle {
+  BackgroundColor #ADD8E6
+  BorderColor #000000
+  FontStyle bold
+}
+
+skinparam hexagon {
+  BackgroundColor #F4A460
+  BorderColor #000000
+}
+
+skinparam usecase {
+  BackgroundColor #FFFFFF
+  BorderColor #000000
+  FontSize 10
+}
+
+' ── User (ref) ──
+rectangle "User" as E_User
+
+' ── Site (ref) ──
+rectangle "Site" as E_Site
+
+' ── Job ──
+rectangle "Job" as E_Job
+
+usecase "<u>id</u>" as A_J_id
+usecase "//siteId//" as A_J_sid
+usecase "//assignedToId//" as A_J_aid
+usecase "//createdById//" as A_J_cid
+usecase "jobNo" as A_J_jno
+usecase "title" as A_J_title
+usecase "type" as A_J_type
+usecase "status" as A_J_status
+usecase "scheduledDate" as A_J_sd
+usecase "details" as A_J_det
+usecase "step" as A_J_step
+
+E_Job -left- A_J_id
+E_Job -left- A_J_sid
+E_Job -left- A_J_aid
+E_Job -left- A_J_cid
+E_Job -left- A_J_jno
+E_Job -left- A_J_title
+E_Job -right- A_J_type
+E_Job -right- A_J_status
+E_Job -right- A_J_sd
+E_Job -right- A_J_det
+E_Job -right- A_J_step
+
+hexagon "creates" as R_creates
+E_User == "1" R_creates
+R_creates == "N" E_Job
+
+hexagon "assigned_to" as R_assigned
+E_User == "1" R_assigned
+R_assigned == "N" E_Job
+
+hexagon "has" as R_site_job
+E_Site == "1" R_site_job
+R_site_job == "N" E_Job
+
+' ── CleaningJob ──
+rectangle "CleaningJob" as E_CJ
+
+usecase "<u>id</u>" as A_CJ_id
+usecase "//jobId//" as A_CJ_jid
+usecase "//step2SentByUserId//" as A_CJ_s2
+usecase "//step5SentByUserId//" as A_CJ_s5
+usecase "projectName" as A_CJ_pn
+usecase "workDate" as A_CJ_wd
+usecase "checklist" as A_CJ_cl
+usecase "reportFileUrl" as A_CJ_rpt
+
+E_CJ -left- A_CJ_id
+E_CJ -left- A_CJ_jid
+E_CJ -left- A_CJ_s2
+E_CJ -left- A_CJ_s5
+E_CJ -right- A_CJ_pn
+E_CJ -right- A_CJ_wd
+E_CJ -right- A_CJ_cl
+E_CJ -right- A_CJ_rpt
+
+hexagon "extends" as R_job_cj
+E_Job == "1" R_job_cj
+R_job_cj == "0..1" E_CJ
+
+hexagon "sends\nstep2/step5" as R_user_cj
+E_User == "1" R_user_cj
+R_user_cj == "N" E_CJ
+
+' ── ServiceJob ──
+rectangle "ServiceJob" as E_SJ
+
+usecase "<u>//jobId//</u>" as A_SJ_jid
+usecase "projectName" as A_SJ_pn
+usecase "workDate" as A_SJ_wd
+usecase "step3Meta" as A_SJ_s3
+usecase "reportFileUrl" as A_SJ_rpt
+
+E_SJ -left- A_SJ_jid
+E_SJ -left- A_SJ_pn
+E_SJ -left- A_SJ_wd
+E_SJ -right- A_SJ_s3
+E_SJ -right- A_SJ_rpt
+
+hexagon "extends" as R_job_sj
+E_Job == "1" R_job_sj
+R_job_sj == "0..1" E_SJ
+
+' ── InspectionJob ──
+rectangle "InspectionJob" as E_IJ
+
+usecase "<u>//jobId//</u>" as A_IJ_jid
+usecase "projectName" as A_IJ_pn
+usecase "workDate" as A_IJ_wd
+usecase "reportFileUrl" as A_IJ_rpt
+
+E_IJ -left- A_IJ_jid
+E_IJ -left- A_IJ_pn
+E_IJ -right- A_IJ_wd
+E_IJ -right- A_IJ_rpt
+
+hexagon "extends" as R_job_ij
+E_Job == "1" R_job_ij
+R_job_ij == "0..1" E_IJ
+
+' ── JobAttachment ──
+rectangle "JobAttachment" as E_Att
+
+usecase "<u>id</u>" as A_At_id
+usecase "//jobId//" as A_At_jid
+usecase "fileUrl" as A_At_url
+usecase "fileType" as A_At_ft
+
+E_Att -left- A_At_id
+E_Att -left- A_At_jid
+E_Att -right- A_At_url
+E_Att -right- A_At_ft
+
+hexagon "has" as R_job_att
+E_Job == "1" R_job_att
+R_job_att == "N" E_Att
+
+' ── EmailLog ──
+rectangle "EmailLog" as E_Email
+
+usecase "<u>id</u>" as A_E_id
+usecase "//jobId//" as A_E_jid
+usecase "step" as A_E_step
+usecase "to" as A_E_to
+usecase "subject" as A_E_subj
+usecase "status" as A_E_st
+usecase "errorMessage" as A_E_err
+
+E_Email -left- A_E_id
+E_Email -left- A_E_jid
+E_Email -left- A_E_step
+E_Email -left- A_E_to
+E_Email -right- A_E_subj
+E_Email -right- A_E_st
+E_Email -right- A_E_err
+
+hexagon "logs" as R_job_email
+E_Job == "1" R_job_email
+R_job_email == "N" E_Email
+
+@enduml

@@ -1,0 +1,41 @@
+@startuml Stock Management - Get Metadata
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Stock\nController" as Ctrl
+participant "Prisma\n(Product)" as ProdDB
+participant "Prisma\n(Product\nCategory)" as CatDB
+participant "Prisma\n(Unit)" as UnitDB
+
+User -> FE : Open stock management
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/stock/meta
+activate Ctrl
+
+Ctrl -> CatDB : findMany()
+activate CatDB
+CatDB --> Ctrl : categories[]
+deactivate CatDB
+
+Ctrl -> UnitDB : findMany()
+activate UnitDB
+UnitDB --> Ctrl : units[]
+deactivate UnitDB
+
+Ctrl -> ProdDB : findMany()
+activate ProdDB
+ProdDB --> Ctrl : products[]
+deactivate ProdDB
+
+Ctrl --> FE : 200 {categories, units, products}
+deactivate Ctrl
+
+FE --> User : Display dropdowns
+deactivate FE
+deactivate User
+
+@enduml

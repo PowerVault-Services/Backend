@@ -1,0 +1,122 @@
+@startuml Performance Ratio with Background Cache
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Monitoring\nController" as Ctrl
+participant "SiteAnalytics\nService" as SAS
+participant "HuaweiKpi\nCache" as Cache
+participant "HuaweiService" as HW
+participant "Huawei API" as API
+participant "Prisma\n(SiteMonthly\nActual)" as ActualDB
+participant "Prisma\n(SiteForecast\nMonthly)" as ForecastDB
+participant "Prisma\n(Site)" as SiteDB
+
+== PR Sites Overview (with background refresh) ==
+
+User -> FE : Open PR dashboard
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/monitoring/pr/sites\n?startMonth=2026-01&endMonth=2026-03
+activate Ctrl
+
+Ctrl -> SiteDB : findMany({where: hasPlantCode})
+activate SiteDB
+SiteDB --> Ctrl : sites[]
+deactivate SiteDB
+
+Ctrl -> SAS : loadCachedMonthlyActuals\n(plantCodes, months)
+activate SAS
+SAS -> ActualDB : findMany({plantCode IN [],\nmonth IN []})
+activate ActualDB
+ActualDB --> SAS : cachedActuals
+deactivate ActualDB
+SAS --> Ctrl : cachedMap
+deactivate SAS
+
+Ctrl --> FE : 200 {sites with cached PR data}
+deactivate Ctrl
+
+FE --> User : Display cached PR data
+deactivate FE
+deactivate User
+
+note right of Ctrl
+  Background refresh runs
+  asynchronously (non-blocking)
+end note
+
+Ctrl ->> SAS : refreshAndCacheMonthlyActuals\n(plantCodes, months) [async]
+activate SAS
+
+SAS -> SAS : fetchBulkMonthlyActualMap\n(plantCodes, months)
+activate SAS
+
+SAS -> HW : postRaw('/thirdData\n/getKpiStationMonth', ...)
+activate HW
+HW -> API : POST /thirdData/getKpiStationMonth
+activate API
+API --> HW : monthlyKpi[]
+deactivate API
+HW --> SAS : monthlyKpi[]
+deactivate HW
+
+SAS --> SAS : bulkActualMap
+deactivate SAS
+
+loop for each site + month
+    SAS -> ActualDB : upsert({plantCode, month,\nirradiation, production, pr,\ngridExport, gridConsumption})
+    activate ActualDB
+    ActualDB --> SAS : OK
+    deactivate ActualDB
+end
+
+deactivate SAS
+
+== PR Detail by Site ==
+
+User -> FE : Select site for PR detail
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/monitoring/pr\n?siteId=1&startMonth=2026-01\n&granularity=month
+activate Ctrl
+
+Ctrl -> SAS : summarizeSitePrRange\n(siteId, startMonth, endMonth)
+activate SAS
+
+SAS -> ForecastDB : findMany({siteId, month})
+activate ForecastDB
+ForecastDB --> SAS : forecastTemplate
+deactivate ForecastDB
+
+SAS -> SAS : fetchSiteMonthlyActualMap\n(siteId, months)
+activate SAS
+SAS -> HW : postRaw('/thirdData\n/getKpiStationMonth', ...)
+activate HW
+HW -> API : POST /thirdData/getKpiStationMonth
+activate API
+API --> HW : monthlyKpi
+deactivate API
+HW --> SAS : monthlyKpi
+deactivate HW
+SAS --> SAS : actualMap
+deactivate SAS
+
+loop for each month
+    SAS -> SAS : calculate:\nactualPR vs forecastPR\nactualIrradiation vs forecast\nactualProduction vs forecast\nvariancePct
+end
+
+SAS --> Ctrl : {months[], summary,\nirradiationChart, productionChart}
+deactivate SAS
+
+Ctrl --> FE : 200 prDetail
+deactivate Ctrl
+
+FE --> User : Display PR charts and tables
+deactivate FE
+deactivate User
+
+@enduml

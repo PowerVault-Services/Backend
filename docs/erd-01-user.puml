@@ -1,0 +1,30 @@
+@startuml ERD_User
+!define primary_key(x) <b><u>x</u></b>
+!define foreign_key(x) <i>x</i>
+!define not_null(x) <b>x</b>
+
+hide circle
+skinparam linetype ortho
+skinparam entity {
+  BackgroundColor #FEFECE
+  BorderColor #A80036
+  ArrowColor #A80036
+}
+
+title Solar O&M — User & Authentication
+
+entity "User" as user {
+  primary_key(id) : INT <<PK>>
+  --
+  not_null(username) : VARCHAR <<unique>>
+  not_null(password) : VARCHAR
+  email : VARCHAR <<unique>>
+  not_null(role) : Role <<enum>>
+  not_null(firstName) : VARCHAR
+  not_null(lastName) : VARCHAR
+  phone : VARCHAR
+  createdAt : TIMESTAMP
+  updatedAt : TIMESTAMP
+}
+
+@enduml

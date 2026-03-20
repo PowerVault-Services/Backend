@@ -1,0 +1,29 @@
+@startuml Stock Management - Create Product
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Stock\nController" as Ctrl
+participant "Prisma\n(Product)" as ProdDB
+
+User -> FE : Add new product
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/stock/products\n{name, sku, categoryId, unitId}
+activate Ctrl
+
+Ctrl -> ProdDB : create({name, sku,\ncategoryId, unitId})
+activate ProdDB
+ProdDB --> Ctrl : product
+deactivate ProdDB
+
+Ctrl --> FE : 201 {product}
+deactivate Ctrl
+
+FE --> User : Product created
+deactivate FE
+deactivate User
+
+@enduml

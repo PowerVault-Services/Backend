@@ -1,0 +1,250 @@
+@startuml Service Job Workflow - 5 Steps
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Service\nController" as Ctrl
+participant "StorageService" as Storage
+participant "ReportService" as Report
+participant "EmailService" as Email
+participant "Prisma\n(Job)" as JobDB
+participant "Prisma\n(ServiceJob)" as SJB
+participant "Prisma\n(JobAttachment)" as AttDB
+participant "Prisma\n(Stock\nTransaction)" as StockDB
+participant "MinIO /\nLocal Disk" as FS
+participant "SMTP\nServer" as SMTP
+
+== Step 1: Create Draft ==
+
+User -> FE : Fill service job form
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/service/step1\n{siteId, projectType, serviceType,\ncontactPhone, ...}
+activate Ctrl
+
+Ctrl -> JobDB : create({type: SERVICE,\nstatus: DRAFT, currentStep: 1})
+activate JobDB
+JobDB --> Ctrl : job {jobId, jobNo}
+deactivate JobDB
+
+Ctrl -> SJB : create({jobId, serviceType,\ncauseOfIssue, ...})
+activate SJB
+SJB --> Ctrl : serviceJob
+deactivate SJB
+
+Ctrl --> FE : 200 {jobId, jobNo}
+deactivate Ctrl
+
+FE --> User : Job created
+deactivate FE
+deactivate User
+
+== Step 2: Draft & Send Notification Email ==
+
+User -> FE : Upload attachments + compose email
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/service/step2/draft\n(multipart: attachments[], to, subject, body)
+activate Ctrl
+
+loop for each uploaded file
+    Ctrl -> Storage : storeIncomingUserUpload(file)
+    activate Storage
+    Storage -> FS : upload
+    activate FS
+    FS --> Storage : storedFile
+    deactivate FS
+    Storage --> Ctrl : {fileUrl}
+    deactivate Storage
+
+    Ctrl -> AttDB : create({jobId, step: 2, fileUrl})
+    activate AttDB
+    AttDB --> Ctrl : OK
+    deactivate AttDB
+end
+
+Ctrl -> SJB : update({step2To, step2Subject,\nstep2Body})
+activate SJB
+SJB --> Ctrl : OK
+deactivate SJB
+
+Ctrl --> FE : 200 {draft saved}
+deactivate Ctrl
+
+FE --> User : Draft saved
+deactivate FE
+deactivate User
+
+User -> FE : Click Send
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/service/step2/send {jobId}
+activate Ctrl
+
+Ctrl -> Email : sendEmailNow({to, subject, html,\nattachments})
+activate Email
+Email -> SMTP : send
+activate SMTP
+SMTP --> Email : OK
+deactivate SMTP
+Email --> Ctrl : {success}
+deactivate Email
+
+Ctrl -> SJB : update({step2SentAt: now})
+activate SJB
+SJB --> Ctrl : OK
+deactivate SJB
+
+Ctrl -> JobDB : update({status: ASSIGNED})
+activate JobDB
+JobDB --> Ctrl : OK
+deactivate JobDB
+
+Ctrl --> FE : 200 {sent: true}
+deactivate Ctrl
+
+FE --> User : Email sent
+deactivate FE
+deactivate User
+
+== Step 3: Evidence + Stock Usage ==
+
+User -> FE : Upload evidence + enter stock items
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/service/step3/draft\n(multipart: serviceReport, evidence[],\nstockItems JSON)
+activate Ctrl
+
+loop for each uploaded file
+    Ctrl -> Storage : storeIncomingUserUpload(file)
+    activate Storage
+    Storage --> Ctrl : {fileUrl}
+    deactivate Storage
+
+    Ctrl -> AttDB : create({jobId, step: 3, fileUrl})
+    activate AttDB
+    AttDB --> Ctrl : OK
+    deactivate AttDB
+end
+
+Ctrl -> Ctrl : readStockItems(body)
+activate Ctrl
+Ctrl --> Ctrl : stockItems[]
+deactivate Ctrl
+
+Ctrl -> StockDB : deleteMany({jobId, type: 'DEDUCT'})
+activate StockDB
+StockDB --> Ctrl : OK
+deactivate StockDB
+
+loop for each stock item
+    Ctrl -> StockDB : create({productId, qty, type: 'DEDUCT',\njobId, projectId: siteId})
+    activate StockDB
+    StockDB --> Ctrl : OK
+    deactivate StockDB
+end
+
+Ctrl -> SJB : update({step3 fields})
+activate SJB
+SJB --> Ctrl : OK
+deactivate SJB
+
+Ctrl -> Ctrl : bumpJobStep(jobId, 3)
+
+Ctrl --> FE : 200 {saved}
+deactivate Ctrl
+
+FE --> User : Evidence + stock saved
+deactivate FE
+deactivate User
+
+== Step 4: Generate PDF Report ==
+
+User -> FE : Click Generate Report
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/service/step4/generate {jobId}
+activate Ctrl
+
+Ctrl -> JobDB : findUnique(jobId) with all relations
+activate JobDB
+JobDB --> Ctrl : job + serviceJob + attachments + stockUsage
+deactivate JobDB
+
+Ctrl -> Report : generateServiceReportPdf\n({job, serviceJob, evidence, stockUsage})
+activate Report
+
+Report -> Report : render HTML with evidence images,\nstock table, service details
+Report -> Report : puppeteer PDF generation
+activate Report
+Report --> Report : pdfBuffer
+deactivate Report
+
+Report -> Storage : storeGeneratedReportFromLocalFile(pdf)
+activate Storage
+Storage -> FS : upload PDF
+activate FS
+FS --> Storage : storedFile
+deactivate FS
+Storage --> Report : {fileUrl}
+deactivate Storage
+
+Report --> Ctrl : {fileUrl}
+deactivate Report
+
+Ctrl -> SJB : update({reportFileUrl})
+activate SJB
+SJB --> Ctrl : OK
+deactivate SJB
+
+Ctrl -> Ctrl : bumpJobStep(jobId, 4)
+
+Ctrl --> FE : 200 {reportUrl}
+deactivate Ctrl
+
+FE --> User : Report generated
+deactivate FE
+deactivate User
+
+== Step 5: Send Final Report Email ==
+
+User -> FE : Send report email
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/service/step5/send {jobId}
+activate Ctrl
+
+Ctrl -> Storage : tryEnsureLocalFilePath(reportUrl)
+activate Storage
+Storage --> Ctrl : localPath
+deactivate Storage
+
+Ctrl -> Email : sendEmailNow({to, subject,\nhtml, attachments: [report]})
+activate Email
+Email -> SMTP : send email with PDF
+activate SMTP
+SMTP --> Email : OK
+deactivate SMTP
+Email --> Ctrl : {success}
+deactivate Email
+
+Ctrl -> JobDB : update({status: COMPLETED})
+activate JobDB
+JobDB --> Ctrl : OK
+deactivate JobDB
+
+Ctrl --> FE : 200 {sent: true}
+deactivate Ctrl
+
+FE --> User : Job completed
+deactivate FE
+deactivate User
+
+@enduml

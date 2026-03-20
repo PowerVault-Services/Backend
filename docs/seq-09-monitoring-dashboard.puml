@@ -1,0 +1,130 @@
+@startuml Monitoring Dashboard
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Homepage\nRoute" as HR
+participant "Monitoring\nController" as MC
+participant "MonitoringHome\nService" as MHS
+participant "HuaweiKpi\nCache" as Cache
+participant "HuaweiService" as HW
+participant "Huawei API" as API
+participant "Prisma\n(Site)" as SiteDB
+participant "Prisma\n(Inverter)" as InvDB
+
+== Homepage Summary ==
+
+User -> FE : Open dashboard
+activate User
+activate FE
+
+FE -> HR : GET /api/homepage/summary
+activate HR
+
+HR -> SiteDB : aggregate: count by status\n(CONNECTED, DISCONNECTED, FAULTY)
+activate SiteDB
+SiteDB --> HR : plantStatusCounts
+deactivate SiteDB
+
+HR -> SiteDB : aggregate: sum(currentPowerKw),\nsum(dailyEnergyKwh)
+activate SiteDB
+SiteDB --> HR : fleetTotals
+deactivate SiteDB
+
+HR --> FE : 200 {plantStatus, totalPower,\ntotalDailyEnergy, alarmCounts}
+deactivate HR
+
+== Plant List ==
+
+FE -> HR : GET /api/homepage/plants\n?page=1&pageSize=20&q=search
+activate HR
+
+HR -> SiteDB : findMany({where: search,\nskip, take, orderBy})
+activate SiteDB
+SiteDB --> HR : sites[]
+deactivate SiteDB
+
+HR -> InvDB : groupBy({siteId,\n_count, _sum(activePowerKw)})
+activate InvDB
+InvDB --> HR : inverterAggregates
+deactivate InvDB
+
+HR --> FE : 200 {plants[], pagination}
+deactivate HR
+
+== Energy Management Series ==
+
+FE -> MC : GET /api/monitoring/sites/:siteId\n/energy-management?view=day&date=2026-03-20
+activate MC
+
+MC -> MHS : getEnergyManagementSeries\n(siteId, {view: 'day', date})
+activate MHS
+
+MHS -> SiteDB : findUnique(siteId)
+activate SiteDB
+SiteDB --> MHS : site (with plantCode)
+deactivate SiteDB
+
+MHS -> Cache : getCachedPlantKpi\n({endpoint: 'hour', plantCode, date})
+activate Cache
+
+alt Cache hit
+    Cache --> MHS : cachedData
+else Cache miss
+    Cache -> HW : postRaw('/thirdData/getKpiStationHour', ...)
+    activate HW
+    HW -> API : POST /thirdData/getKpiStationHour
+    activate API
+    API --> HW : hourlyKpi[]
+    deactivate API
+    HW --> Cache : hourlyKpi[]
+    deactivate HW
+    Cache -> Cache : store in cache (TTL: 60s)
+    Cache --> MHS : hourlyKpi[]
+end
+deactivate Cache
+
+MHS -> MHS : buildDaySkeleton()\nmap to graph points
+
+MHS --> MC : {series: [{time, pvPower,\ngridImport, gridExport,\nconsumption, battery}]}
+deactivate MHS
+
+MC --> FE : 200 energySeries
+deactivate MC
+
+== Home Realtime ==
+
+FE -> MC : GET /api/monitoring/sites/:siteId\n/home-realtime
+activate MC
+
+MC -> MHS : getMonitoringHomeRealtime(siteId)
+activate MHS
+
+MHS -> MHS : fetchAuxRealtime(site)
+activate MHS
+
+MHS -> HW : getDevRealKpi\n({devTypeId: 17, 39, 10})
+activate HW
+HW -> API : POST /thirdData/getDevRealKpi
+activate API
+API --> HW : auxDeviceKpis
+deactivate API
+HW --> MHS : auxDeviceKpis
+deactivate HW
+
+MHS -> MHS : calculate:\npvOutput, gridPower,\nbatteryPower, consumption,\nselfProvideRatio
+
+deactivate MHS
+
+MHS --> MC : {energyFlow, meterData,\nbattery, weather}
+deactivate MHS
+
+MC --> FE : 200 realtimeData
+deactivate MC
+
+FE --> User : Display dashboard
+deactivate FE
+deactivate User
+
+@enduml

@@ -1,0 +1,90 @@
+@startuml Watchdog and Health Check
+hide footbox
+skinparam sequenceMessageAlign center
+
+== Watchdog Timer (every 60s) ==
+
+participant "Watchdog\nInterval" as WD
+participant "SyncState\nService" as State
+participant "SyncService" as Sync
+participant "AlarmSync\nService" as AS
+
+WD -> State : getSyncStateSnapshot()
+activate WD
+activate State
+State --> WD : snapshot{jobs, stations}
+deactivate State
+
+loop for each job (siteRealtime, device, alarm)
+    WD -> WD : check (now - lastSuccessAt)\n> WATCHDOG_STALE_MS
+    alt Job is stale and not running
+        alt siteRealtime stale
+            WD -> Sync : syncSiteRealtimeTick()
+            activate Sync
+            Sync --> WD : OK
+            deactivate Sync
+        else device stale
+            WD -> Sync : syncMonitoringTick()
+            activate Sync
+            Sync --> WD : OK
+            deactivate Sync
+        else alarm stale
+            WD -> AS : syncActiveAlarms()
+            activate AS
+            AS --> WD : OK
+            deactivate AS
+        end
+    end
+end
+
+deactivate WD
+
+== GET /healthz ==
+
+actor Client
+participant "Express\nApp" as App
+participant "SyncState\nService" as State2
+
+Client -> App : GET /healthz
+activate Client
+activate App
+
+App -> State2 : getSyncStateSnapshot()
+activate State2
+State2 --> App : snapshot
+deactivate State2
+
+App -> App : check each job:\nlastSuccessAt < MAX_LAG_MS
+
+alt All jobs healthy
+    App --> Client : 200 {status: 'ok',\njobs: {siteRealtime, device, alarm}}
+else Any job stale
+    App --> Client : 503 {status: 'degraded',\nstaleJobs: [...]}
+end
+
+deactivate App
+deactivate Client
+
+== GET /readyz ==
+
+Client -> App : GET /readyz
+activate Client
+activate App
+
+App -> Sync : huaweiMain.ensureLoggedIn()
+activate Sync
+
+alt Login success
+    Sync --> App : OK
+    deactivate Sync
+    App --> Client : 200 {status: 'ready'}
+else Login failed
+    Sync --> App : error
+    deactivate Sync
+    App --> Client : 503 {status: 'not ready',\nerror: message}
+end
+
+deactivate App
+deactivate Client
+
+@enduml

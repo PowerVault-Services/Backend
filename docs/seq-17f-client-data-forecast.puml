@@ -1,0 +1,97 @@
+@startuml Client Data - Forecast Management (PVSyst & Warranty Energy)
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "ClientData\nController" as Ctrl
+participant "Prisma\n(Site)" as SiteDB
+participant "Prisma\n(SiteForecast\nMonthly)" as MonthDB
+participant "Prisma\n(SiteForecast\nYearly)" as YearDB
+
+== Upsert PVSyst Monthly Forecast ==
+
+User -> FE : Edit monthly forecast table
+activate User
+activate FE
+
+FE -> Ctrl : PUT /api/client-data/projects/:siteId\n/forecast/pvsyst\n{rows: [{month, globalKwhM2,\neGridKwh, prRatio}]}
+activate Ctrl
+
+Ctrl -> MonthDB : $transaction(\nupsert x12 months\n{siteId_month, globalKwhM2,\neGridKwh, prRatio})
+activate MonthDB
+MonthDB --> Ctrl : OK
+deactivate MonthDB
+
+Ctrl -> MonthDB : findMany({where: {siteId},\norderBy: month asc})
+activate MonthDB
+MonthDB --> Ctrl : forecastRows[]
+deactivate MonthDB
+
+Ctrl --> FE : 200 {forecastRows[]}
+deactivate Ctrl
+
+FE --> User : Forecast updated
+deactivate FE
+deactivate User
+
+== Upsert Warranty Energy Yearly Forecast ==
+
+User -> FE : Edit yearly warranty energy table
+activate User
+activate FE
+
+FE -> Ctrl : PUT /api/client-data/projects/:siteId\n/forecast/warranty-energy\n{rows: [{year, degradationPct,\nannualProductionKwh,\nwarrantyEnergyOutputKwh}]}
+activate Ctrl
+
+Ctrl -> YearDB : $transaction(\nupsert per year\n{siteId_year, degradationPct,\nannualProductionKwh,\nwarrantyEnergyOutputKwh})
+activate YearDB
+YearDB --> Ctrl : OK
+deactivate YearDB
+
+Ctrl --> FE : 200 {success: true}
+deactivate Ctrl
+
+FE --> User : Yearly forecast updated
+deactivate FE
+deactivate User
+
+== Generate Default Forecast ==
+
+User -> FE : Click Generate Defaults
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/client-data/projects/:siteId\n/forecast/defaults
+activate Ctrl
+
+Ctrl -> SiteDB : findUnique({id: siteId},\nselect: {warrantyStart})
+activate SiteDB
+SiteDB --> Ctrl : {warrantyStart}
+deactivate SiteDB
+
+Ctrl -> MonthDB : deleteMany({where: {siteId}})
+activate MonthDB
+MonthDB --> Ctrl : OK
+deactivate MonthDB
+
+Ctrl -> Ctrl : buildWarrantyDefaultForecastRows\n(warrantyStart)\ngenerate 12 months starting\nfrom warranty month
+
+Ctrl -> MonthDB : $transaction(\ncreate x12 default rows)
+activate MonthDB
+MonthDB --> Ctrl : OK
+deactivate MonthDB
+
+Ctrl -> MonthDB : findMany({where: {siteId},\norderBy: month asc})
+activate MonthDB
+MonthDB --> Ctrl : rows[]
+deactivate MonthDB
+
+Ctrl --> FE : 200 {created: true, rows[]}
+deactivate Ctrl
+
+FE --> User : Default forecast generated
+deactivate FE
+deactivate User
+
+@enduml

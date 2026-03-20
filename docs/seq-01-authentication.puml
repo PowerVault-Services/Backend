@@ -1,0 +1,68 @@
+@startuml Authentication Flow
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "AuthRoute" as Route
+participant "AuthController" as Ctrl
+participant "Prisma\n(User)" as DB
+participant "bcrypt" as BC
+participant "JWT" as JWT
+
+User -> FE : Enter credentials
+activate User
+activate FE
+
+FE -> Route : POST /api/auth/login\n{username, password}
+activate Route
+
+Route -> Ctrl : login(req, res)
+activate Ctrl
+
+Ctrl -> DB : findUnique({username})
+activate DB
+DB --> Ctrl : userRecord
+deactivate DB
+
+alt User not found
+    Ctrl --> Route : 401 Invalid credentials
+    deactivate Ctrl
+    Route --> FE : 401
+    deactivate Route
+    FE --> User : Error message
+    deactivate FE
+    deactivate User
+else User found
+    Ctrl -> BC : compare(password, userRecord.hashedPassword)
+    activate BC
+    BC --> Ctrl : isMatch
+    deactivate BC
+
+    alt Password mismatch
+        Ctrl --> Route : 401 Invalid credentials
+        deactivate Ctrl
+        Route --> FE : 401
+        deactivate Route
+        FE --> User : Error message
+        deactivate FE
+        deactivate User
+    else Password match
+        Ctrl -> JWT : sign({userId, role}, JWT_SECRET, {expiresIn: '1d'})
+        activate JWT
+        JWT --> Ctrl : token
+        deactivate JWT
+
+        Ctrl --> Route : 200 {token, user{id, username, role, firstName}}
+        deactivate Ctrl
+
+        Route --> FE : 200 OK
+        deactivate Route
+
+        FE --> User : Login success
+        deactivate FE
+        deactivate User
+    end
+end
+
+@enduml

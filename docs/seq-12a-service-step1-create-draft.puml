@@ -1,0 +1,35 @@
+@startuml Service Job - Step 1: Create Draft
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Service\nController" as Ctrl
+participant "Prisma\n(Job)" as JobDB
+participant "Prisma\n(ServiceJob)" as SJB
+
+User -> FE : Fill service job form
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/service/step1\n{siteId, projectType, serviceType,\ncontactPhone, ...}
+activate Ctrl
+
+Ctrl -> JobDB : create({type: SERVICE,\nstatus: DRAFT, currentStep: 1})
+activate JobDB
+JobDB --> Ctrl : job {jobId, jobNo}
+deactivate JobDB
+
+Ctrl -> SJB : create({jobId, serviceType,\ncauseOfIssue, ...})
+activate SJB
+SJB --> Ctrl : serviceJob
+deactivate SJB
+
+Ctrl --> FE : 200 {jobId, jobNo}
+deactivate Ctrl
+
+FE --> User : Job created
+deactivate FE
+deactivate User
+
+@enduml

@@ -1,0 +1,656 @@
+@startuml ERD_Chen_Notation
+' ============================================================
+' Solar O&M System — ER Diagram (Chen Notation)
+' ============================================================
+' rectangle = Entity (blue)
+' hexagon   = Relationship (orange)
+' usecase   = Attribute (oval)
+'   <u>underline</u> = Primary Key
+'   italic FK attributes colored light yellow
+' ============================================================
+
+skinparam defaultFontSize 11
+skinparam linetype polyline
+
+skinparam rectangle {
+  BackgroundColor #ADD8E6
+  BorderColor #000000
+  FontStyle bold
+}
+
+skinparam hexagon {
+  BackgroundColor #F4A460
+  BorderColor #000000
+}
+
+skinparam usecase {
+  BackgroundColor #FFFFFF
+  BorderColor #000000
+  FontSize 10
+}
+
+' ╔══════════════════════════════════════════╗
+' ║              USER                        ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "User" as E_User
+
+usecase "<u>id</u>" as A_U_id
+usecase "username" as A_U_un
+usecase "password" as A_U_pw
+usecase "email" as A_U_em
+usecase "role" as A_U_role
+usecase "firstName" as A_U_fn
+usecase "lastName" as A_U_ln
+usecase "phone" as A_U_ph
+
+E_User -up- A_U_id
+E_User -up- A_U_un
+E_User -up- A_U_pw
+E_User -up- A_U_em
+E_User -up- A_U_role
+E_User -up- A_U_fn
+E_User -up- A_U_ln
+E_User -up- A_U_ph
+
+' ╔══════════════════════════════════════════╗
+' ║              SITE                        ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "Site" as E_Site
+
+usecase "<u>id</u>" as A_S_id
+usecase "//ownerId//" as A_S_oid
+usecase "name" as A_S_name
+usecase "plantCode" as A_S_pc
+usecase "capacityKWp" as A_S_cap
+usecase "address" as A_S_addr
+usecase "latitude" as A_S_lat
+usecase "longitude" as A_S_lon
+usecase "projectStatus" as A_S_ps
+usecase "warrantyStart" as A_S_ws
+usecase "warrantyEnd" as A_S_we
+usecase "companyName" as A_S_cn
+usecase "siteImageUrl" as A_S_img
+
+E_Site -up- A_S_id
+E_Site -up- A_S_oid
+E_Site -up- A_S_name
+E_Site -up- A_S_pc
+E_Site -up- A_S_cap
+E_Site -up- A_S_addr
+E_Site -up- A_S_lat
+E_Site -up- A_S_lon
+E_Site -left- A_S_ps
+E_Site -left- A_S_ws
+E_Site -left- A_S_we
+E_Site -left- A_S_cn
+E_Site -left- A_S_img
+
+' ╔══════════════════════════════════════════╗
+' ║        User ←→ Site  (owns)              ║
+' ╚══════════════════════════════════════════╝
+
+hexagon "owns" as R_owns
+E_User == "1" R_owns
+R_owns == "N" E_Site
+
+' ╔══════════════════════════════════════════╗
+' ║            INVERTER                      ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "Inverter" as E_Inv
+
+usecase "<u>id</u>" as A_I_id
+usecase "//siteId//" as A_I_sid
+usecase "serialNumber" as A_I_sn
+usecase "name" as A_I_name
+usecase "model" as A_I_model
+usecase "huaweiDevId" as A_I_hid
+usecase "activePower" as A_I_ap
+usecase "status" as A_I_st
+usecase "runState" as A_I_rs
+
+E_Inv -down- A_I_id
+E_Inv -down- A_I_sid
+E_Inv -down- A_I_sn
+E_Inv -down- A_I_name
+E_Inv -down- A_I_model
+E_Inv -right- A_I_hid
+E_Inv -right- A_I_ap
+E_Inv -right- A_I_st
+E_Inv -right- A_I_rs
+
+hexagon "contains" as R_contains
+E_Site == "1" R_contains
+R_contains == "N" E_Inv
+
+' ╔══════════════════════════════════════════╗
+' ║       InverterKpiSnapshot                ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "InverterKpiSnapshot" as E_KPI
+
+usecase "<u>id</u>" as A_K_id
+usecase "//inverterId//" as A_K_iid
+usecase "ts" as A_K_ts
+usecase "activePower" as A_K_ap
+usecase "dayEnergy" as A_K_de
+usecase "temperature" as A_K_temp
+usecase "raw" as A_K_raw
+
+E_KPI -- A_K_id
+E_KPI -- A_K_iid
+E_KPI -- A_K_ts
+E_KPI -- A_K_ap
+E_KPI -- A_K_de
+E_KPI -- A_K_temp
+E_KPI -- A_K_raw
+
+hexagon "has" as R_inv_kpi
+E_Inv == "1" R_inv_kpi
+R_inv_kpi == "N" E_KPI
+
+' ╔══════════════════════════════════════════╗
+' ║       InverterStringSnapshot             ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "InverterStringSnapshot" as E_Str
+
+usecase "<u>id</u>" as A_Str_id
+usecase "//snapshotId//" as A_Str_sid
+usecase "stringNo" as A_Str_no
+usecase "voltage" as A_Str_v
+usecase "current" as A_Str_c
+
+E_Str -- A_Str_id
+E_Str -- A_Str_sid
+E_Str -- A_Str_no
+E_Str -- A_Str_v
+E_Str -- A_Str_c
+
+hexagon "has" as R_kpi_str
+E_KPI == "1" R_kpi_str
+R_kpi_str == "N" E_Str
+
+' ╔══════════════════════════════════════════╗
+' ║              ALARM                       ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "Alarm" as E_Alarm
+
+usecase "<u>id</u>" as A_Al_id
+usecase "//siteId//" as A_Al_sid
+usecase "//inverterId//" as A_Al_iid
+usecase "name" as A_Al_name
+usecase "severity" as A_Al_sev
+usecase "status" as A_Al_st
+usecase "occurredAt" as A_Al_oc
+usecase "clearedAt" as A_Al_cl
+
+E_Alarm -- A_Al_id
+E_Alarm -- A_Al_sid
+E_Alarm -- A_Al_iid
+E_Alarm -- A_Al_name
+E_Alarm -- A_Al_sev
+E_Alarm -- A_Al_st
+E_Alarm -- A_Al_oc
+E_Alarm -- A_Al_cl
+
+hexagon "has" as R_site_alarm
+E_Site == "1" R_site_alarm
+R_site_alarm == "N" E_Alarm
+
+hexagon "raises" as R_inv_alarm
+E_Inv == "1" R_inv_alarm
+R_inv_alarm == "N" E_Alarm
+
+' ╔══════════════════════════════════════════╗
+' ║          SiteDailyEnergy                 ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "SiteDailyEnergy" as E_Daily
+
+usecase "<u>id</u>" as A_D_id
+usecase "//siteId//" as A_D_sid
+usecase "date" as A_D_dt
+usecase "energyKWh" as A_D_e
+usecase "raw" as A_D_raw
+
+E_Daily -- A_D_id
+E_Daily -- A_D_sid
+E_Daily -- A_D_dt
+E_Daily -- A_D_e
+E_Daily -- A_D_raw
+
+hexagon "records" as R_site_daily
+E_Site == "1" R_site_daily
+R_site_daily == "N" E_Daily
+
+' ╔══════════════════════════════════════════╗
+' ║           SiteLayout                     ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "SiteLayout" as E_Layout
+
+usecase "<u>id</u>" as A_L_id
+usecase "//siteId//" as A_L_sid
+usecase "type" as A_L_type
+usecase "fileUrl" as A_L_url
+
+E_Layout -- A_L_id
+E_Layout -- A_L_sid
+E_Layout -- A_L_type
+E_Layout -- A_L_url
+
+hexagon "has" as R_site_layout
+E_Site == "1" R_site_layout
+R_site_layout == "N" E_Layout
+
+' ╔══════════════════════════════════════════╗
+' ║       SiteForecastMonthly                ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "SiteForecastMonthly" as E_FCM
+
+usecase "<u>id</u>" as A_FM_id
+usecase "//siteId//" as A_FM_sid
+usecase "month" as A_FM_m
+usecase "eGridKwh" as A_FM_eg
+usecase "prRatio" as A_FM_pr
+
+E_FCM -- A_FM_id
+E_FCM -- A_FM_sid
+E_FCM -- A_FM_m
+E_FCM -- A_FM_eg
+E_FCM -- A_FM_pr
+
+hexagon "forecasts\n(monthly)" as R_site_fcm
+E_Site == "1" R_site_fcm
+R_site_fcm == "N" E_FCM
+
+' ╔══════════════════════════════════════════╗
+' ║       SiteForecastYearly                 ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "SiteForecastYearly" as E_FCY
+
+usecase "<u>id</u>" as A_FY_id
+usecase "//siteId//" as A_FY_sid
+usecase "year" as A_FY_y
+usecase "degradationPct" as A_FY_dp
+usecase "annualProductionKwh" as A_FY_ap
+
+E_FCY -- A_FY_id
+E_FCY -- A_FY_sid
+E_FCY -- A_FY_y
+E_FCY -- A_FY_dp
+E_FCY -- A_FY_ap
+
+hexagon "forecasts\n(yearly)" as R_site_fcy
+E_Site == "1" R_site_fcy
+R_site_fcy == "N" E_FCY
+
+' ╔══════════════════════════════════════════╗
+' ║        SiteMonthlyActual                 ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "SiteMonthlyActual" as E_ACT
+
+usecase "<u>id</u>" as A_A_id
+usecase "//siteId//" as A_A_sid
+usecase "plantCode" as A_A_pc
+usecase "year" as A_A_y
+usecase "month" as A_A_m
+usecase "production" as A_A_prod
+usecase "pr" as A_A_pr
+
+E_ACT -- A_A_id
+E_ACT -- A_A_sid
+E_ACT -- A_A_pc
+E_ACT -- A_A_y
+E_ACT -- A_A_m
+E_ACT -- A_A_prod
+E_ACT -- A_A_pr
+
+hexagon "actuals" as R_site_act
+E_Site == "1" R_site_act
+R_site_act == "N" E_ACT
+
+' ╔══════════════════════════════════════════╗
+' ║     SiteWarrantySupplierItem             ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "SiteWarrantySupplierItem" as E_WSI
+
+usecase "<u>id</u>" as A_WS_id
+usecase "//siteId//" as A_WS_sid
+usecase "category" as A_WS_cat
+usecase "itemName" as A_WS_in
+usecase "supplierName" as A_WS_sn
+usecase "startWarranty" as A_WS_sw
+usecase "endWarranty" as A_WS_ew
+
+E_WSI -- A_WS_id
+E_WSI -- A_WS_sid
+E_WSI -- A_WS_cat
+E_WSI -- A_WS_in
+E_WSI -- A_WS_sn
+E_WSI -- A_WS_sw
+E_WSI -- A_WS_ew
+
+hexagon "warranty\n(supplier)" as R_site_wsi
+E_Site == "1" R_site_wsi
+R_site_wsi == "N" E_WSI
+
+' ╔══════════════════════════════════════════╗
+' ║     SiteWarrantyCustomerItem             ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "SiteWarrantyCustomerItem" as E_WCI
+
+usecase "<u>id</u>" as A_WC_id
+usecase "//siteId//" as A_WC_sid
+usecase "category" as A_WC_cat
+usecase "itemName" as A_WC_in
+usecase "warrantyYears" as A_WC_wy
+
+E_WCI -- A_WC_id
+E_WCI -- A_WC_sid
+E_WCI -- A_WC_cat
+E_WCI -- A_WC_in
+E_WCI -- A_WC_wy
+
+hexagon "warranty\n(customer)" as R_site_wci
+E_Site == "1" R_site_wci
+R_site_wci == "N" E_WCI
+
+' ╔══════════════════════════════════════════╗
+' ║          SiteOtherRow                    ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "SiteOtherRow" as E_Other
+
+usecase "<u>id</u>" as A_O_id
+usecase "//siteId//" as A_O_sid
+usecase "status" as A_O_st
+usecase "description" as A_O_desc
+usecase "remark" as A_O_rem
+
+E_Other -- A_O_id
+E_Other -- A_O_sid
+E_Other -- A_O_st
+E_Other -- A_O_desc
+E_Other -- A_O_rem
+
+hexagon "other_info" as R_site_other
+E_Site == "1" R_site_other
+R_site_other == "N" E_Other
+
+' ╔══════════════════════════════════════════╗
+' ║          ServiceEntry                    ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "ServiceEntry" as E_SE
+
+usecase "<u>id</u>" as A_SE_id
+usecase "//siteId//" as A_SE_sid
+usecase "job" as A_SE_job
+usecase "description" as A_SE_desc
+
+E_SE -- A_SE_id
+E_SE -- A_SE_sid
+E_SE -- A_SE_job
+E_SE -- A_SE_desc
+
+hexagon "service\nhistory" as R_site_se
+E_Site == "1" R_site_se
+R_site_se == "N" E_SE
+
+' ╔══════════════════════════════════════════╗
+' ║               JOB                        ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "Job" as E_Job
+
+usecase "<u>id</u>" as A_J_id
+usecase "//siteId//" as A_J_sid
+usecase "//assignedToId//" as A_J_aid
+usecase "//createdById//" as A_J_cid
+usecase "jobNo" as A_J_jno
+usecase "title" as A_J_title
+usecase "type" as A_J_type
+usecase "status" as A_J_status
+usecase "scheduledDate" as A_J_sd
+usecase "details" as A_J_det
+usecase "step" as A_J_step
+
+E_Job -down- A_J_id
+E_Job -down- A_J_sid
+E_Job -down- A_J_aid
+E_Job -down- A_J_cid
+E_Job -down- A_J_jno
+E_Job -down- A_J_title
+E_Job -right- A_J_type
+E_Job -right- A_J_status
+E_Job -right- A_J_sd
+E_Job -right- A_J_det
+E_Job -right- A_J_step
+
+' User creates/assigned_to Job
+hexagon "creates" as R_creates
+E_User == "1" R_creates
+R_creates == "N" E_Job
+
+hexagon "assigned_to" as R_assigned
+E_User == "1" R_assigned
+R_assigned == "N" E_Job
+
+' Site has Job
+hexagon "has" as R_site_job
+E_Site == "1" R_site_job
+R_site_job == "N" E_Job
+
+' ╔══════════════════════════════════════════╗
+' ║          CleaningJob                     ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "CleaningJob" as E_CJ
+
+usecase "<u>id</u>" as A_CJ_id
+usecase "//jobId//" as A_CJ_jid
+usecase "//step2SentByUserId//" as A_CJ_s2
+usecase "//step5SentByUserId//" as A_CJ_s5
+usecase "projectName" as A_CJ_pn
+usecase "workDate" as A_CJ_wd
+usecase "checklist" as A_CJ_cl
+usecase "reportFileUrl" as A_CJ_rpt
+
+E_CJ -- A_CJ_id
+E_CJ -- A_CJ_jid
+E_CJ -- A_CJ_s2
+E_CJ -- A_CJ_s5
+E_CJ -- A_CJ_pn
+E_CJ -- A_CJ_wd
+E_CJ -- A_CJ_cl
+E_CJ -- A_CJ_rpt
+
+hexagon "extends" as R_job_cj
+E_Job == "1" R_job_cj
+R_job_cj == "0..1" E_CJ
+
+hexagon "sends\nstep2/step5" as R_user_cj
+E_User == "1" R_user_cj
+R_user_cj == "N" E_CJ
+
+' ╔══════════════════════════════════════════╗
+' ║          ServiceJob                      ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "ServiceJob" as E_SJ
+
+usecase "<u>//jobId//</u>" as A_SJ_jid
+usecase "projectName" as A_SJ_pn
+usecase "workDate" as A_SJ_wd
+usecase "step3Meta" as A_SJ_s3
+usecase "reportFileUrl" as A_SJ_rpt
+
+E_SJ -- A_SJ_jid
+E_SJ -- A_SJ_pn
+E_SJ -- A_SJ_wd
+E_SJ -- A_SJ_s3
+E_SJ -- A_SJ_rpt
+
+hexagon "extends" as R_job_sj
+E_Job == "1" R_job_sj
+R_job_sj == "0..1" E_SJ
+
+' ╔══════════════════════════════════════════╗
+' ║         InspectionJob                    ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "InspectionJob" as E_IJ
+
+usecase "<u>//jobId//</u>" as A_IJ_jid
+usecase "projectName" as A_IJ_pn
+usecase "workDate" as A_IJ_wd
+usecase "reportFileUrl" as A_IJ_rpt
+
+E_IJ -- A_IJ_jid
+E_IJ -- A_IJ_pn
+E_IJ -- A_IJ_wd
+E_IJ -- A_IJ_rpt
+
+hexagon "extends" as R_job_ij
+E_Job == "1" R_job_ij
+R_job_ij == "0..1" E_IJ
+
+' ╔══════════════════════════════════════════╗
+' ║         JobAttachment                    ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "JobAttachment" as E_Att
+
+usecase "<u>id</u>" as A_At_id
+usecase "//jobId//" as A_At_jid
+usecase "fileUrl" as A_At_url
+usecase "fileType" as A_At_ft
+
+E_Att -- A_At_id
+E_Att -- A_At_jid
+E_Att -- A_At_url
+E_Att -- A_At_ft
+
+hexagon "has" as R_job_att
+E_Job == "1" R_job_att
+R_job_att == "N" E_Att
+
+' ╔══════════════════════════════════════════╗
+' ║           EmailLog                       ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "EmailLog" as E_Email
+
+usecase "<u>id</u>" as A_E_id
+usecase "//jobId//" as A_E_jid
+usecase "step" as A_E_step
+usecase "to" as A_E_to
+usecase "subject" as A_E_subj
+usecase "status" as A_E_st
+
+E_Email -- A_E_id
+E_Email -- A_E_jid
+E_Email -- A_E_step
+E_Email -- A_E_to
+E_Email -- A_E_subj
+E_Email -- A_E_st
+
+hexagon "logs" as R_job_email
+E_Job == "1" R_job_email
+R_job_email == "N" E_Email
+
+' ╔══════════════════════════════════════════╗
+' ║       ProductCategory                    ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "ProductCategory" as E_PCat
+
+usecase "<u>id</u>" as A_PC_id
+usecase "name" as A_PC_name
+
+E_PCat -- A_PC_id
+E_PCat -- A_PC_name
+
+' ╔══════════════════════════════════════════╗
+' ║              Unit                        ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "Unit" as E_Unit
+
+usecase "<u>id</u>" as A_Un_id
+usecase "name" as A_Un_name
+
+E_Unit -- A_Un_id
+E_Unit -- A_Un_name
+
+' ╔══════════════════════════════════════════╗
+' ║            Product                       ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "Product" as E_Prod
+
+usecase "<u>id</u>" as A_P_id
+usecase "//categoryId//" as A_P_cid
+usecase "//unitId//" as A_P_uid
+usecase "sku" as A_P_sku
+usecase "name" as A_P_name
+usecase "isActive" as A_P_act
+
+E_Prod -- A_P_id
+E_Prod -- A_P_cid
+E_Prod -- A_P_uid
+E_Prod -- A_P_sku
+E_Prod -- A_P_name
+E_Prod -- A_P_act
+
+hexagon "categorized_as" as R_cat_prod
+E_PCat == "1" R_cat_prod
+R_cat_prod == "N" E_Prod
+
+hexagon "measured_in" as R_unit_prod
+E_Unit == "1" R_unit_prod
+R_unit_prod == "N" E_Prod
+
+' ╔══════════════════════════════════════════╗
+' ║        StockTransaction                  ║
+' ╚══════════════════════════════════════════╝
+
+rectangle "StockTransaction" as E_Stock
+
+usecase "<u>id</u>" as A_ST_id
+usecase "//productId//" as A_ST_pid
+usecase "//jobId//" as A_ST_jid
+usecase "type" as A_ST_type
+usecase "quantity" as A_ST_qty
+usecase "txDate" as A_ST_dt
+usecase "vendor" as A_ST_ven
+usecase "note" as A_ST_note
+
+E_Stock -- A_ST_id
+E_Stock -- A_ST_pid
+E_Stock -- A_ST_jid
+E_Stock -- A_ST_type
+E_Stock -- A_ST_qty
+E_Stock -- A_ST_dt
+E_Stock -- A_ST_ven
+E_Stock -- A_ST_note
+
+hexagon "records" as R_prod_stock
+E_Prod == "1" R_prod_stock
+R_prod_stock == "N" E_Stock
+
+hexagon "uses" as R_job_stock
+E_Job == "1" R_job_stock
+R_job_stock == "N" E_Stock
+
+@enduml

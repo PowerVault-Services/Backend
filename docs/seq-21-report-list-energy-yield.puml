@@ -1,0 +1,110 @@
+@startuml Report List & Energy Yield
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Report\nRoute" as Ctrl
+participant "SiteAnalytics\nService" as Analytics
+participant "HuaweiService" as HW
+participant "Huawei API" as API
+participant "Prisma\n(Job)" as JobDB
+participant "Prisma\n(Site)" as SiteDB
+participant "Prisma\n(SiteDailyEnergy)" as DailyDB
+
+== List Reports ==
+
+User -> FE : Open reports page
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/reports\n?siteId&startMonth&endMonth\n&jobType&q
+activate Ctrl
+
+Ctrl -> JobDB : findMany({where: filters,\ninclude: {site, cleaningJob,\nserviceJob, inspectionJob},\norderBy: createdAt desc,\ntake: 500})
+activate JobDB
+JobDB --> Ctrl : jobs[]
+deactivate JobDB
+
+Ctrl -> Ctrl : map to docs[]\nextract reportUrl from\njob type sub-records\nfilter only with previewUrl
+
+Ctrl --> FE : 200 {list: docs[]}
+deactivate Ctrl
+
+FE --> User : Display report list
+deactivate FE
+deactivate User
+
+== Search Sites for Energy Yield ==
+
+User -> FE : Open energy yield page
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/reports/energy-yield/sites\n?q=search
+activate Ctrl
+
+Ctrl -> SiteDB : findMany({where: name/plantCode\ncontains q, orderBy: name asc,\ntake: 500})
+activate SiteDB
+SiteDB --> Ctrl : sites[]
+deactivate SiteDB
+
+Ctrl --> FE : 200 {sites[]\n{siteId, plantName, plantCode,\nsystemSizeKWp}}
+deactivate Ctrl
+
+FE --> User : Display site dropdown
+deactivate FE
+deactivate User
+
+== Energy Yield Detail ==
+
+User -> FE : Select site + month
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/reports/energy-yield/:siteId\n?month=2026-01
+activate Ctrl
+
+Ctrl -> Analytics : buildEnergyYieldPayload\n(siteId, month)
+activate Analytics
+
+Analytics -> SiteDB : findUnique({id: siteId})
+activate SiteDB
+SiteDB --> Analytics : site {plantCode, capacityKWp}
+deactivate SiteDB
+
+Analytics -> Analytics : fetchSiteDailyActualMap\n(siteId, month)
+activate Analytics
+
+Analytics -> DailyDB : findMany({where:\n{siteId, date range}})
+activate DailyDB
+DailyDB --> Analytics : dailyRows[]
+deactivate DailyDB
+
+opt No cached daily data
+    Analytics -> HW : getKpiStationDay\n({stationCodes, collectTime})
+    activate HW
+    HW -> API : POST /thirdData/getKpiStationDay
+    activate API
+    API --> HW : kpiData[]
+    deactivate API
+    HW --> Analytics : dailyData[]
+    deactivate HW
+end
+
+Analytics --> Analytics : dailyMap
+deactivate Analytics
+
+Analytics -> Analytics : build monthTable[]\nproductionVsRadiation[]\nenergyTrend[]\nsummary totals
+
+Analytics --> Ctrl : {site, monthTable,\nproductionVsRadiation,\nenergyTrend, summary}
+deactivate Analytics
+
+Ctrl --> FE : 200 {data}
+deactivate Ctrl
+
+FE --> User : Display energy yield report
+deactivate FE
+deactivate User
+
+@enduml

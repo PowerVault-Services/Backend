@@ -1,0 +1,50 @@
+@startuml ERD_Alarm
+!define primary_key(x) <b><u>x</u></b>
+!define foreign_key(x) <i>x</i>
+!define not_null(x) <b>x</b>
+
+hide circle
+skinparam linetype ortho
+skinparam entity {
+  BackgroundColor #FEFECE
+  BorderColor #A80036
+  ArrowColor #A80036
+}
+
+title Solar O&M — Alarm Management
+
+entity "Site" as site {
+  primary_key(id) : INT <<PK>>
+  --
+  not_null(name) : VARCHAR
+  not_null(plantCode) : VARCHAR <<unique>>
+}
+
+entity "Inverter" as inverter {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(serialNumber) : VARCHAR <<unique>>
+  not_null(name) : VARCHAR
+}
+
+entity "Alarm" as alarm {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>> (optional)
+  foreign_key(inverterId) : INT <<FK>> (optional)
+  huaweiAlarmId : VARCHAR <<unique>>
+  name : VARCHAR
+  severity : INT
+  status : VARCHAR
+  occurredAt : TIMESTAMP
+  clearedAt : TIMESTAMP
+  raw : JSON
+  createdAt : TIMESTAMP
+}
+
+' Relationships
+site ||--o{ alarm : "has"
+inverter ||--o{ alarm : "raises"
+
+@enduml

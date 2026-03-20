@@ -1,0 +1,107 @@
+@startuml ERD_Chen_Stock
+' ============================================================
+' Solar O&M — Stock & Inventory (Chen Notation)
+' ============================================================
+
+top to bottom direction
+
+skinparam defaultFontSize 11
+skinparam linetype polyline
+
+skinparam rectangle {
+  BackgroundColor #ADD8E6
+  BorderColor #000000
+  FontStyle bold
+}
+
+skinparam hexagon {
+  BackgroundColor #F4A460
+  BorderColor #000000
+}
+
+skinparam usecase {
+  BackgroundColor #FFFFFF
+  BorderColor #000000
+  FontSize 10
+}
+
+' ── Job (ref) ──
+rectangle "Job" as E_Job
+
+' ── ProductCategory ──
+rectangle "ProductCategory" as E_PCat
+
+usecase "<u>id</u>" as A_PC_id
+usecase "name" as A_PC_name
+
+E_PCat -left- A_PC_id
+E_PCat -right- A_PC_name
+
+' ── Unit ──
+rectangle "Unit" as E_Unit
+
+usecase "<u>id</u>" as A_Un_id
+usecase "name" as A_Un_name
+
+E_Unit -left- A_Un_id
+E_Unit -right- A_Un_name
+
+' ── Product ──
+rectangle "Product" as E_Prod
+
+usecase "<u>id</u>" as A_P_id
+usecase "//categoryId//" as A_P_cid
+usecase "//unitId//" as A_P_uid
+usecase "sku" as A_P_sku
+usecase "name" as A_P_name
+usecase "isActive" as A_P_act
+
+E_Prod -left- A_P_id
+E_Prod -left- A_P_cid
+E_Prod -left- A_P_uid
+E_Prod -right- A_P_sku
+E_Prod -right- A_P_name
+E_Prod -right- A_P_act
+
+hexagon "categorized_as" as R_cat_prod
+E_PCat == "1" R_cat_prod
+R_cat_prod == "N" E_Prod
+
+hexagon "measured_in" as R_unit_prod
+E_Unit == "1" R_unit_prod
+R_unit_prod == "N" E_Prod
+
+' ── StockTransaction ──
+rectangle "StockTransaction" as E_Stock
+
+usecase "<u>id</u>" as A_ST_id
+usecase "//productId//" as A_ST_pid
+usecase "//jobId//" as A_ST_jid
+usecase "type" as A_ST_type
+usecase "quantity" as A_ST_qty
+usecase "txDate" as A_ST_dt
+usecase "project" as A_ST_proj
+usecase "receiver" as A_ST_recv
+usecase "vendor" as A_ST_ven
+usecase "note" as A_ST_note
+
+E_Stock -left- A_ST_id
+E_Stock -left- A_ST_pid
+E_Stock -left- A_ST_jid
+E_Stock -left- A_ST_type
+E_Stock -left- A_ST_qty
+E_Stock -right- A_ST_dt
+E_Stock -right- A_ST_proj
+E_Stock -right- A_ST_recv
+E_Stock -right- A_ST_ven
+E_Stock -right- A_ST_note
+
+hexagon "records" as R_prod_stock
+E_Prod == "1" R_prod_stock
+R_prod_stock == "N" E_Stock
+
+hexagon "uses" as R_job_stock
+E_Job == "1" R_job_stock
+R_job_stock == "N" E_Stock
+
+@enduml

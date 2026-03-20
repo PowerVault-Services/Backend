@@ -1,0 +1,69 @@
+@startuml Sync Coverage & Alarm Reconciliation Monitoring
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Monitoring\nRoute" as Ctrl
+participant "SyncService" as Sync
+participant "AlarmSync\nService" as AlarmSync
+participant "Prisma\n(Site)" as SiteDB
+participant "Prisma\n(Alarm)" as AlarmDB
+
+== Fleet Sync Coverage Snapshot ==
+
+User -> FE : Open sync monitoring page
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/monitoring/sync/coverage
+activate Ctrl
+
+Ctrl -> Sync : getFleetSyncCoverageSnapshot()
+activate Sync
+
+Sync -> SiteDB : findMany({select: {id,\nplantCode, lastPlantSyncAt,\nname}})
+activate SiteDB
+SiteDB --> Sync : sites[]
+deactivate SiteDB
+
+Sync -> Sync : calculate coverage:\ntotalSites, synced, stale,\nneverSynced, staleSites[]
+
+Sync --> Ctrl : {totalSites, synced,\nstale, neverSynced,\ncoverage%, staleSites[]}
+deactivate Sync
+
+Ctrl --> FE : 200 {data: snapshot}
+deactivate Ctrl
+
+FE --> User : Display sync coverage
+deactivate FE
+deactivate User
+
+== Alarm Reconciliation Snapshot ==
+
+User -> FE : View alarm reconciliation
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/monitoring/sync/alarm-reconciliation
+activate Ctrl
+
+Ctrl -> AlarmSync : getAlarmReconciliationSnapshot()
+activate AlarmSync
+
+AlarmSync -> AlarmDB : aggregate/query\nalarm sync state
+activate AlarmDB
+AlarmDB --> AlarmSync : reconciliation data
+deactivate AlarmDB
+
+AlarmSync --> Ctrl : {snapshot}
+deactivate AlarmSync
+
+Ctrl --> FE : 200 {data: snapshot}
+deactivate Ctrl
+
+FE --> User : Display reconciliation state
+deactivate FE
+deactivate User
+
+@enduml

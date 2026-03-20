@@ -1,0 +1,75 @@
+@startuml ERD_Chen_Warranty
+' ============================================================
+' Solar O&M — Warranty Management (Chen Notation)
+' ============================================================
+
+top to bottom direction
+
+skinparam defaultFontSize 11
+skinparam linetype polyline
+
+skinparam rectangle {
+  BackgroundColor #ADD8E6
+  BorderColor #000000
+  FontStyle bold
+}
+
+skinparam hexagon {
+  BackgroundColor #F4A460
+  BorderColor #000000
+}
+
+skinparam usecase {
+  BackgroundColor #FFFFFF
+  BorderColor #000000
+  FontSize 10
+}
+
+' ── Site (ref) ──
+rectangle "Site" as E_Site
+
+' ── SiteWarrantySupplierItem ──
+rectangle "SiteWarrantySupplierItem" as E_WSI
+
+usecase "<u>id</u>" as A_WS_id
+usecase "//siteId//" as A_WS_sid
+usecase "category" as A_WS_cat
+usecase "itemName" as A_WS_in
+usecase "supplierName" as A_WS_sn
+usecase "startWarranty" as A_WS_sw
+usecase "endWarranty" as A_WS_ew
+usecase "warrantyYears" as A_WS_wy
+
+E_WSI -left- A_WS_id
+E_WSI -left- A_WS_sid
+E_WSI -left- A_WS_cat
+E_WSI -left- A_WS_in
+E_WSI -right- A_WS_sn
+E_WSI -right- A_WS_sw
+E_WSI -right- A_WS_ew
+E_WSI -right- A_WS_wy
+
+hexagon "warranty\n(supplier)" as R_site_wsi
+E_Site == "1" R_site_wsi
+R_site_wsi == "N" E_WSI
+
+' ── SiteWarrantyCustomerItem ──
+rectangle "SiteWarrantyCustomerItem" as E_WCI
+
+usecase "<u>id</u>" as A_WC_id
+usecase "//siteId//" as A_WC_sid
+usecase "category" as A_WC_cat
+usecase "itemName" as A_WC_in
+usecase "warrantyYears" as A_WC_wy
+
+E_WCI -left- A_WC_id
+E_WCI -left- A_WC_sid
+E_WCI -left- A_WC_cat
+E_WCI -right- A_WC_in
+E_WCI -right- A_WC_wy
+
+hexagon "warranty\n(customer)" as R_site_wci
+E_Site == "1" R_site_wci
+R_site_wci == "N" E_WCI
+
+@enduml

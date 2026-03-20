@@ -1,0 +1,63 @@
+@startuml Service Job - Step 3: Evidence + Stock Usage
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Service\nController" as Ctrl
+participant "StorageService" as Storage
+participant "Prisma\n(ServiceJob)" as SJB
+participant "Prisma\n(JobAttachment)" as AttDB
+participant "Prisma\n(Stock\nTransaction)" as StockDB
+
+User -> FE : Upload evidence + enter stock items
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/service/step3/draft\n(multipart: serviceReport, evidence[],\nstockItems JSON)
+activate Ctrl
+
+loop for each uploaded file
+    Ctrl -> Storage : storeIncomingUserUpload(file)
+    activate Storage
+    Storage --> Ctrl : {fileUrl}
+    deactivate Storage
+
+    Ctrl -> AttDB : create({jobId, step: 3, fileUrl})
+    activate AttDB
+    AttDB --> Ctrl : OK
+    deactivate AttDB
+end
+
+Ctrl -> Ctrl : readStockItems(body)
+activate Ctrl
+Ctrl --> Ctrl : stockItems[]
+deactivate Ctrl
+
+Ctrl -> StockDB : deleteMany({jobId, type: 'DEDUCT'})
+activate StockDB
+StockDB --> Ctrl : OK
+deactivate StockDB
+
+loop for each stock item
+    Ctrl -> StockDB : create({productId, qty, type: 'DEDUCT',\njobId, projectId: siteId})
+    activate StockDB
+    StockDB --> Ctrl : OK
+    deactivate StockDB
+end
+
+Ctrl -> SJB : update({step3 fields})
+activate SJB
+SJB --> Ctrl : OK
+deactivate SJB
+
+Ctrl -> Ctrl : bumpJobStep(jobId, 3)
+
+Ctrl --> FE : 200 {saved}
+deactivate Ctrl
+
+FE --> User : Evidence + stock saved
+deactivate FE
+deactivate User
+
+@enduml

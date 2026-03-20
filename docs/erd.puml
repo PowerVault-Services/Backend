@@ -1,0 +1,365 @@
+@startuml ERD
+!define primary_key(x) <b><u>x</u></b>
+!define foreign_key(x) <i>x</i>
+!define not_null(x) <b>x</b>
+
+hide circle
+skinparam linetype ortho
+skinparam entity {
+  BackgroundColor #FEFECE
+  BorderColor #A80036
+  ArrowColor #A80036
+}
+
+title Solar O&M System — Entity‑Relationship Diagram
+
+entity "User" as user {
+  primary_key(id) : INT <<PK>>
+  --
+  not_null(username) : VARCHAR <<unique>>
+  not_null(password) : VARCHAR
+  email : VARCHAR <<unique>>
+  not_null(role) : Role <<enum>>
+  not_null(firstName) : VARCHAR
+  not_null(lastName) : VARCHAR
+  phone : VARCHAR
+  createdAt : TIMESTAMP
+  updatedAt : TIMESTAMP
+}
+
+entity "Site" as site {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(ownerId) : INT <<FK>>
+  not_null(name) : VARCHAR
+  not_null(plantCode) : VARCHAR <<unique>>
+  not_null(capacityKWp) : FLOAT
+  address : VARCHAR
+  latitude : FLOAT
+  longitude : FLOAT
+  projectStatus : ProjectStatus <<enum>>
+  warrantyStart : TIMESTAMP
+  warrantyEnd : TIMESTAMP
+  companyName : VARCHAR
+  panelBrand : VARCHAR
+  panelModel : VARCHAR
+  panelWatt : FLOAT
+  inverterCount : INT
+  inverterBrand : VARCHAR
+  siteImageUrl : VARCHAR
+  createdAt : TIMESTAMP
+  updatedAt : TIMESTAMP
+}
+
+entity "Inverter" as inverter {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(serialNumber) : VARCHAR <<unique>>
+  not_null(name) : VARCHAR
+  not_null(model) : VARCHAR
+  huaweiDevId : VARCHAR <<unique>>
+  activePower : FLOAT
+  status : VARCHAR
+  runState : INT
+  lastSyncAt : TIMESTAMP
+}
+
+entity "InverterKpiSnapshot" as kpi {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(inverterId) : INT <<FK>>
+  not_null(ts) : TIMESTAMP
+  activePower : FLOAT
+  dayEnergy : FLOAT
+  totalEnergy : FLOAT
+  temperature : FLOAT
+  raw : JSON
+  createdAt : TIMESTAMP
+  ..
+  <<unique>> (inverterId, ts)
+}
+
+entity "InverterStringSnapshot" as stringsnap {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(snapshotId) : INT <<FK>>
+  not_null(stringNo) : INT
+  voltage : FLOAT
+  current : FLOAT
+  status : VARCHAR
+  ..
+  <<unique>> (snapshotId, stringNo)
+}
+
+entity "Alarm" as alarm {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>> (optional)
+  foreign_key(inverterId) : INT <<FK>> (optional)
+  huaweiAlarmId : VARCHAR <<unique>>
+  name : VARCHAR
+  severity : INT
+  status : VARCHAR
+  occurredAt : TIMESTAMP
+  clearedAt : TIMESTAMP
+  raw : JSON
+  createdAt : TIMESTAMP
+}
+
+entity "SiteDailyEnergy" as daily {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(date) : TIMESTAMP
+  not_null(energyKWh) : FLOAT
+  raw : JSON
+  createdAt : TIMESTAMP
+  ..
+  <<unique>> (siteId, date)
+}
+
+entity "SiteLayout" as layout {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(type) : LayoutType <<enum>>
+  not_null(fileUrl) : VARCHAR
+  createdAt : TIMESTAMP
+  ..
+  <<unique>> (siteId, type)
+}
+
+entity "SiteForecastMonthly" as fcm {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(month) : INT
+  globalKwhM2 : FLOAT
+  eGridKwh : FLOAT
+  prRatio : FLOAT
+  ..
+  <<unique>> (siteId, month)
+}
+
+entity "SiteForecastYearly" as fcy {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(year) : INT
+  degradationPct : FLOAT
+  annualProductionKwh : FLOAT
+  warrantyEnergyOutputKwh : FLOAT
+  ..
+  <<unique>> (siteId, year)
+}
+
+entity "SiteMonthlyActual" as actual {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(plantCode) : VARCHAR
+  not_null(year) : INT
+  not_null(month) : INT
+  not_null(key) : VARCHAR
+  production : FLOAT
+  pr : FLOAT
+  revenue : FLOAT
+  ..
+  <<unique>> (siteId, year, month)
+}
+
+entity "SiteWarrantySupplierItem" as wsi {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(category) : VARCHAR
+  not_null(itemName) : VARCHAR
+  supplierName : VARCHAR
+  startWarranty : TIMESTAMP
+  endWarranty : TIMESTAMP
+  warrantyYears : FLOAT
+}
+
+entity "SiteWarrantyCustomerItem" as wci {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(category) : VARCHAR
+  not_null(itemName) : VARCHAR
+  warrantyYears : FLOAT
+}
+
+entity "SiteOtherRow" as other {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  status : VARCHAR
+  description : VARCHAR
+  remark : VARCHAR
+}
+
+entity "ServiceEntry" as sentry {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(job) : JobType <<enum>>
+  description : VARCHAR
+}
+
+entity "Job" as job {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  foreign_key(assignedToId) : INT <<FK>> (optional)
+  foreign_key(createdById) : INT <<FK>>
+  not_null(jobNo) : VARCHAR <<unique>>
+  not_null(title) : VARCHAR
+  not_null(type) : JobType <<enum>>
+  not_null(status) : JobStatus <<enum>>
+  scheduledDate : TIMESTAMP
+  details : VARCHAR
+  step : INT
+  createdAt : TIMESTAMP
+  updatedAt : TIMESTAMP
+}
+
+entity "CleaningJob" as cjob {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(jobId) : INT <<FK>> <<unique>>
+  foreign_key(step2SentByUserId) : INT <<FK>> (optional)
+  foreign_key(step5SentByUserId) : INT <<FK>> (optional)
+  projectName : VARCHAR
+  workDate : TIMESTAMP
+  checklist : JSON
+  reportFileUrl : VARCHAR
+}
+
+entity "ServiceJob" as sjob {
+  primary_key(jobId) : INT <<PK, FK>>
+  --
+  projectName : VARCHAR
+  workDate : TIMESTAMP
+  step3Meta : JSON
+  reportFileUrl : VARCHAR
+}
+
+entity "InspectionJob" as ijob {
+  primary_key(jobId) : INT <<PK, FK>>
+  --
+  projectName : VARCHAR
+  workDate : TIMESTAMP
+  reportFileUrl : VARCHAR
+}
+
+entity "JobAttachment" as attach {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(jobId) : INT <<FK>>
+  not_null(fileUrl) : VARCHAR
+  fileType : VARCHAR
+  createdAt : TIMESTAMP
+}
+
+entity "EmailLog" as email {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(jobId) : INT <<FK>> (optional)
+  step : INT
+  not_null(to) : VARCHAR
+  not_null(subject) : VARCHAR
+  bodyPreview : VARCHAR
+  not_null(status) : VARCHAR
+  errorMessage : VARCHAR
+  createdAt : TIMESTAMP
+}
+
+entity "Product" as product {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(categoryId) : INT <<FK>>
+  foreign_key(unitId) : INT <<FK>>
+  not_null(sku) : VARCHAR <<unique>>
+  not_null(name) : VARCHAR
+  isActive : BOOLEAN
+  createdAt : TIMESTAMP
+}
+
+entity "ProductCategory" as pcat {
+  primary_key(id) : INT <<PK>>
+  --
+  not_null(name) : VARCHAR <<unique>>
+}
+
+entity "Unit" as unit {
+  primary_key(id) : INT <<PK>>
+  --
+  not_null(name) : VARCHAR <<unique>>
+}
+
+entity "StockTransaction" as stock {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(productId) : INT <<FK>>
+  foreign_key(jobId) : INT <<FK>> (optional)
+  not_null(type) : StockTxType <<enum>>
+  not_null(quantity) : DECIMAL(18,3)
+  txDate : TIMESTAMP
+  project : VARCHAR
+  receiver : VARCHAR
+  vendor : VARCHAR
+  note : VARCHAR
+}
+
+' ──────────────────────────────
+' Relationships
+' ──────────────────────────────
+
+' User ──> Site
+user ||--o{ site : "owns"
+
+' User ──> Job
+user ||--o{ job : "creates"
+user |o--o{ job : "assigned_to"
+
+' User ──> CleaningJob
+user |o--o{ cjob : "sends step2/step5"
+
+' Site ──> children
+site ||--o{ inverter : "contains"
+site ||--o{ daily : "records"
+site ||--o{ layout : "has"
+site ||--o{ fcm : "forecasts"
+site ||--o{ fcy : "forecasts"
+site ||--o{ actual : "actuals"
+site ||--o{ wsi : "warranty_supplier"
+site ||--o{ wci : "warranty_customer"
+site ||--o{ other : "other_info"
+site ||--o{ sentry : "service_history"
+site ||--o{ alarm : "has"
+site ||--o{ job : "has"
+
+' Inverter
+inverter ||--o{ kpi : "has"
+inverter ||--o{ alarm : "raises"
+
+' KPI ──> StringSnapshot
+kpi ||--o{ stringsnap : "has"
+
+' Job specialization (1 : 0..1)
+job |o--o| cjob : "extends"
+job |o--o| sjob : "extends"
+job |o--o| ijob : "extends"
+
+' Job children
+job ||--o{ attach : "has"
+job ||--o{ email : "logs"
+job ||--o{ stock : "uses"
+
+' Product
+pcat ||--o{ product : "categorized_as"
+unit ||--o{ product : "measured_in"
+product ||--o{ stock : "records"
+
+@enduml

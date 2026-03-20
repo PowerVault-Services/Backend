@@ -1,0 +1,66 @@
+@startuml ERD_Stock
+!define primary_key(x) <b><u>x</u></b>
+!define foreign_key(x) <i>x</i>
+!define not_null(x) <b>x</b>
+
+hide circle
+skinparam linetype ortho
+skinparam entity {
+  BackgroundColor #FEFECE
+  BorderColor #A80036
+  ArrowColor #A80036
+}
+
+title Solar O&M — Stock & Inventory
+
+entity "Job" as job {
+  primary_key(id) : INT <<PK>>
+  --
+  not_null(jobNo) : VARCHAR <<unique>>
+  not_null(type) : JobType <<enum>>
+}
+
+entity "ProductCategory" as pcat {
+  primary_key(id) : INT <<PK>>
+  --
+  not_null(name) : VARCHAR <<unique>>
+}
+
+entity "Unit" as unit {
+  primary_key(id) : INT <<PK>>
+  --
+  not_null(name) : VARCHAR <<unique>>
+}
+
+entity "Product" as product {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(categoryId) : INT <<FK>>
+  foreign_key(unitId) : INT <<FK>>
+  not_null(sku) : VARCHAR <<unique>>
+  not_null(name) : VARCHAR
+  isActive : BOOLEAN
+  createdAt : TIMESTAMP
+}
+
+entity "StockTransaction" as stock {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(productId) : INT <<FK>>
+  foreign_key(jobId) : INT <<FK>> (optional)
+  not_null(type) : StockTxType <<enum>>
+  not_null(quantity) : DECIMAL(18,3)
+  txDate : TIMESTAMP
+  project : VARCHAR
+  receiver : VARCHAR
+  vendor : VARCHAR
+  note : VARCHAR
+}
+
+' Relationships
+pcat ||--o{ product : "categorized_as"
+unit ||--o{ product : "measured_in"
+product ||--o{ stock : "records"
+job ||--o{ stock : "uses"
+
+@enduml

@@ -1,0 +1,103 @@
+@startuml Site Realtime Sync - Cron Job
+hide footbox
+skinparam sequenceMessageAlign center
+
+participant "Cron\nScheduler" as Cron
+participant "SyncService" as Sync
+participant "SyncState\nService" as State
+participant "HuaweiPool" as Pool
+participant "HuaweiService" as HW
+participant "Huawei API" as API
+participant "Prisma\n(Site)" as SiteDB
+participant "Prisma\n(SiteDailyEnergy)" as EnergyDB
+
+Cron -> Sync : syncSiteRealtimeTick()
+activate Sync
+
+Sync -> State : markJobStart('siteRealtime')
+activate State
+State --> Sync : OK
+deactivate State
+
+== Refresh Station Inventory (if stale) ==
+
+Sync -> Sync : refreshStationsIfNeeded()
+activate Sync
+
+Sync -> Pool : getStationInventoryClients()
+activate Pool
+Pool --> Sync : client
+deactivate Pool
+
+Sync -> HW : stations({pageNo, pageSize})
+activate HW
+HW -> API : POST /thirdData/stations
+activate API
+API --> HW : stationList[]
+deactivate API
+HW --> Sync : stationList[]
+deactivate HW
+
+loop for each station
+    Sync -> SiteDB : upsert({plantCode, plantName,\ncapacity, address, ...})
+    activate SiteDB
+    SiteDB --> Sync : OK
+    deactivate SiteDB
+end
+
+Sync -> Pool : replaceKnownHuaweiStationCodes\n(stationCodes)
+activate Pool
+Pool --> Sync : OK
+deactivate Pool
+
+deactivate Sync
+
+== Sync Site Realtime KPIs (batched) ==
+
+loop for each batch of plantCodes
+    Sync -> Sync : syncSiteRealtimeBatch\n(plantCodes, batchIndex)
+    activate Sync
+
+    Sync -> Pool : getPreferredClientOrderForPurpose\n('siteRealtime', batchIndex)
+    activate Pool
+    Pool --> Sync : clients[]
+    deactivate Pool
+
+    Sync -> HW : getStationRealKpi(stationCodes)
+    activate HW
+    HW -> API : POST /thirdData/getStationRealKpi
+    activate API
+    API --> HW : realtimeKpi[]
+    deactivate API
+    HW --> Sync : realtimeKpi[]
+    deactivate HW
+
+    loop for each KPI row
+        Sync -> SiteDB : update({currentPowerKw,\ndailyEnergyKwh, monthlyEnergyKwh,\nlastPlantSyncAt})
+        activate SiteDB
+        SiteDB --> Sync : OK
+        deactivate SiteDB
+
+        Sync -> EnergyDB : upsert({siteId, date,\ndailyEnergyKwh})
+        activate EnergyDB
+        EnergyDB --> Sync : OK
+        deactivate EnergyDB
+    end
+
+    Sync -> Pool : registerStationBatchAccess\n(stationCodes, client)
+    activate Pool
+    Pool --> Sync : OK
+    deactivate Pool
+
+    deactivate Sync
+end
+
+Sync -> State : markJobSuccess('siteRealtime',\n{synced, total})
+activate State
+State -> State : persistToDb()
+State --> Sync : OK
+deactivate State
+
+deactivate Sync
+
+@enduml

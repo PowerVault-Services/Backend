@@ -1,0 +1,115 @@
+@startuml On-Demand Site Refresh
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Monitoring\nController" as Ctrl
+participant "SyncService" as Sync
+participant "HuaweiPool" as Pool
+participant "HuaweiService" as HW
+participant "Huawei API" as API
+participant "Prisma\n(Site)" as SiteDB
+participant "Prisma\n(Inverter)" as InvDB
+
+User -> FE : Click refresh on site page
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/monitoring/sites/:siteId/overview\n?refresh=soft
+activate Ctrl
+
+Ctrl -> SiteDB : findUnique(siteId)
+activate SiteDB
+SiteDB --> Ctrl : site
+deactivate SiteDB
+
+Ctrl -> Ctrl : check staleness:\nnow - lastPlantSyncAt > 5min?
+
+alt Site data is stale OR refresh=force
+    Ctrl -> Sync : syncPlantOnDemand(plantCode)
+    activate Sync
+
+    Sync -> Pool : pickOnDemandClient()
+    activate Pool
+    Pool --> Sync : onDemandClient
+    deactivate Pool
+
+    == Refresh Site Realtime ==
+
+    Sync -> Sync : syncSiteRealtimeBatch\n([plantCode], 0)
+    activate Sync
+
+    Sync -> HW : getStationRealKpi(plantCode)
+    activate HW
+    HW -> API : POST /thirdData/getStationRealKpi
+    activate API
+    API --> HW : realtimeKpi
+    deactivate API
+    HW --> Sync : realtimeKpi
+    deactivate HW
+
+    Sync -> SiteDB : update({currentPowerKw,\ndailyEnergyKwh, lastPlantSyncAt})
+    activate SiteDB
+    SiteDB --> Sync : OK
+    deactivate SiteDB
+
+    deactivate Sync
+
+    == Refresh Device Inventory + KPIs ==
+
+    Sync -> Sync : syncPlantDevicesWithFailover\n(site, runStateCount)
+    activate Sync
+
+    Sync -> HW : getDevList(plantCode)
+    activate HW
+    HW -> API : POST /thirdData/getDevList
+    activate API
+    API --> HW : deviceList[]
+    deactivate API
+    HW --> Sync : deviceList[]
+    deactivate HW
+
+    loop for each inverter
+        Sync -> InvDB : upsert({sn, devId, model})
+        activate InvDB
+        InvDB --> Sync : OK
+        deactivate InvDB
+    end
+
+    Sync -> HW : getDevRealKpi({devTypeId:1, devIds})
+    activate HW
+    HW -> API : POST /thirdData/getDevRealKpi
+    activate API
+    API --> HW : inverterKpis[]
+    deactivate API
+    HW --> Sync : inverterKpis[]
+    deactivate HW
+
+    Sync --> Sync : update inverter + snapshots
+    deactivate Sync
+
+    Sync --> Ctrl : {refreshed: true}
+    deactivate Sync
+end
+
+== Build Response ==
+
+Ctrl -> SiteDB : findUnique(siteId)\nwith relations
+activate SiteDB
+SiteDB --> Ctrl : siteData
+deactivate SiteDB
+
+Ctrl -> InvDB : findMany({siteId})
+activate InvDB
+InvDB --> Ctrl : inverters[]
+deactivate InvDB
+
+Ctrl --> FE : 200 {site, inverters,\nenergySeries, hydration}
+deactivate Ctrl
+
+FE --> User : Display updated site overview
+deactivate FE
+deactivate User
+
+@enduml

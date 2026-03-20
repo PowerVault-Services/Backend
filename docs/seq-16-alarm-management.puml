@@ -1,0 +1,168 @@
+@startuml Alarm Management - CRUD and Auto-Refresh
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Alarm\nController" as Ctrl
+participant "AlarmSync\nService" as AS
+participant "HuaweiPool" as Pool
+participant "HuaweiService" as HW
+participant "Huawei API" as API
+participant "Prisma\n(Alarm)" as AlarmDB
+participant "Prisma\n(Site)" as SiteDB
+
+== List Alarms (with Auto-Refresh) ==
+
+User -> FE : Open alarms page (Active tab)
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/alarms?tab=active\n&page=1&siteId=1&severity=CRITICAL
+activate Ctrl
+
+Ctrl -> Ctrl : check auto-refresh conditions:\ntab=active AND page=1\nAND cooldown > 60s
+
+alt Auto-refresh triggered
+    Ctrl -> AS : syncAlarmsForStationsOnDemand\n([stationCode], lookbackHours: 24)
+    activate AS
+
+    AS -> Pool : pickAlarmClient(0)
+    activate Pool
+    Pool --> AS : alarmClient
+    deactivate Pool
+
+    AS -> HW : getAlarmList({stationCodes,\nbeginTime, endTime})
+    activate HW
+    HW -> API : POST /thirdData/getAlarmList
+    activate API
+    API --> HW : alarmList[]
+    deactivate API
+    HW --> AS : alarmList[]
+    deactivate HW
+
+    loop for each alarm
+        AS -> AlarmDB : upsert({alarmId, raiseTime,\nstatus, severity, cause,\ndeviceName, siteId})
+        activate AlarmDB
+        AlarmDB --> AS : OK
+        deactivate AlarmDB
+    end
+
+    AS --> Ctrl : {fetched, upserted}
+    deactivate AS
+end
+
+Ctrl -> AlarmDB : findMany({where: filters,\nskip, take, orderBy: raiseTime desc})
+activate AlarmDB
+AlarmDB --> Ctrl : alarms[]
+deactivate AlarmDB
+
+Ctrl -> AlarmDB : count({where: filters})
+activate AlarmDB
+AlarmDB --> Ctrl : totalCount
+deactivate AlarmDB
+
+Ctrl --> FE : 200 {alarms[], pagination,\nrefreshedAt?}
+deactivate Ctrl
+
+FE --> User : Display alarm list
+deactivate FE
+deactivate User
+
+== Alarm Detail ==
+
+User -> FE : Click on alarm
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/alarms/:id
+activate Ctrl
+
+Ctrl -> AlarmDB : findUnique(id)\ninclude: {site, inverter}
+activate AlarmDB
+AlarmDB --> Ctrl : alarm with relations
+deactivate AlarmDB
+
+Ctrl --> FE : 200 {alarm}
+deactivate Ctrl
+
+FE --> User : Display alarm detail
+deactivate FE
+deactivate User
+
+== Acknowledge Alarm ==
+
+User -> FE : Click Acknowledge
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/alarms/:id/acknowledge
+activate Ctrl
+
+Ctrl -> AlarmDB : findUnique(id)
+activate AlarmDB
+AlarmDB --> Ctrl : alarm
+deactivate AlarmDB
+
+Ctrl -> AlarmDB : update({id,\nraw: {...existing,\n_meta: {acknowledgedAt: now,\nacknowledgedBy: userId}}})
+activate AlarmDB
+AlarmDB --> Ctrl : updatedAlarm
+deactivate AlarmDB
+
+Ctrl --> FE : 200 {acknowledged: true}
+deactivate Ctrl
+
+FE --> User : Alarm acknowledged
+deactivate FE
+deactivate User
+
+== Soft Delete Alarm ==
+
+User -> FE : Click Delete
+activate User
+activate FE
+
+FE -> Ctrl : DELETE /api/alarms/:id
+activate Ctrl
+
+Ctrl -> AlarmDB : findUnique(id)
+activate AlarmDB
+AlarmDB --> Ctrl : alarm
+deactivate AlarmDB
+
+Ctrl -> AlarmDB : update({id,\nraw: {...existing,\n_meta: {deletedAt: now,\ndeletedBy: userId}}})
+activate AlarmDB
+AlarmDB --> Ctrl : softDeletedAlarm
+deactivate AlarmDB
+
+Ctrl --> FE : 200 {deleted: true}
+deactivate Ctrl
+
+FE --> User : Alarm removed from list
+deactivate FE
+deactivate User
+
+== Export Alarms CSV ==
+
+User -> FE : Click Export
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/alarms/export\n?tab=active&siteId=1&dateFrom&dateTo
+activate Ctrl
+
+Ctrl -> AlarmDB : findMany({where: filters,\norderBy: raiseTime desc})
+activate AlarmDB
+AlarmDB --> Ctrl : allMatchingAlarms[]
+deactivate AlarmDB
+
+Ctrl -> Ctrl : format CSV:\nalarmId, site, device, severity,\ncause, raiseTime, clearTime
+
+Ctrl --> FE : 200 (text/csv stream)\nContent-Disposition: attachment
+deactivate Ctrl
+
+FE --> User : Download CSV file
+deactivate FE
+deactivate User
+
+@enduml

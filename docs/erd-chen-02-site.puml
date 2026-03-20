@@ -1,0 +1,120 @@
+@startuml ERD_Chen_Site
+' ============================================================
+' Solar O&M — Site & Project Data (Chen Notation)
+' ============================================================
+
+top to bottom direction
+
+skinparam defaultFontSize 11
+skinparam linetype polyline
+
+skinparam rectangle {
+  BackgroundColor #ADD8E6
+  BorderColor #000000
+  FontStyle bold
+}
+
+skinparam hexagon {
+  BackgroundColor #F4A460
+  BorderColor #000000
+}
+
+skinparam usecase {
+  BackgroundColor #FFFFFF
+  BorderColor #000000
+  FontSize 10
+}
+
+' ── User (ref) ──
+rectangle "User" as E_User
+
+' ── Site ──
+rectangle "Site" as E_Site
+
+usecase "<u>id</u>" as A_S_id
+usecase "//ownerId//" as A_S_oid
+usecase "name" as A_S_name
+usecase "plantCode" as A_S_pc
+usecase "capacityKWp" as A_S_cap
+usecase "address" as A_S_addr
+usecase "latitude" as A_S_lat
+usecase "longitude" as A_S_lon
+usecase "projectStatus" as A_S_ps
+usecase "warrantyStart" as A_S_ws
+usecase "warrantyEnd" as A_S_we
+usecase "companyName" as A_S_cn
+usecase "siteImageUrl" as A_S_img
+
+E_Site -left- A_S_id
+E_Site -left- A_S_oid
+E_Site -left- A_S_name
+E_Site -left- A_S_pc
+E_Site -left- A_S_cap
+E_Site -left- A_S_addr
+E_Site -left- A_S_lat
+E_Site -right- A_S_lon
+E_Site -right- A_S_ps
+E_Site -right- A_S_ws
+E_Site -right- A_S_we
+E_Site -right- A_S_cn
+E_Site -right- A_S_img
+
+' ── User owns Site ──
+hexagon "owns" as R_owns
+E_User == "1" R_owns
+R_owns == "N" E_Site
+
+' ── SiteLayout ──
+rectangle "SiteLayout" as E_Layout
+
+usecase "<u>id</u>" as A_L_id
+usecase "//siteId//" as A_L_sid
+usecase "type" as A_L_type
+usecase "fileUrl" as A_L_url
+
+E_Layout -down- A_L_id
+E_Layout -down- A_L_sid
+E_Layout -down- A_L_type
+E_Layout -down- A_L_url
+
+hexagon "has" as R_site_layout
+E_Site == "1" R_site_layout
+R_site_layout == "N" E_Layout
+
+' ── SiteOtherRow ──
+rectangle "SiteOtherRow" as E_Other
+
+usecase "<u>id</u>" as A_O_id
+usecase "//siteId//" as A_O_sid
+usecase "status" as A_O_st
+usecase "description" as A_O_desc
+usecase "remark" as A_O_rem
+
+E_Other -down- A_O_id
+E_Other -down- A_O_sid
+E_Other -down- A_O_st
+E_Other -down- A_O_desc
+E_Other -down- A_O_rem
+
+hexagon "other_info" as R_site_other
+E_Site == "1" R_site_other
+R_site_other == "N" E_Other
+
+' ── ServiceEntry ──
+rectangle "ServiceEntry" as E_SE
+
+usecase "<u>id</u>" as A_SE_id
+usecase "//siteId//" as A_SE_sid
+usecase "job" as A_SE_job
+usecase "description" as A_SE_desc
+
+E_SE -down- A_SE_id
+E_SE -down- A_SE_sid
+E_SE -down- A_SE_job
+E_SE -down- A_SE_desc
+
+hexagon "service\nhistory" as R_site_se
+E_Site == "1" R_site_se
+R_site_se == "N" E_SE
+
+@enduml
