@@ -1,0 +1,67 @@
+@startuml ERD_Chen_Alarm
+' ============================================================
+' Solar O&M — Alarm Management (Chen Notation)
+' ============================================================
+
+top to bottom direction
+
+skinparam defaultFontSize 11
+skinparam linetype polyline
+
+skinparam rectangle {
+  BackgroundColor #ADD8E6
+  BorderColor #000000
+  FontStyle bold
+}
+
+skinparam hexagon {
+  BackgroundColor #F4A460
+  BorderColor #000000
+}
+
+skinparam usecase {
+  BackgroundColor #FFFFFF
+  BorderColor #000000
+  FontSize 10
+}
+
+' ── Site (ref) ──
+rectangle "Site" as E_Site
+
+' ── Inverter (ref) ──
+rectangle "Inverter" as E_Inv
+
+' ── Alarm ──
+rectangle "Alarm" as E_Alarm
+
+usecase "<u>id</u>" as A_Al_id
+usecase "//siteId//" as A_Al_sid
+usecase "//inverterId//" as A_Al_iid
+usecase "huaweiAlarmId" as A_Al_hid
+usecase "name" as A_Al_name
+usecase "severity" as A_Al_sev
+usecase "status" as A_Al_st
+usecase "occurredAt" as A_Al_oc
+usecase "clearedAt" as A_Al_cl
+usecase "raw" as A_Al_raw
+
+E_Alarm -left- A_Al_id
+E_Alarm -left- A_Al_sid
+E_Alarm -left- A_Al_iid
+E_Alarm -left- A_Al_hid
+E_Alarm -left- A_Al_name
+E_Alarm -right- A_Al_sev
+E_Alarm -right- A_Al_st
+E_Alarm -right- A_Al_oc
+E_Alarm -right- A_Al_cl
+E_Alarm -right- A_Al_raw
+
+hexagon "has" as R_site_alarm
+E_Site == "1" R_site_alarm
+R_site_alarm == "N" E_Alarm
+
+hexagon "raises" as R_inv_alarm
+E_Inv == "1" R_inv_alarm
+R_inv_alarm == "N" E_Alarm
+
+@enduml

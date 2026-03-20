@@ -1,0 +1,61 @@
+@startuml Service Job - Step 4: Generate PDF Report
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Service\nController" as Ctrl
+participant "ReportService" as Report
+participant "StorageService" as Storage
+participant "Prisma\n(Job)" as JobDB
+participant "Prisma\n(ServiceJob)" as SJB
+participant "MinIO /\nLocal Disk" as FS
+
+User -> FE : Click Generate Report
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/service/step4/generate {jobId}
+activate Ctrl
+
+Ctrl -> JobDB : findUnique(jobId) with all relations
+activate JobDB
+JobDB --> Ctrl : job + serviceJob + attachments + stockUsage
+deactivate JobDB
+
+Ctrl -> Report : generateServiceReportPdf\n({job, serviceJob, evidence, stockUsage})
+activate Report
+
+Report -> Report : render HTML with evidence images,\nstock table, service details
+Report -> Report : puppeteer PDF generation
+activate Report
+Report --> Report : pdfBuffer
+deactivate Report
+
+Report -> Storage : storeGeneratedReportFromLocalFile(pdf)
+activate Storage
+Storage -> FS : upload PDF
+activate FS
+FS --> Storage : storedFile
+deactivate FS
+Storage --> Report : {fileUrl}
+deactivate Storage
+
+Report --> Ctrl : {fileUrl}
+deactivate Report
+
+Ctrl -> SJB : update({reportFileUrl})
+activate SJB
+SJB --> Ctrl : OK
+deactivate SJB
+
+Ctrl -> Ctrl : bumpJobStep(jobId, 4)
+
+Ctrl --> FE : 200 {reportUrl}
+deactivate Ctrl
+
+FE --> User : Report generated
+deactivate FE
+deactivate User
+
+@enduml

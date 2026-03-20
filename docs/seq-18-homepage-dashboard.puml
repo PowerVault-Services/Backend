@@ -1,0 +1,80 @@
+@startuml Homepage Dashboard - Summary & Plants List
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Homepage\nRoute" as Ctrl
+participant "Prisma\n(Site)" as SiteDB
+participant "Prisma\n(Alarm)" as AlarmDB
+participant "Prisma\n(Inverter)" as InvDB
+
+== Dashboard Summary ==
+
+User -> FE : Open homepage
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/homepage/summary
+activate Ctrl
+
+Ctrl -> SiteDB : findMany({select: {id,\nplantHealthState}})
+activate SiteDB
+SiteDB --> Ctrl : sites[]
+deactivate SiteDB
+
+Ctrl -> Ctrl : count Normal / Faulty /\nDisconnected from\nplantHealthState
+
+Ctrl -> AlarmDB : findMany({where:\n{status: ACTIVE, clearedAt: null},\nselect: {severity}})
+activate AlarmDB
+AlarmDB --> Ctrl : activeAlarms[]
+deactivate AlarmDB
+
+Ctrl -> Ctrl : count by severity:\ncritical(4) / major(3) /\nminor(2) / warning(1)
+
+Ctrl -> AlarmDB : findMany({where:\n{status: ACTIVE, clearedAt: null},\norderBy: occurredAt desc, take: 5,\ninclude: {site, inverter}})
+activate AlarmDB
+AlarmDB --> Ctrl : latestAlarms[]
+deactivate AlarmDB
+
+Ctrl --> FE : 200 {plantStatus,\nactiveAlarms, notificationAlarms[]}
+deactivate Ctrl
+
+FE --> User : Display dashboard
+deactivate FE
+deactivate User
+
+== Plants List ==
+
+User -> FE : View plants list
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/homepage/plants\n?q=search&page=1&pageSize=20
+activate Ctrl
+
+Ctrl -> SiteDB : count({where: filters})
+activate SiteDB
+SiteDB --> Ctrl : total
+deactivate SiteDB
+
+Ctrl -> SiteDB : findMany({where: filters,\norderBy: name asc, skip, take,\nselect: {id, plantCode, name,\ncapacityKWp, currentPowerKW,\ndayEnergyKWh, totalEnergyKWh,\nplantHealthState, ...}})
+activate SiteDB
+SiteDB --> Ctrl : sites[]
+deactivate SiteDB
+
+Ctrl -> InvDB : findMany({where:\n{siteId in siteIds},\nselect: {siteId, activePower,\nstatus, lastSyncAt}})
+activate InvDB
+InvDB --> Ctrl : inverters[]
+deactivate InvDB
+
+Ctrl -> Ctrl : compute per site:\nstatus, currentPowerKW,\nspecificEnergy, yieldToday
+
+Ctrl --> FE : 200 {list[], pagination}
+deactivate Ctrl
+
+FE --> User : Display plants list
+deactivate FE
+deactivate User
+
+@enduml

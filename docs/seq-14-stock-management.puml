@@ -1,0 +1,209 @@
+@startuml Stock Management Flow
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Stock\nController" as Ctrl
+participant "Prisma\n(Product)" as ProdDB
+participant "Prisma\n(Product\nCategory)" as CatDB
+participant "Prisma\n(Unit)" as UnitDB
+participant "Prisma\n(Stock\nTransaction)" as TxDB
+participant "Prisma\n(Site)" as SiteDB
+
+== Get Metadata (Categories, Units, Products) ==
+
+User -> FE : Open stock management
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/stock/meta
+activate Ctrl
+
+Ctrl -> CatDB : findMany()
+activate CatDB
+CatDB --> Ctrl : categories[]
+deactivate CatDB
+
+Ctrl -> UnitDB : findMany()
+activate UnitDB
+UnitDB --> Ctrl : units[]
+deactivate UnitDB
+
+Ctrl -> ProdDB : findMany()
+activate ProdDB
+ProdDB --> Ctrl : products[]
+deactivate ProdDB
+
+Ctrl --> FE : 200 {categories, units, products}
+deactivate Ctrl
+
+FE --> User : Display dropdowns
+deactivate FE
+deactivate User
+
+== Create Product ==
+
+User -> FE : Add new product
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/stock/products\n{name, sku, categoryId, unitId}
+activate Ctrl
+
+Ctrl -> ProdDB : create({name, sku,\ncategoryId, unitId})
+activate ProdDB
+ProdDB --> Ctrl : product
+deactivate ProdDB
+
+Ctrl --> FE : 201 {product}
+deactivate Ctrl
+
+FE --> User : Product created
+deactivate FE
+deactivate User
+
+== Stock IN Transaction ==
+
+User -> FE : Record stock received
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/stock/in\n{productId, qty, note, projectId?}
+activate Ctrl
+
+Ctrl -> ProdDB : findUnique(productId)
+activate ProdDB
+ProdDB --> Ctrl : product
+deactivate ProdDB
+
+Ctrl -> TxDB : create({productId, qty,\ntype: 'IN', note, projectId})
+activate TxDB
+TxDB --> Ctrl : transaction
+deactivate TxDB
+
+Ctrl --> FE : 201 {transaction}
+deactivate Ctrl
+
+FE --> User : Stock IN recorded
+deactivate FE
+deactivate User
+
+== Stock OUT Transaction ==
+
+User -> FE : Record stock issued
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/stock/out\n{productId, qty, note, projectId?}
+activate Ctrl
+
+Ctrl -> ProdDB : findUnique(productId)
+activate ProdDB
+ProdDB --> Ctrl : product
+deactivate ProdDB
+
+Ctrl -> TxDB : create({productId, qty,\ntype: 'OUT', note, projectId})
+activate TxDB
+TxDB --> Ctrl : transaction
+deactivate TxDB
+
+Ctrl --> FE : 201 {transaction}
+deactivate Ctrl
+
+FE --> User : Stock OUT recorded
+deactivate FE
+deactivate User
+
+== Stock DEDUCT (from Service Job) ==
+
+User -> FE : Record stock used in service
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/stock/deduct\n{productId, qty, jobId, projectId}
+activate Ctrl
+
+Ctrl -> ProdDB : findUnique(productId)
+activate ProdDB
+ProdDB --> Ctrl : product
+deactivate ProdDB
+
+Ctrl -> TxDB : create({productId, qty,\ntype: 'DEDUCT', jobId, projectId})
+activate TxDB
+TxDB --> Ctrl : transaction
+deactivate TxDB
+
+Ctrl --> FE : 201 {transaction}
+deactivate Ctrl
+
+FE --> User : Stock deducted
+deactivate FE
+deactivate User
+
+== Stock Summary ==
+
+User -> FE : View stock summary
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/stock/summary\n?q=search&categoryId=1
+activate Ctrl
+
+Ctrl -> ProdDB : findMany({where: filters})
+activate ProdDB
+ProdDB --> Ctrl : products[]
+deactivate ProdDB
+
+Ctrl -> TxDB : groupBy({productId,\ntype, _sum: {qty}})
+activate TxDB
+TxDB --> Ctrl : aggregates
+deactivate TxDB
+
+Ctrl -> Ctrl : calculate onHand:\nSUM(IN) - SUM(OUT) - SUM(DEDUCT)
+
+Ctrl --> FE : 200 {products with onHand quantities}
+deactivate Ctrl
+
+FE --> User : Display stock summary
+deactivate FE
+deactivate User
+
+== Category CRUD ==
+
+User -> FE : Manage categories
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/stock/categories\n{name}
+activate Ctrl
+Ctrl -> CatDB : create({name})
+activate CatDB
+CatDB --> Ctrl : category
+deactivate CatDB
+Ctrl --> FE : 201 {category}
+deactivate Ctrl
+
+FE -> Ctrl : PATCH /api/stock/categories/:id\n{name}
+activate Ctrl
+Ctrl -> CatDB : update({id, name})
+activate CatDB
+CatDB --> Ctrl : category
+deactivate CatDB
+Ctrl --> FE : 200 {category}
+deactivate Ctrl
+
+FE -> Ctrl : DELETE /api/stock/categories/:id
+activate Ctrl
+Ctrl -> CatDB : delete({id})
+activate CatDB
+CatDB --> Ctrl : OK
+deactivate CatDB
+Ctrl --> FE : 200 {deleted}
+deactivate Ctrl
+
+FE --> User : Categories updated
+deactivate FE
+deactivate User
+
+@enduml

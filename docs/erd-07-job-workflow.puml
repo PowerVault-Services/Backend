@@ -1,0 +1,111 @@
+@startuml ERD_Job_Workflow
+!define primary_key(x) <b><u>x</u></b>
+!define foreign_key(x) <i>x</i>
+!define not_null(x) <b>x</b>
+
+hide circle
+skinparam linetype ortho
+skinparam entity {
+  BackgroundColor #FEFECE
+  BorderColor #A80036
+  ArrowColor #A80036
+}
+
+title Solar O&M — Job & Workflow
+
+entity "User" as user {
+  primary_key(id) : INT <<PK>>
+  --
+  not_null(username) : VARCHAR
+  not_null(role) : Role <<enum>>
+}
+
+entity "Site" as site {
+  primary_key(id) : INT <<PK>>
+  --
+  not_null(name) : VARCHAR
+  not_null(plantCode) : VARCHAR <<unique>>
+}
+
+entity "Job" as job {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  foreign_key(assignedToId) : INT <<FK>> (optional)
+  foreign_key(createdById) : INT <<FK>>
+  not_null(jobNo) : VARCHAR <<unique>>
+  not_null(title) : VARCHAR
+  not_null(type) : JobType <<enum>>
+  not_null(status) : JobStatus <<enum>>
+  scheduledDate : TIMESTAMP
+  details : VARCHAR
+  step : INT
+  createdAt : TIMESTAMP
+  updatedAt : TIMESTAMP
+}
+
+entity "CleaningJob" as cjob {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(jobId) : INT <<FK>> <<unique>>
+  foreign_key(step2SentByUserId) : INT <<FK>> (optional)
+  foreign_key(step5SentByUserId) : INT <<FK>> (optional)
+  projectName : VARCHAR
+  workDate : TIMESTAMP
+  checklist : JSON
+  reportFileUrl : VARCHAR
+}
+
+entity "ServiceJob" as sjob {
+  primary_key(jobId) : INT <<PK, FK>>
+  --
+  projectName : VARCHAR
+  workDate : TIMESTAMP
+  step3Meta : JSON
+  reportFileUrl : VARCHAR
+}
+
+entity "InspectionJob" as ijob {
+  primary_key(jobId) : INT <<PK, FK>>
+  --
+  projectName : VARCHAR
+  workDate : TIMESTAMP
+  reportFileUrl : VARCHAR
+}
+
+entity "JobAttachment" as attach {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(jobId) : INT <<FK>>
+  not_null(fileUrl) : VARCHAR
+  fileType : VARCHAR
+  createdAt : TIMESTAMP
+}
+
+entity "EmailLog" as email {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(jobId) : INT <<FK>> (optional)
+  step : INT
+  not_null(to) : VARCHAR
+  not_null(subject) : VARCHAR
+  bodyPreview : VARCHAR
+  not_null(status) : VARCHAR
+  errorMessage : VARCHAR
+  createdAt : TIMESTAMP
+}
+
+' Relationships
+user ||--o{ job : "creates"
+user |o--o{ job : "assigned_to"
+user |o--o{ cjob : "sends step2/step5"
+site ||--o{ job : "has"
+
+job |o--o| cjob : "extends"
+job |o--o| sjob : "extends"
+job |o--o| ijob : "extends"
+
+job ||--o{ attach : "has"
+job ||--o{ email : "logs"
+
+@enduml

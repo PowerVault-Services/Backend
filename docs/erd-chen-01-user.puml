@@ -1,0 +1,50 @@
+@startuml ERD_Chen_User
+' ============================================================
+' Solar O&M — User & Authentication (Chen Notation)
+' ============================================================
+
+skinparam defaultFontSize 11
+skinparam linetype polyline
+
+skinparam rectangle {
+  BackgroundColor #ADD8E6
+  BorderColor #000000
+  FontStyle bold
+}
+
+skinparam hexagon {
+  BackgroundColor #F4A460
+  BorderColor #000000
+}
+
+skinparam usecase {
+  BackgroundColor #FFFFFF
+  BorderColor #000000
+  FontSize 10
+}
+
+rectangle "User" as E_User
+
+usecase "<u>id</u>" as A_U_id
+usecase "username" as A_U_un
+usecase "password" as A_U_pw
+usecase "email" as A_U_em
+usecase "role" as A_U_role
+usecase "firstName" as A_U_fn
+usecase "lastName" as A_U_ln
+usecase "phone" as A_U_ph
+usecase "createdAt" as A_U_ca
+usecase "updatedAt" as A_U_ua
+
+A_U_id -down- E_User
+A_U_un -down- E_User
+A_U_pw -down- E_User
+A_U_em -down- E_User
+A_U_role -down- E_User
+A_U_fn -down- E_User
+A_U_ln -down- E_User
+A_U_ph -down- E_User
+A_U_ca -down- E_User
+A_U_ua -down- E_User
+
+@enduml

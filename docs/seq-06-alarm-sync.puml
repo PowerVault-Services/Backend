@@ -1,0 +1,118 @@
+@startuml Alarm Sync - Cron Job
+hide footbox
+skinparam sequenceMessageAlign center
+
+participant "Cron\nScheduler" as Cron
+participant "AlarmSync\nService" as AS
+participant "SyncState\nService" as State
+participant "HuaweiPool" as Pool
+participant "HuaweiService" as HW
+participant "Huawei API" as API
+participant "Prisma\n(Alarm)" as AlarmDB
+participant "Prisma\n(Site)" as SiteDB
+participant "Prisma\n(Inverter)" as InvDB
+
+Cron -> AS : syncActiveAlarms()
+activate AS
+
+AS -> State : markJobStart('alarm')
+activate State
+State --> AS : OK
+deactivate State
+
+AS -> AS : refreshStationsIfNeeded()
+activate AS
+AS --> AS : plantCodes[]
+deactivate AS
+
+AS -> SiteDB : findMany({plantCode in plantCodes})
+activate SiteDB
+SiteDB --> AS : siteMap
+deactivate SiteDB
+
+AS -> InvDB : findMany({siteId in siteIds})
+activate InvDB
+InvDB --> AS : invBySn (indexed by serial)
+deactivate InvDB
+
+== Full Sweep (every 6 hours) + Incremental ==
+
+AS -> AS : buildRollingWindows\n(lookbackDays: 30)
+activate AS
+AS --> AS : timeWindows[]
+deactivate AS
+
+loop for each station batch
+    AS -> AS : queryAlarmStations\n(stationCodes, siteMap, invBySn)
+    activate AS
+
+    AS -> Pool : pickAlarmClient(batchIndex)
+    activate Pool
+    Pool --> AS : alarmClient
+    deactivate Pool
+
+    loop for each time window
+        AS -> HW : getAlarmList({stationCodes,\nbeginTime, endTime})
+        activate HW
+        HW -> API : POST /thirdData/getAlarmList
+        activate API
+        API --> HW : alarmList[]
+        deactivate API
+        HW --> AS : alarmList[]
+        deactivate HW
+
+        AS -> AS : upsertAlarmRows\n(alarmList, siteMap, invBySn)
+        activate AS
+
+        loop for each alarm
+            AS -> AS : deduplicate by key\n(alarmId:raiseTime:esnCode)
+
+            AS -> AlarmDB : upsert({alarmId, raiseTime,\nstatus, severity, cause,\ndeviceName, siteId, inverterId})
+            activate AlarmDB
+            AlarmDB --> AS : OK
+            deactivate AlarmDB
+        end
+
+        AS --> AS : {upserted, seenKeys}
+        deactivate AS
+    end
+
+    deactivate AS
+end
+
+== Confirm/Clear Missing Active Alarms ==
+
+AS -> AS : confirmAndMaybeClearMissing\nActiveAlarms(seenKeys)
+activate AS
+
+AS -> AlarmDB : findMany({status: ACTIVE,\nkey NOT IN seenKeys})
+activate AlarmDB
+AlarmDB --> AS : missingAlarms[]
+deactivate AlarmDB
+
+loop for each missing alarm
+    alt missCount >= CLEAR_MISS_THRESHOLD
+        AS -> AlarmDB : update({status: CLEARED,\nraw._meta.clearedBySync})
+        activate AlarmDB
+        AlarmDB --> AS : OK
+        deactivate AlarmDB
+    else missCount < threshold
+        AS -> AlarmDB : update({raw._meta.missCount++})
+        activate AlarmDB
+        AlarmDB --> AS : OK
+        deactivate AlarmDB
+    end
+end
+
+AS --> AS : {cleared, confirmed, pending}
+deactivate AS
+
+AS -> State : markJobSuccess('alarm',\n{fetched, upserted, cleared})
+activate State
+State -> State : persistToDb()
+State --> AS : OK
+deactivate State
+
+deactivate AS
+
+@enduml

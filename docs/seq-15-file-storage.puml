@@ -1,0 +1,153 @@
+@startuml File Storage Flow - MinIO and Disk Fallback
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Controller" as Ctrl
+participant "StorageService" as SS
+participant "MinIO\nClient" as MinIO
+participant "Local\nDisk" as Disk
+
+== File Upload ==
+
+User -> FE : Upload file
+activate User
+activate FE
+
+FE -> Ctrl : POST (multipart form data)
+activate Ctrl
+
+Ctrl -> SS : storeIncomingUserUpload\n(file, {subDir})
+activate SS
+
+SS -> SS : check WRITE_TO_OBJECT_STORAGE
+
+alt WRITE_TO_OBJECT_STORAGE = true
+    SS -> SS : uploadToObjectStorage(file)
+    activate SS
+
+    SS -> MinIO : putObject(bucket, objectKey,\nfileBuffer, {contentType})
+    activate MinIO
+    MinIO --> SS : OK
+    deactivate MinIO
+
+    opt MINIO_KEEP_LOCAL_COPY = true
+        SS -> Disk : writeFile(localPath, buffer)
+        activate Disk
+        Disk --> SS : OK
+        deactivate Disk
+    end
+
+    SS --> SS : {fileUrl, objectKey, localPath}
+    deactivate SS
+
+else WRITE_TO_OBJECT_STORAGE = false
+    SS -> SS : writeToLocalDisk(file)
+    activate SS
+
+    SS -> Disk : writeFile(localRoot/subDir/filename,\nbuffer)
+    activate Disk
+    Disk --> SS : OK
+    deactivate Disk
+
+    SS --> SS : {fileUrl, localPath}
+    deactivate SS
+end
+
+SS --> Ctrl : StoredFile {fileUrl, objectKey,\nlocalPath, size, contentType}
+deactivate SS
+
+Ctrl --> FE : 200 {fileUrl}
+deactivate Ctrl
+
+FE --> User : Upload complete
+deactivate FE
+deactivate User
+
+== File Download / Serve ==
+
+User -> FE : Request file (image/document)
+activate User
+activate FE
+
+FE -> Ctrl : GET /uploads/*filePath
+activate Ctrl
+
+Ctrl -> SS : check READ_FROM_OBJECT_STORAGE
+activate SS
+
+alt READ_FROM_OBJECT_STORAGE = true
+    SS -> MinIO : getObject(bucket, objectKey)
+    activate MinIO
+
+    alt Object found
+        MinIO --> SS : stream
+        deactivate MinIO
+
+        SS -> SS : detect MIME type
+
+        SS --> Ctrl : stream + contentType
+    else Object not found AND FALLBACK_TO_DISK
+        MinIO --> SS : NoSuchKey error
+        deactivate MinIO
+
+        SS -> Disk : readFile(localPath)
+        activate Disk
+        Disk --> SS : fileBuffer
+        deactivate Disk
+
+        SS --> Ctrl : buffer + contentType
+    end
+
+else READ_FROM_OBJECT_STORAGE = false
+    SS -> Disk : readFile(localRoot/filePath)
+    activate Disk
+    Disk --> SS : fileBuffer
+    deactivate Disk
+
+    SS -> SS : detect MIME type
+
+    SS --> Ctrl : buffer + contentType
+end
+deactivate SS
+
+Ctrl --> FE : 200 (file stream + Content-Type)
+deactivate Ctrl
+
+FE --> User : Display file
+deactivate FE
+deactivate User
+
+== Ensure Local File (for PDF generation / email) ==
+
+Ctrl -> SS : tryEnsureLocalFilePath(fileUrl)
+activate Ctrl
+activate SS
+
+SS -> SS : parse fileUrl to extract objectKey
+
+alt File exists locally
+    SS -> Disk : check fs.existsSync(localPath)
+    activate Disk
+    Disk --> SS : true
+    deactivate Disk
+    SS --> Ctrl : localPath
+else File not local, download from MinIO
+    SS -> MinIO : getObject(bucket, objectKey)
+    activate MinIO
+    MinIO --> SS : buffer
+    deactivate MinIO
+
+    SS -> Disk : writeFile(localPath, buffer)
+    activate Disk
+    Disk --> SS : OK
+    deactivate Disk
+
+    SS --> Ctrl : localPath
+end
+
+deactivate SS
+deactivate Ctrl
+
+@enduml

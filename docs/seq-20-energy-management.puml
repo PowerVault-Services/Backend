@@ -1,0 +1,94 @@
+@startuml Energy Management Series & Home Realtime
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Monitoring\nRoute" as Ctrl
+participant "MonitoringHome\nService" as MHS
+participant "HuaweiKpiCache" as Cache
+participant "HuaweiService" as HW
+participant "Huawei API" as API
+participant "Prisma\n(Site)" as SiteDB
+
+== Energy Management Series ==
+
+User -> FE : Open energy management\n(day/month/year/lifetime)
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/monitoring/sites/:siteId\n/energy-management?view=day&date=2026-01-15
+activate Ctrl
+
+Ctrl -> MHS : getEnergyManagementSeries\n(siteId, {view, date})
+activate MHS
+
+MHS -> SiteDB : findUnique({id: siteId})
+activate SiteDB
+SiteDB --> MHS : site {plantCode}
+deactivate SiteDB
+
+MHS -> MHS : resolve endpoint by view:\nday -> getKpiStationHour\nmonth -> getKpiStationDay\nyear -> getKpiStationMonth\nlifetime -> getKpiStationYear
+
+MHS -> Cache : getCachedPlantKpi\n({endpoint, stationCodes,\ncollectTime})
+activate Cache
+
+alt Cache hit
+    Cache --> MHS : cached response
+else Cache miss
+    Cache -> HW : getKpiStationXxx\n({stationCodes, collectTime})
+    activate HW
+    HW -> API : POST endpoint
+    activate API
+    API --> HW : kpiData[]
+    deactivate API
+    HW --> Cache : kpiData[]
+    deactivate HW
+    Cache --> MHS : fresh response
+end
+deactivate Cache
+
+MHS -> MHS : map dataItemMap fields:\nradiation_intensity,\ninverter_power, ongrid_power,\nuse_power, reduction_total_co2
+
+MHS --> Ctrl : {view, series[], summary}
+deactivate MHS
+
+Ctrl --> FE : 200 {data}
+deactivate Ctrl
+
+FE --> User : Display energy chart
+deactivate FE
+deactivate User
+
+== Home Realtime (Energy Flow + Summary Cards) ==
+
+User -> FE : Open monitoring home
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/monitoring/sites/:siteId\n/home-realtime?refresh=auto
+activate Ctrl
+
+Ctrl -> MHS : getMonitoringHomeRealtime\n(siteId, {refresh})
+activate MHS
+
+MHS -> SiteDB : findUnique({id: siteId})
+activate SiteDB
+SiteDB --> MHS : site
+deactivate SiteDB
+
+MHS -> MHS : fetchAuxRealtime(site)\nget grid meter, EMI,\nbattery device data\nvia Huawei getDevRealKpi
+
+MHS -> MHS : compute:\npvPowerKw, gridSignedPowerKw,\nbatterySigned, loadPowerKw,\nmeterVoltage, batterySoc,\nirradiance, weather
+
+MHS --> Ctrl : {energyFlow, summaryCards,\nsupportingData}
+deactivate MHS
+
+Ctrl --> FE : 200 {data}
+deactivate Ctrl
+
+FE --> User : Display energy flow\n& summary cards
+deactivate FE
+deactivate User
+
+@enduml

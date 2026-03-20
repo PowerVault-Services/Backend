@@ -1,0 +1,81 @@
+@startuml ERD_Site
+!define primary_key(x) <b><u>x</u></b>
+!define foreign_key(x) <i>x</i>
+!define not_null(x) <b>x</b>
+
+hide circle
+skinparam linetype ortho
+skinparam entity {
+  BackgroundColor #FEFECE
+  BorderColor #A80036
+  ArrowColor #A80036
+}
+
+title Solar O&M — Site & Project Data
+
+entity "User" as user {
+  primary_key(id) : INT <<PK>>
+  --
+  not_null(username) : VARCHAR
+  not_null(role) : Role <<enum>>
+}
+
+entity "Site" as site {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(ownerId) : INT <<FK>>
+  not_null(name) : VARCHAR
+  not_null(plantCode) : VARCHAR <<unique>>
+  not_null(capacityKWp) : FLOAT
+  address : VARCHAR
+  latitude : FLOAT
+  longitude : FLOAT
+  projectStatus : ProjectStatus <<enum>>
+  warrantyStart : TIMESTAMP
+  warrantyEnd : TIMESTAMP
+  companyName : VARCHAR
+  panelBrand : VARCHAR
+  panelModel : VARCHAR
+  panelWatt : FLOAT
+  inverterCount : INT
+  inverterBrand : VARCHAR
+  siteImageUrl : VARCHAR
+  createdAt : TIMESTAMP
+  updatedAt : TIMESTAMP
+}
+
+entity "SiteLayout" as layout {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(type) : LayoutType <<enum>>
+  not_null(fileUrl) : VARCHAR
+  createdAt : TIMESTAMP
+  ..
+  <<unique>> (siteId, type)
+}
+
+entity "SiteOtherRow" as other {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  status : VARCHAR
+  description : VARCHAR
+  remark : VARCHAR
+}
+
+entity "ServiceEntry" as sentry {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(job) : JobType <<enum>>
+  description : VARCHAR
+}
+
+' Relationships
+user ||--o{ site : "owns"
+site ||--o{ layout : "has"
+site ||--o{ other : "other_info"
+site ||--o{ sentry : "service_history"
+
+@enduml

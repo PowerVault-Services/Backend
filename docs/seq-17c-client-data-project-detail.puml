@@ -1,0 +1,29 @@
+@startuml Client Data - Project Detail (All Tabs)
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "ClientData\nController" as Ctrl
+participant "Prisma\n(Site)" as SiteDB
+
+User -> FE : Click on project row
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/client-data/projects/:siteId
+activate Ctrl
+
+Ctrl -> SiteDB : findUnique({id: siteId},\ninclude: {\n  warrantySupplierItems,\n  warrantyCustomerItems,\n  layouts,\n  forecastMonthly,\n  forecastYearly,\n  otherRows,\n  serviceEntries\n})
+activate SiteDB
+SiteDB --> Ctrl : site with all relations
+deactivate SiteDB
+
+Ctrl --> FE : 200 {site + warrantySupplierItems[]\n+ warrantyCustomerItems[]\n+ layouts[] + forecastMonthly[]\n+ forecastYearly[] + otherRows[]\n+ serviceEntries[]}
+deactivate Ctrl
+
+FE --> User : Display project detail tabs
+deactivate FE
+deactivate User
+
+@enduml

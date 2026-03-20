@@ -1,0 +1,55 @@
+@startuml Huawei Login and Token Management
+hide footbox
+skinparam sequenceMessageAlign center
+
+participant "HuaweiService" as HS
+participant "LoginThrottle" as LT
+participant "AxiosClient" as AX
+participant "HuaweiBudget" as BG
+participant "Huawei API" as API
+
+[-> HS : ensureLoggedIn(opts?)
+activate HS
+
+HS -> HS : check token exists
+alt Token already valid
+    HS --> [: return (cached token)
+else Token expired or forced
+    HS -> LT : check loginAttempts\n(max 5 per 10 min)
+    activate LT
+    alt Rate limited
+        LT --> HS : throw LOGIN_THROTTLED
+        HS --> [: error
+    else Allowed
+        LT --> HS : OK
+        deactivate LT
+
+        HS -> AX : post('/thirdData/login',\n{userName, systemCode})
+        activate AX
+
+        AX -> BG : recordBudgetRequest()
+        activate BG
+        BG --> AX : OK
+        deactivate BG
+
+        AX -> API : POST /thirdData/login
+        activate API
+        API --> AX : response + XSRF-TOKEN header
+        deactivate API
+
+        alt Login success (failCode === 0)
+            AX --> HS : token extracted from header
+            deactivate AX
+            HS -> HS : store token\nreset cooldown\nrecord loginAttempt
+        else Login failed (305/407)
+            AX --> HS : error response
+            HS -> HS : notifyRateLimit()\nset cooldownUntil\nincrease minIntervalMs
+            HS --> [: throw error
+        end
+    end
+end
+
+HS --> [: return
+deactivate HS
+
+@enduml

@@ -1,0 +1,81 @@
+@startuml Draft Management - Save / List / Email Signatures
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Draft\nController" as Ctrl
+participant "EmailSignature\nService" as SigSvc
+participant "Prisma\n(Job)" as JobDB
+
+== Save Draft Progress ==
+
+User -> FE : Click Save Draft button
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/drafts/save\n{jobId, step}
+activate Ctrl
+
+Ctrl -> JobDB : findUnique({where: {id: jobId}})
+activate JobDB
+JobDB --> Ctrl : job {type, step}
+deactivate JobDB
+
+Ctrl -> Ctrl : clampStep(type, stepIn)\nnextStep = max(current, input)
+
+Ctrl -> JobDB : update({where: {id: jobId},\ndata: {status: DRAFT,\nstep: nextStep}})
+activate JobDB
+JobDB --> Ctrl : updatedJob
+deactivate JobDB
+
+Ctrl --> FE : 200 {jobId, jobNo,\ntype, status, step}
+deactivate Ctrl
+
+FE --> User : Draft saved
+deactivate FE
+deactivate User
+
+== List Draft Jobs ==
+
+User -> FE : Open drafts page
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/drafts\n?jobType=CLEANING
+activate Ctrl
+
+Ctrl -> JobDB : findMany({where:\n{status: DRAFT, type?},\norderBy: updatedAt desc,\ninclude: {site}})
+activate JobDB
+JobDB --> Ctrl : draftJobs[]
+deactivate JobDB
+
+Ctrl --> FE : 200 {drafts[]\n{jobId, jobNo, jobType,\nstep, projectName, updatedAt}}
+deactivate Ctrl
+
+FE --> User : Display draft list
+deactivate FE
+deactivate User
+
+== List Email Signatures ==
+
+User -> FE : Open email compose\n(load signature dropdown)
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/drafts/email-signatures
+activate Ctrl
+
+Ctrl -> SigSvc : getEmailSignaturePresets()
+activate SigSvc
+SigSvc --> Ctrl : presets[]
+deactivate SigSvc
+
+Ctrl --> FE : 200 {supportsCustomName: true,\ndefaultKey, defaultName, items[]}
+deactivate Ctrl
+
+FE --> User : Display signature options
+deactivate FE
+deactivate User
+
+@enduml

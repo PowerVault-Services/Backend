@@ -1,0 +1,193 @@
+@startuml ERD_Chen_Overview
+' ============================================================
+' Solar O&M System — ER Diagram Overview (Chen Notation)
+' Entities (blue) + Relationships (orange) only — no attributes
+' ============================================================
+
+top to bottom direction
+
+skinparam defaultFontSize 12
+skinparam linetype polyline
+
+skinparam rectangle {
+  BackgroundColor #ADD8E6
+  BorderColor #000000
+  FontStyle bold
+}
+
+skinparam hexagon {
+  BackgroundColor #F4A460
+  BorderColor #000000
+}
+
+' ══════════════════════════════════════
+' Entities
+' ══════════════════════════════════════
+
+rectangle "User" as E_User
+rectangle "Site" as E_Site
+rectangle "Inverter" as E_Inv
+rectangle "InverterKpiSnapshot" as E_KPI
+rectangle "InverterStringSnapshot" as E_Str
+rectangle "SiteDailyEnergy" as E_Daily
+rectangle "Alarm" as E_Alarm
+rectangle "SiteLayout" as E_Layout
+rectangle "SiteForecastMonthly" as E_FCM
+rectangle "SiteForecastYearly" as E_FCY
+rectangle "SiteMonthlyActual" as E_ACT
+rectangle "SiteWarrantySupplierItem" as E_WSI
+rectangle "SiteWarrantyCustomerItem" as E_WCI
+rectangle "SiteOtherRow" as E_Other
+rectangle "ServiceEntry" as E_SE
+rectangle "Job" as E_Job
+rectangle "CleaningJob" as E_CJ
+rectangle "ServiceJob" as E_SJ
+rectangle "InspectionJob" as E_IJ
+rectangle "JobAttachment" as E_Att
+rectangle "EmailLog" as E_Email
+rectangle "Product" as E_Prod
+rectangle "ProductCategory" as E_PCat
+rectangle "Unit" as E_Unit
+rectangle "StockTransaction" as E_Stock
+
+' ══════════════════════════════════════
+' User ↔ Site
+' ══════════════════════════════════════
+
+hexagon "owns" as R_owns
+E_User == "1" R_owns
+R_owns == "N" E_Site
+
+' ══════════════════════════════════════
+' Site children
+' ══════════════════════════════════════
+
+hexagon "contains" as R_contains
+E_Site == "1" R_contains
+R_contains == "N" E_Inv
+
+hexagon "records\n(daily)" as R_site_daily
+E_Site == "1" R_site_daily
+R_site_daily == "N" E_Daily
+
+hexagon "has\n(layout)" as R_site_layout
+E_Site == "1" R_site_layout
+R_site_layout == "N" E_Layout
+
+hexagon "forecasts\n(monthly)" as R_site_fcm
+E_Site == "1" R_site_fcm
+R_site_fcm == "N" E_FCM
+
+hexagon "forecasts\n(yearly)" as R_site_fcy
+E_Site == "1" R_site_fcy
+R_site_fcy == "N" E_FCY
+
+hexagon "actuals" as R_site_act
+E_Site == "1" R_site_act
+R_site_act == "N" E_ACT
+
+hexagon "warranty\n(supplier)" as R_site_wsi
+E_Site == "1" R_site_wsi
+R_site_wsi == "N" E_WSI
+
+hexagon "warranty\n(customer)" as R_site_wci
+E_Site == "1" R_site_wci
+R_site_wci == "N" E_WCI
+
+hexagon "other_info" as R_site_other
+E_Site == "1" R_site_other
+R_site_other == "N" E_Other
+
+hexagon "service\nhistory" as R_site_se
+E_Site == "1" R_site_se
+R_site_se == "N" E_SE
+
+hexagon "has\n(alarm)" as R_site_alarm
+E_Site == "1" R_site_alarm
+R_site_alarm == "N" E_Alarm
+
+hexagon "has\n(job)" as R_site_job
+E_Site == "1" R_site_job
+R_site_job == "N" E_Job
+
+' ══════════════════════════════════════
+' Inverter
+' ══════════════════════════════════════
+
+hexagon "has\n(kpi)" as R_inv_kpi
+E_Inv == "1" R_inv_kpi
+R_inv_kpi == "N" E_KPI
+
+hexagon "raises" as R_inv_alarm
+E_Inv == "1" R_inv_alarm
+R_inv_alarm == "N" E_Alarm
+
+hexagon "has\n(string)" as R_kpi_str
+E_KPI == "1" R_kpi_str
+R_kpi_str == "N" E_Str
+
+' ══════════════════════════════════════
+' User ↔ Job
+' ══════════════════════════════════════
+
+hexagon "creates" as R_creates
+E_User == "1" R_creates
+R_creates == "N" E_Job
+
+hexagon "assigned_to" as R_assigned
+E_User == "1" R_assigned
+R_assigned == "N" E_Job
+
+hexagon "sends\nstep2/step5" as R_user_cj
+E_User == "1" R_user_cj
+R_user_cj == "N" E_CJ
+
+' ══════════════════════════════════════
+' Job specialization
+' ══════════════════════════════════════
+
+hexagon "extends" as R_job_cj
+E_Job == "1" R_job_cj
+R_job_cj == "0..1" E_CJ
+
+hexagon "extends" as R_job_sj
+E_Job == "1" R_job_sj
+R_job_sj == "0..1" E_SJ
+
+hexagon "extends" as R_job_ij
+E_Job == "1" R_job_ij
+R_job_ij == "0..1" E_IJ
+
+' ══════════════════════════════════════
+' Job children
+' ══════════════════════════════════════
+
+hexagon "has\n(attachment)" as R_job_att
+E_Job == "1" R_job_att
+R_job_att == "N" E_Att
+
+hexagon "logs" as R_job_email
+E_Job == "1" R_job_email
+R_job_email == "N" E_Email
+
+hexagon "uses\n(stock)" as R_job_stock
+E_Job == "1" R_job_stock
+R_job_stock == "N" E_Stock
+
+' ══════════════════════════════════════
+' Product & Stock
+' ══════════════════════════════════════
+
+hexagon "categorized_as" as R_cat_prod
+E_PCat == "1" R_cat_prod
+R_cat_prod == "N" E_Prod
+
+hexagon "measured_in" as R_unit_prod
+E_Unit == "1" R_unit_prod
+R_unit_prod == "N" E_Prod
+
+hexagon "records\n(stock)" as R_prod_stock
+E_Prod == "1" R_prod_stock
+R_prod_stock == "N" E_Stock
+
+@enduml

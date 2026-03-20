@@ -1,0 +1,42 @@
+@startuml Client Data - Layout Upload (PV Layout / PV String Layout)
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "ClientData\nController" as Ctrl
+participant "StorageService" as Storage
+participant "Prisma\n(SiteLayout)" as LayoutDB
+participant "MinIO /\nLocal Disk" as FS
+
+User -> FE : Upload layout file\n(PV_LAYOUT or PV_STRING_LAYOUT)
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/client-data/projects/:siteId\n/layouts/:type\n(multipart: file)
+activate Ctrl
+
+Ctrl -> Ctrl : parseLayoutType(type)\nvalidate PV_LAYOUT | PV_STRING_LAYOUT
+
+Ctrl -> Storage : storeIncomingUserUpload(file,\n{scopeParts: ['sites', 'site_N',\n'layouts', type]})
+activate Storage
+Storage -> FS : upload file
+activate FS
+FS --> Storage : storedFile
+deactivate FS
+Storage --> Ctrl : {fileUrl}
+deactivate Storage
+
+Ctrl -> LayoutDB : upsert({where: {siteId_type},\ncreate: {siteId, type, fileUrl},\nupdate: {fileUrl}})
+activate LayoutDB
+LayoutDB --> Ctrl : layout
+deactivate LayoutDB
+
+Ctrl --> FE : 200 {siteId, type, fileUrl}
+deactivate Ctrl
+
+FE --> User : Layout uploaded
+deactivate FE
+deactivate User
+
+@enduml

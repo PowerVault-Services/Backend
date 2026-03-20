@@ -1,0 +1,74 @@
+@startuml Huawei Client Pool and Load Balancing
+hide footbox
+skinparam sequenceMessageAlign center
+
+participant "Caller\n(SyncService)" as Caller
+participant "HuaweiPool" as Pool
+participant "StationAccess\nRegistry" as Reg
+participant "HuaweiService\n(main)" as Main
+participant "HuaweiService\n(alarm)" as Alarm
+participant "HuaweiService\n(ondemand)" as OD
+participant "HuaweiService\n(backup)" as Backup
+
+== Client Selection by Purpose ==
+
+Caller -> Pool : getStationClientCandidates\n(stationCode, purpose)
+activate Pool
+
+Pool -> Pool : getPreferredClientOrderForPurpose\n(purpose, batchIndex)
+activate Pool
+
+Pool -> Pool : getDistinctHuaweiClients(purpose)
+activate Pool
+Pool -> Pool : filter by unique accountKey\nrotate by batchIndex
+Pool --> Pool : distinctClients[]
+deactivate Pool
+
+Pool --> Pool : orderedClients[]
+deactivate Pool
+
+Pool -> Reg : lookup stationCode metadata
+activate Reg
+Reg --> Pool : {preferredClient, failureCounts}
+deactivate Reg
+
+Pool -> Pool : sort by:\n1. not cooling down\n2. preferred client first\n3. lowest failure count
+
+Pool --> Caller : sortedCandidates[]
+deactivate Pool
+
+== Request with Failover ==
+
+Caller -> Pool : syncPlantDevicesWithFailover\n(site, runStateCount)
+activate Pool
+
+loop for each candidate client
+    Pool -> Main : syncPlantDevices(site, client)
+    activate Main
+
+    alt Success
+        Main --> Pool : result
+        deactivate Main
+
+        Pool -> Reg : registerStationAccess\n(stationCode, client)
+        activate Reg
+        Reg --> Pool : OK
+        deactivate Reg
+
+        Pool --> Caller : result
+    else Failure (rate limit / error)
+        Main --> Pool : error
+        deactivate Main
+
+        Pool -> Reg : noteStationFailure\n(stationCode, client)
+        activate Reg
+        Reg --> Pool : OK
+        deactivate Reg
+
+        Pool -> Pool : try next candidate
+    end
+end
+
+deactivate Pool
+
+@enduml

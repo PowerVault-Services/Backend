@@ -1,0 +1,89 @@
+@startuml Stock Management - IN / OUT / DEDUCT Transactions
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Stock\nController" as Ctrl
+participant "Prisma\n(Product)" as ProdDB
+participant "Prisma\n(Stock\nTransaction)" as TxDB
+
+== Stock IN Transaction ==
+
+User -> FE : Record stock received
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/stock/in\n{productId, qty, note, projectId?}
+activate Ctrl
+
+Ctrl -> ProdDB : findUnique(productId)
+activate ProdDB
+ProdDB --> Ctrl : product
+deactivate ProdDB
+
+Ctrl -> TxDB : create({productId, qty,\ntype: 'IN', note, projectId})
+activate TxDB
+TxDB --> Ctrl : transaction
+deactivate TxDB
+
+Ctrl --> FE : 201 {transaction}
+deactivate Ctrl
+
+FE --> User : Stock IN recorded
+deactivate FE
+deactivate User
+
+== Stock OUT Transaction ==
+
+User -> FE : Record stock issued
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/stock/out\n{productId, qty, note, projectId?}
+activate Ctrl
+
+Ctrl -> ProdDB : findUnique(productId)
+activate ProdDB
+ProdDB --> Ctrl : product
+deactivate ProdDB
+
+Ctrl -> TxDB : create({productId, qty,\ntype: 'OUT', note, projectId})
+activate TxDB
+TxDB --> Ctrl : transaction
+deactivate TxDB
+
+Ctrl --> FE : 201 {transaction}
+deactivate Ctrl
+
+FE --> User : Stock OUT recorded
+deactivate FE
+deactivate User
+
+== Stock DEDUCT (from Service Job) ==
+
+User -> FE : Record stock used in service
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/stock/deduct\n{productId, qty, jobId, projectId}
+activate Ctrl
+
+Ctrl -> ProdDB : findUnique(productId)
+activate ProdDB
+ProdDB --> Ctrl : product
+deactivate ProdDB
+
+Ctrl -> TxDB : create({productId, qty,\ntype: 'DEDUCT', jobId, projectId})
+activate TxDB
+TxDB --> Ctrl : transaction
+deactivate TxDB
+
+Ctrl --> FE : 201 {transaction}
+deactivate Ctrl
+
+FE --> User : Stock deducted
+deactivate FE
+deactivate User
+
+@enduml

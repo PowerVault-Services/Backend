@@ -1,0 +1,35 @@
+@startuml Inspection Job - Step 1: Create Draft
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Inspection\nController" as Ctrl
+participant "Prisma\n(Job)" as JobDB
+participant "Prisma\n(InspectionJob)" as IJB
+
+User -> FE : Fill inspection job form
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/inspection/step1\n{siteId, inspectionDate, inspector, ...}
+activate Ctrl
+
+Ctrl -> JobDB : create({type: INSPECTION,\nstatus: DRAFT, currentStep: 1})
+activate JobDB
+JobDB --> Ctrl : job {jobId, jobNo}
+deactivate JobDB
+
+Ctrl -> IJB : create({jobId, inspectionDate,\ninspector, ...})
+activate IJB
+IJB --> Ctrl : inspectionJob
+deactivate IJB
+
+Ctrl --> FE : 200 {jobId, jobNo}
+deactivate Ctrl
+
+FE --> User : Job created
+deactivate FE
+deactivate User
+
+@enduml

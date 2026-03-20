@@ -1,0 +1,206 @@
+@startuml Inspection Job Workflow - 3 Steps
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Inspection\nController" as Ctrl
+participant "StorageService" as Storage
+participant "EmailService" as Email
+participant "Prisma\n(Job)" as JobDB
+participant "Prisma\n(InspectionJob)" as IJB
+participant "Prisma\n(JobAttachment)" as AttDB
+participant "MinIO /\nLocal Disk" as FS
+participant "SMTP\nServer" as SMTP
+
+== Step 1: Create Draft ==
+
+User -> FE : Fill inspection job form
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/inspection/step1\n{siteId, inspectionDate, inspector, ...}
+activate Ctrl
+
+Ctrl -> JobDB : create({type: INSPECTION,\nstatus: DRAFT, currentStep: 1})
+activate JobDB
+JobDB --> Ctrl : job {jobId, jobNo}
+deactivate JobDB
+
+Ctrl -> IJB : create({jobId, inspectionDate,\ninspector, ...})
+activate IJB
+IJB --> Ctrl : inspectionJob
+deactivate IJB
+
+Ctrl --> FE : 200 {jobId, jobNo}
+deactivate Ctrl
+
+FE --> User : Job created
+deactivate FE
+deactivate User
+
+== Step 2: Upload Attachments & Send Email ==
+
+User -> FE : Upload attachments + compose email
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/inspection/step2/draft\n(multipart: attachments[], to, subject, body)
+activate Ctrl
+
+loop for each uploaded file
+    Ctrl -> Storage : storeIncomingUserUpload(file)
+    activate Storage
+    Storage -> FS : upload
+    activate FS
+    FS --> Storage : storedFile
+    deactivate FS
+    Storage --> Ctrl : {fileUrl}
+    deactivate Storage
+
+    Ctrl -> AttDB : create({jobId, step: 2, fileUrl})
+    activate AttDB
+    AttDB --> Ctrl : OK
+    deactivate AttDB
+end
+
+Ctrl -> IJB : upsert({step2To, step2Subject,\nstep2Body})
+activate IJB
+IJB --> Ctrl : OK
+deactivate IJB
+
+Ctrl -> Ctrl : bumpJobStep(jobId, 2)
+
+Ctrl --> FE : 200 {draft saved}
+deactivate Ctrl
+
+FE --> User : Draft saved
+deactivate FE
+deactivate User
+
+User -> FE : Click Send
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/inspection/step2/send {jobId}
+activate Ctrl
+
+Ctrl -> IJB : findUnique(jobId)
+activate IJB
+IJB --> Ctrl : inspectionJob + attachments
+deactivate IJB
+
+loop for each attachment
+    Ctrl -> Storage : resolveEmailAttachment(fileUrl)
+    activate Storage
+    Storage --> Ctrl : {filename, path}
+    deactivate Storage
+end
+
+Ctrl -> Email : sendEmailNow({to, subject,\nhtml, attachments[]})
+activate Email
+Email -> SMTP : send email
+activate SMTP
+SMTP --> Email : OK
+deactivate SMTP
+Email --> Ctrl : {success}
+deactivate Email
+
+Ctrl -> IJB : update({step2SentAt: now})
+activate IJB
+IJB --> Ctrl : OK
+deactivate IJB
+
+Ctrl -> JobDB : update({status: ASSIGNED})
+activate JobDB
+JobDB --> Ctrl : OK
+deactivate JobDB
+
+Ctrl --> FE : 200 {sent: true}
+deactivate Ctrl
+
+FE --> User : Email sent
+deactivate FE
+deactivate User
+
+== Step 3: Upload Report & Send Final Email ==
+
+User -> FE : Upload inspection report file
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/inspection/step3/draft\n(multipart: report file)
+activate Ctrl
+
+Ctrl -> Storage : storeIncomingReportUpload(file)
+activate Storage
+Storage -> FS : upload report file
+activate FS
+FS --> Storage : storedFile
+deactivate FS
+Storage --> Ctrl : {fileUrl}
+deactivate Storage
+
+Ctrl -> AttDB : create({jobId, step: 3,\nlabel: 'report', fileUrl})
+activate AttDB
+AttDB --> Ctrl : OK
+deactivate AttDB
+
+Ctrl -> IJB : upsert({reportFileUrl,\nstep3To, step3Subject, step3Body})
+activate IJB
+IJB --> Ctrl : OK
+deactivate IJB
+
+Ctrl -> Ctrl : bumpJobStep(jobId, 3)
+
+Ctrl --> FE : 200 {draft saved}
+deactivate Ctrl
+
+FE --> User : Draft saved
+deactivate FE
+deactivate User
+
+User -> FE : Click Send Report
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/inspection/step3/send {jobId}
+activate Ctrl
+
+Ctrl -> IJB : findUnique(jobId)
+activate IJB
+IJB --> Ctrl : inspectionJob
+deactivate IJB
+
+Ctrl -> Storage : tryEnsureLocalFilePath\n(reportFileUrl)
+activate Storage
+Storage --> Ctrl : localPath
+deactivate Storage
+
+Ctrl -> Email : sendEmailNow({to, subject,\nhtml, attachments: [report]})
+activate Email
+Email -> SMTP : send email with report
+activate SMTP
+SMTP --> Email : OK
+deactivate SMTP
+Email --> Ctrl : {success}
+deactivate Email
+
+Ctrl -> IJB : update({step3SentAt: now})
+activate IJB
+IJB --> Ctrl : OK
+deactivate IJB
+
+Ctrl -> JobDB : update({status: COMPLETED})
+activate JobDB
+JobDB --> Ctrl : OK
+deactivate JobDB
+
+Ctrl --> FE : 200 {sent: true}
+deactivate Ctrl
+
+FE --> User : Job completed
+deactivate FE
+deactivate User
+
+@enduml

@@ -1,0 +1,63 @@
+@startuml Client Data - List Projects (Thailand & Service)
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "ClientData\nController" as Ctrl
+participant "Prisma\n(Site)" as SiteDB
+participant "Prisma\n(ServiceEntry)" as EntryDB
+
+== List PowerVault Thailand Projects ==
+
+User -> FE : Open Thailand projects page
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/client-data/thailand/projects\n?projectNo&projectName&systemSizeKWp\n&endWarrantyBefore&status&page&pageSize
+activate Ctrl
+
+Ctrl -> SiteDB : count({where: filters})
+activate SiteDB
+SiteDB --> Ctrl : total
+deactivate SiteDB
+
+Ctrl -> SiteDB : findMany({where: filters,\norderBy: name asc, skip, take})
+activate SiteDB
+SiteDB --> Ctrl : sites[]
+deactivate SiteDB
+
+Ctrl --> FE : 200 {page, pageSize, total, items[]}
+deactivate Ctrl
+
+FE --> User : Display project list
+deactivate FE
+deactivate User
+
+== List PowerVault Service Entries ==
+
+User -> FE : Open Service entries page
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/client-data/service/entries\n?projectNo&projectName&systemSizeKWp\n&job&page&pageSize
+activate Ctrl
+
+Ctrl -> EntryDB : count({where: filters})
+activate EntryDB
+EntryDB --> Ctrl : total
+deactivate EntryDB
+
+Ctrl -> EntryDB : findMany({where: filters,\norderBy: createdAt desc, skip, take,\ninclude: {site}})
+activate EntryDB
+EntryDB --> Ctrl : entries[] with site
+deactivate EntryDB
+
+Ctrl --> FE : 200 {page, pageSize, total, items[]}
+deactivate Ctrl
+
+FE --> User : Display service entries
+deactivate FE
+deactivate User
+
+@enduml

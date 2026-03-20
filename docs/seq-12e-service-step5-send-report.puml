@@ -1,0 +1,46 @@
+@startuml Service Job - Step 5: Send Final Report Email
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Service\nController" as Ctrl
+participant "StorageService" as Storage
+participant "EmailService" as Email
+participant "Prisma\n(Job)" as JobDB
+participant "SMTP\nServer" as SMTP
+
+User -> FE : Send report email
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/service/step5/send {jobId}
+activate Ctrl
+
+Ctrl -> Storage : tryEnsureLocalFilePath(reportUrl)
+activate Storage
+Storage --> Ctrl : localPath
+deactivate Storage
+
+Ctrl -> Email : sendEmailNow({to, subject,\nhtml, attachments: [report]})
+activate Email
+Email -> SMTP : send email with PDF
+activate SMTP
+SMTP --> Email : OK
+deactivate SMTP
+Email --> Ctrl : {success}
+deactivate Email
+
+Ctrl -> JobDB : update({status: COMPLETED})
+activate JobDB
+JobDB --> Ctrl : OK
+deactivate JobDB
+
+Ctrl --> FE : 200 {sent: true}
+deactivate Ctrl
+
+FE --> User : Job completed
+deactivate FE
+deactivate User
+
+@enduml

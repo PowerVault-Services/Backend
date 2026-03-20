@@ -1,0 +1,45 @@
+@startuml Stock Management - Category CRUD
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Stock\nController" as Ctrl
+participant "Prisma\n(Product\nCategory)" as CatDB
+
+User -> FE : Manage categories
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/stock/categories\n{name}
+activate Ctrl
+Ctrl -> CatDB : create({name})
+activate CatDB
+CatDB --> Ctrl : category
+deactivate CatDB
+Ctrl --> FE : 201 {category}
+deactivate Ctrl
+
+FE -> Ctrl : PATCH /api/stock/categories/:id\n{name}
+activate Ctrl
+Ctrl -> CatDB : update({id, name})
+activate CatDB
+CatDB --> Ctrl : category
+deactivate CatDB
+Ctrl --> FE : 200 {category}
+deactivate Ctrl
+
+FE -> Ctrl : DELETE /api/stock/categories/:id
+activate Ctrl
+Ctrl -> CatDB : delete({id})
+activate CatDB
+CatDB --> Ctrl : OK
+deactivate CatDB
+Ctrl --> FE : 200 {deleted}
+deactivate Ctrl
+
+FE --> User : Categories updated
+deactivate FE
+deactivate User
+
+@enduml

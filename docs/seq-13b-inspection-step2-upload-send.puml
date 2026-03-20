@@ -1,0 +1,102 @@
+@startuml Inspection Job - Step 2: Upload Attachments & Send Email
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Inspection\nController" as Ctrl
+participant "StorageService" as Storage
+participant "EmailService" as Email
+participant "Prisma\n(Job)" as JobDB
+participant "Prisma\n(InspectionJob)" as IJB
+participant "Prisma\n(JobAttachment)" as AttDB
+participant "MinIO /\nLocal Disk" as FS
+participant "SMTP\nServer" as SMTP
+
+== Draft ==
+
+User -> FE : Upload attachments + compose email
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/inspection/step2/draft\n(multipart: attachments[], to, subject, body)
+activate Ctrl
+
+loop for each uploaded file
+    Ctrl -> Storage : storeIncomingUserUpload(file)
+    activate Storage
+    Storage -> FS : upload
+    activate FS
+    FS --> Storage : storedFile
+    deactivate FS
+    Storage --> Ctrl : {fileUrl}
+    deactivate Storage
+
+    Ctrl -> AttDB : create({jobId, step: 2, fileUrl})
+    activate AttDB
+    AttDB --> Ctrl : OK
+    deactivate AttDB
+end
+
+Ctrl -> IJB : upsert({step2To, step2Subject,\nstep2Body})
+activate IJB
+IJB --> Ctrl : OK
+deactivate IJB
+
+Ctrl -> Ctrl : bumpJobStep(jobId, 2)
+
+Ctrl --> FE : 200 {draft saved}
+deactivate Ctrl
+
+FE --> User : Draft saved
+deactivate FE
+deactivate User
+
+== Send ==
+
+User -> FE : Click Send
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/inspection/step2/send {jobId}
+activate Ctrl
+
+Ctrl -> IJB : findUnique(jobId)
+activate IJB
+IJB --> Ctrl : inspectionJob + attachments
+deactivate IJB
+
+loop for each attachment
+    Ctrl -> Storage : resolveEmailAttachment(fileUrl)
+    activate Storage
+    Storage --> Ctrl : {filename, path}
+    deactivate Storage
+end
+
+Ctrl -> Email : sendEmailNow({to, subject,\nhtml, attachments[]})
+activate Email
+Email -> SMTP : send email
+activate SMTP
+SMTP --> Email : OK
+deactivate SMTP
+Email --> Ctrl : {success}
+deactivate Email
+
+Ctrl -> IJB : update({step2SentAt: now})
+activate IJB
+IJB --> Ctrl : OK
+deactivate IJB
+
+Ctrl -> JobDB : update({status: ASSIGNED})
+activate JobDB
+JobDB --> Ctrl : OK
+deactivate JobDB
+
+Ctrl --> FE : 200 {sent: true}
+deactivate Ctrl
+
+FE --> User : Email sent
+deactivate FE
+deactivate User
+
+@enduml

@@ -1,0 +1,128 @@
+@startuml Device Inverter Sync - Cron Job
+hide footbox
+skinparam sequenceMessageAlign center
+
+participant "Cron\nScheduler" as Cron
+participant "SyncService" as Sync
+participant "SyncState\nService" as State
+participant "HuaweiPool" as Pool
+participant "HuaweiService" as HW
+participant "Huawei API" as API
+participant "Prisma\n(Inverter)" as InvDB
+participant "Prisma\n(InverterKpi\nSnapshot)" as KpiDB
+participant "Prisma\n(InverterString\nSnapshot)" as StrDB
+
+Cron -> Sync : syncMonitoringTick()
+activate Sync
+
+Sync -> State : markJobStart('device')
+activate State
+State --> Sync : OK
+deactivate State
+
+Sync -> Sync : refreshStationsIfNeeded()
+activate Sync
+Sync --> Sync : plantCodes[]
+deactivate Sync
+
+Sync -> Pool : resolveDynamicDevicePlantsPerTick()
+activate Pool
+Pool --> Sync : plantsPerTick
+deactivate Pool
+
+Sync -> State : getStalestStationCodes\n('device', plantCodes, plantsPerTick)
+activate State
+State --> Sync : prioritizedPlantCodes[]
+deactivate State
+
+loop for each site in prioritizedPlantCodes
+    Sync -> Sync : syncPlantDevicesWithFailover\n(site, runStateCount)
+    activate Sync
+
+    Sync -> Pool : getStationClientCandidates\n(plantCode, 'device')
+    activate Pool
+    Pool --> Sync : candidateClients[]
+    deactivate Pool
+
+    == Ensure Device Metadata ==
+
+    Sync -> Sync : ensurePlantDeviceMetadata\n(site, client)
+    activate Sync
+
+    Sync -> InvDB : getCachedDeviceTargets(siteId)
+    activate InvDB
+    InvDB --> Sync : cachedDevices[]
+    deactivate InvDB
+
+    alt Cache expired or empty
+        Sync -> HW : getDevList(stationCodes)
+        activate HW
+        HW -> API : POST /thirdData/getDevList
+        activate API
+        API --> HW : deviceList[]
+        deactivate API
+        HW --> Sync : deviceList[]
+        deactivate HW
+
+        loop for each device (type=1 inverter)
+            Sync -> InvDB : upsert({sn, devId, devName,\nmodel, softwareVersion, plantCode})
+            activate InvDB
+            InvDB --> Sync : OK
+            deactivate InvDB
+        end
+    end
+
+    deactivate Sync
+
+    == Fetch Device Real-time KPIs ==
+
+    Sync -> HW : getDevRealKpi({devTypeId: 1,\ndevIds: inverterIds})
+    activate HW
+    HW -> API : POST /thirdData/getDevRealKpi
+    activate API
+    API --> HW : deviceKpiList[]
+    deactivate API
+    HW --> Sync : deviceKpiList[]
+    deactivate HW
+
+    loop for each inverter KPI
+        Sync -> InvDB : update({status, activePowerKw,\nlastSyncAt})
+        activate InvDB
+        InvDB --> Sync : OK
+        deactivate InvDB
+
+        Sync -> KpiDB : upsert({inverterId, slotTs,\nactivePowerKw, dailyEnergyKwh,\ntemperature, efficiency, runState})
+        activate KpiDB
+        KpiDB --> Sync : OK
+        deactivate KpiDB
+
+        opt String data available (pv1-pv24)
+            Sync -> StrDB : upsert({snapshotId,\nstringIndex, voltage, current})
+            activate StrDB
+            StrDB --> Sync : OK
+            deactivate StrDB
+        end
+    end
+
+    Sync -> Pool : registerStationAccess\n(plantCode, client)
+    activate Pool
+    Pool --> Sync : OK
+    deactivate Pool
+
+    Sync -> State : markStations('device', [plantCode])
+    activate State
+    State --> Sync : OK
+    deactivate State
+
+    deactivate Sync
+end
+
+Sync -> State : markJobSuccess('device', {synced, total})
+activate State
+State -> State : persistToDb()
+State --> Sync : OK
+deactivate State
+
+deactivate Sync
+
+@enduml

@@ -1,0 +1,82 @@
+@startuml ERD_Inverter_Monitoring
+!define primary_key(x) <b><u>x</u></b>
+!define foreign_key(x) <i>x</i>
+!define not_null(x) <b>x</b>
+
+hide circle
+skinparam linetype ortho
+skinparam entity {
+  BackgroundColor #FEFECE
+  BorderColor #A80036
+  ArrowColor #A80036
+}
+
+title Solar O&M — Inverter & Monitoring
+
+entity "Site" as site {
+  primary_key(id) : INT <<PK>>
+  --
+  not_null(name) : VARCHAR
+  not_null(plantCode) : VARCHAR <<unique>>
+}
+
+entity "Inverter" as inverter {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(serialNumber) : VARCHAR <<unique>>
+  not_null(name) : VARCHAR
+  not_null(model) : VARCHAR
+  huaweiDevId : VARCHAR <<unique>>
+  activePower : FLOAT
+  status : VARCHAR
+  runState : INT
+  lastSyncAt : TIMESTAMP
+}
+
+entity "InverterKpiSnapshot" as kpi {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(inverterId) : INT <<FK>>
+  not_null(ts) : TIMESTAMP
+  activePower : FLOAT
+  dayEnergy : FLOAT
+  totalEnergy : FLOAT
+  temperature : FLOAT
+  raw : JSON
+  createdAt : TIMESTAMP
+  ..
+  <<unique>> (inverterId, ts)
+}
+
+entity "InverterStringSnapshot" as stringsnap {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(snapshotId) : INT <<FK>>
+  not_null(stringNo) : INT
+  voltage : FLOAT
+  current : FLOAT
+  status : VARCHAR
+  ..
+  <<unique>> (snapshotId, stringNo)
+}
+
+entity "SiteDailyEnergy" as daily {
+  primary_key(id) : INT <<PK>>
+  --
+  foreign_key(siteId) : INT <<FK>>
+  not_null(date) : TIMESTAMP
+  not_null(energyKWh) : FLOAT
+  raw : JSON
+  createdAt : TIMESTAMP
+  ..
+  <<unique>> (siteId, date)
+}
+
+' Relationships
+site ||--o{ inverter : "contains"
+site ||--o{ daily : "records"
+inverter ||--o{ kpi : "has"
+kpi ||--o{ stringsnap : "has"
+
+@enduml

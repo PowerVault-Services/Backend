@@ -1,0 +1,280 @@
+@startuml Cleaning Job Workflow - 5 Steps
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Cleaning\nController" as Ctrl
+participant "StorageService" as Storage
+participant "ReportService" as Report
+participant "EmailService" as Email
+participant "Prisma\n(Job)" as JobDB
+participant "Prisma\n(CleaningJob)" as CJB
+participant "Prisma\n(JobAttachment)" as AttDB
+participant "MinIO /\nLocal Disk" as FS
+participant "SMTP\nServer" as SMTP
+
+== Step 1: Create Draft ==
+
+User -> FE : Fill job form
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/cleaning/step1\n{siteId, projectType, contactPhone,\nworkDate, contractor, ...}
+activate Ctrl
+
+Ctrl -> JobDB : create({type: CLEANING,\nstatus: DRAFT, currentStep: 1})
+activate JobDB
+JobDB --> Ctrl : job
+deactivate JobDB
+
+Ctrl -> CJB : create({jobId, projectType,\ncontactPhone, workDate, ...})
+activate CJB
+CJB --> Ctrl : cleaningJob
+deactivate CJB
+
+Ctrl --> FE : 200 {jobId, jobNo}
+deactivate Ctrl
+
+FE --> User : Job created
+deactivate FE
+deactivate User
+
+== Step 2: Draft & Send Planning Email ==
+
+User -> FE : Upload files + compose email
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/cleaning/step2/draft\n(multipart: files[], to, subject, body)
+activate Ctrl
+
+loop for each uploaded file
+    Ctrl -> Storage : storeIncomingUserUpload(file)
+    activate Storage
+    Storage -> FS : upload to MinIO / save to disk
+    activate FS
+    FS --> Storage : storedPath
+    deactivate FS
+    Storage --> Ctrl : {fileUrl, objectKey}
+    deactivate Storage
+
+    Ctrl -> AttDB : create({jobId, step: 2,\nlabel, fileUrl})
+    activate AttDB
+    AttDB --> Ctrl : OK
+    deactivate AttDB
+end
+
+Ctrl -> CJB : update({step2To, step2Subject,\nstep2Body, step2SignatureId})
+activate CJB
+CJB --> Ctrl : OK
+deactivate CJB
+
+Ctrl -> Ctrl : bumpJobStep(jobId, 2)
+
+Ctrl --> FE : 200 {draft saved}
+deactivate Ctrl
+
+FE --> User : Draft saved
+deactivate FE
+deactivate User
+
+User -> FE : Click Send
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/cleaning/step2/send\n{jobId}
+activate Ctrl
+
+Ctrl -> CJB : findUnique(jobId)
+activate CJB
+CJB --> Ctrl : cleaningJob (with attachments)
+deactivate CJB
+
+loop for each attachment
+    Ctrl -> Storage : tryResolveEmailAttachment(fileUrl)
+    activate Storage
+    Storage --> Ctrl : {filename, path}
+    deactivate Storage
+end
+
+Ctrl -> Email : sendEmailNow({to, subject,\nhtml, attachments[]})
+activate Email
+Email -> SMTP : send email
+activate SMTP
+SMTP --> Email : OK
+deactivate SMTP
+Email --> Ctrl : {success: true}
+deactivate Email
+
+Ctrl -> CJB : update({step2SentAt: now})
+activate CJB
+CJB --> Ctrl : OK
+deactivate CJB
+
+Ctrl -> JobDB : update({status: ASSIGNED})
+activate JobDB
+JobDB --> Ctrl : OK
+deactivate JobDB
+
+Ctrl --> FE : 200 {sent: true}
+deactivate Ctrl
+
+FE --> User : Email sent
+deactivate FE
+deactivate User
+
+== Step 3: Upload Evidence & Checklist ==
+
+User -> FE : Upload evidence photos
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/cleaning/step3/evidence\n(multipart: files[], labelType)
+activate Ctrl
+
+loop for each evidence file
+    Ctrl -> Storage : storeIncomingUserUpload(file)
+    activate Storage
+    Storage -> FS : upload
+    activate FS
+    FS --> Storage : storedFile
+    deactivate FS
+    Storage --> Ctrl : {fileUrl}
+    deactivate Storage
+
+    Ctrl -> AttDB : create({jobId, step: 3,\nlabel: labelType, fileUrl})
+    activate AttDB
+    AttDB --> Ctrl : OK
+    deactivate AttDB
+end
+
+Ctrl -> Ctrl : bumpJobStep(jobId, 3)
+
+Ctrl --> FE : 200 {uploaded}
+deactivate Ctrl
+
+FE -> Ctrl : POST /api/cleaning/step3/checklist\n{jobId, checklistJson, step3SummaryNote}
+activate Ctrl
+
+Ctrl -> CJB : update({checklistJson,\nstep3SummaryNote})
+activate CJB
+CJB --> Ctrl : OK
+deactivate CJB
+
+Ctrl --> FE : 200 {saved}
+deactivate Ctrl
+
+FE --> User : Evidence saved
+deactivate FE
+deactivate User
+
+== Step 4: Generate PDF Report ==
+
+User -> FE : Click Generate Report
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/cleaning/step4/generate\n{jobId}
+activate Ctrl
+
+Ctrl -> JobDB : findUnique(jobId) with relations
+activate JobDB
+JobDB --> Ctrl : job + cleaningJob + attachments
+deactivate JobDB
+
+Ctrl -> Report : generateCleaningReportPdf\n({job, cleaningJob, evidenceFiles})
+activate Report
+
+loop for each evidence image
+    Report -> Storage : tryEnsureLocalFilePath(fileUrl)
+    activate Storage
+    Storage --> Report : localPath
+    deactivate Storage
+    Report -> Report : fileToDataUri(localPath)
+end
+
+Report -> Report : render HTML template\nwith data + images
+
+Report -> Report : puppeteer.launch()\npage.setContent(html)\npage.pdf({format: A4})
+activate Report
+Report --> Report : pdfBuffer
+deactivate Report
+
+Report -> Storage : storeGeneratedReportFromLocalFile\n(pdfPath)
+activate Storage
+Storage -> FS : upload PDF
+activate FS
+FS --> Storage : storedFile
+deactivate FS
+Storage --> Report : {fileUrl}
+deactivate Storage
+
+Report --> Ctrl : {fileUrl, localPath}
+deactivate Report
+
+Ctrl -> CJB : update({reportFileUrl})
+activate CJB
+CJB --> Ctrl : OK
+deactivate CJB
+
+Ctrl -> AttDB : create({jobId, step: 4,\nlabel: 'report', fileUrl})
+activate AttDB
+AttDB --> Ctrl : OK
+deactivate AttDB
+
+Ctrl -> Ctrl : bumpJobStep(jobId, 4)
+
+Ctrl --> FE : 200 {reportUrl}
+deactivate Ctrl
+
+FE --> User : Report generated
+deactivate FE
+deactivate User
+
+== Step 5: Send Final Report Email ==
+
+User -> FE : Compose final email + Send
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/cleaning/step5/send\n{jobId}
+activate Ctrl
+
+Ctrl -> CJB : findUnique(jobId)
+activate CJB
+CJB --> Ctrl : cleaningJob
+deactivate CJB
+
+Ctrl -> Storage : tryEnsureLocalFilePath\n(reportFileUrl)
+activate Storage
+Storage --> Ctrl : localReportPath
+deactivate Storage
+
+Ctrl -> Email : sendEmailNow({to, subject,\nhtml, attachments: [report]})
+activate Email
+Email -> SMTP : send email with PDF
+activate SMTP
+SMTP --> Email : OK
+deactivate SMTP
+Email --> Ctrl : {success: true}
+deactivate Email
+
+Ctrl -> CJB : update({step5SentAt: now})
+activate CJB
+CJB --> Ctrl : OK
+deactivate CJB
+
+Ctrl -> JobDB : update({status: COMPLETED})
+activate JobDB
+JobDB --> Ctrl : OK
+deactivate JobDB
+
+Ctrl --> FE : 200 {sent: true}
+deactivate Ctrl
+
+FE --> User : Job completed
+deactivate FE
+deactivate User
+
+@enduml

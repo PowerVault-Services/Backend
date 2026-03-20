@@ -1,0 +1,59 @@
+@startuml Bulk Download Reports ZIP (Cleaning / Service / Inspection)
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Job\nController" as Ctrl
+participant "jobManagement\nUtils" as Utils
+participant "StorageService" as Storage
+participant "Prisma\n(Job)" as JobDB
+participant "MinIO /\nLocal Disk" as FS
+
+User -> FE : Select jobs + click Download ZIP
+activate User
+activate FE
+
+FE -> Ctrl : GET|POST /api/{cleaning|service|inspection}\n/jobs/download-zip\n{jobIds: [1, 2, 3]}
+activate Ctrl
+
+Ctrl -> Ctrl : parseJobIds(input)
+
+Ctrl -> Utils : collectJobReportFiles\n(prisma, jobType, jobIds)
+activate Utils
+
+Utils -> JobDB : findMany({where:\n{id in jobIds, type},\ninclude: {cleaningJob |\nserviceJob | inspectionJob}})
+activate JobDB
+JobDB --> Utils : jobs[]
+deactivate JobDB
+
+loop for each job with reportFileUrl
+    Utils -> Storage : tryEnsureLocalFilePath\n(reportFileUrl)
+    activate Storage
+    Storage -> FS : check / download file
+    activate FS
+    FS --> Storage : localPath
+    deactivate FS
+    Storage --> Utils : localPath
+    deactivate Storage
+end
+
+Utils --> Ctrl : {files[], skipped[]}
+deactivate Utils
+
+Ctrl -> Utils : createReportsZip\n({jobType, files, skipped})
+activate Utils
+
+Utils -> Utils : archiver: create ZIP\nfrom collected files
+
+Utils --> Ctrl : {outPath, downloadName,\ncleanup()}
+deactivate Utils
+
+Ctrl --> FE : 200 (ZIP file stream)\nContent-Disposition: attachment
+deactivate Ctrl
+
+FE --> User : Download ZIP file
+deactivate FE
+deactivate User
+
+@enduml

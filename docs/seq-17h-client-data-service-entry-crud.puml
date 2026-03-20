@@ -1,0 +1,73 @@
+@startuml Client Data - Service Entry CRUD
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "ClientData\nController" as Ctrl
+participant "Prisma\n(ServiceEntry)" as EntryDB
+
+== Create Service Entry ==
+
+User -> FE : Add new service entry
+activate User
+activate FE
+
+FE -> Ctrl : POST /api/client-data/service/entries\n{siteId, job: SERVICE|CLEANING|\nINSPECTION|OM, description}
+activate Ctrl
+
+Ctrl -> EntryDB : create({siteId, job,\ndescription})
+activate EntryDB
+EntryDB --> Ctrl : serviceEntry
+deactivate EntryDB
+
+Ctrl --> FE : 200 {serviceEntry}
+deactivate Ctrl
+
+FE --> User : Entry created
+deactivate FE
+deactivate User
+
+== Update Service Entry ==
+
+User -> FE : Edit service entry
+activate User
+activate FE
+
+FE -> Ctrl : PUT /api/client-data/service/entries/:entryId\n{job?, description?}
+activate Ctrl
+
+Ctrl -> EntryDB : update({where: {id: entryId},\ndata: {job?, description?}})
+activate EntryDB
+EntryDB --> Ctrl : updatedEntry
+deactivate EntryDB
+
+Ctrl --> FE : 200 {updatedEntry}
+deactivate Ctrl
+
+FE --> User : Entry updated
+deactivate FE
+deactivate User
+
+== Delete Service Entry ==
+
+User -> FE : Delete service entry
+activate User
+activate FE
+
+FE -> Ctrl : DELETE /api/client-data/service/entries/:entryId
+activate Ctrl
+
+Ctrl -> EntryDB : delete({where: {id: entryId}})
+activate EntryDB
+EntryDB --> Ctrl : OK
+deactivate EntryDB
+
+Ctrl --> FE : 200 {success: true}
+deactivate Ctrl
+
+FE --> User : Entry deleted
+deactivate FE
+deactivate User
+
+@enduml

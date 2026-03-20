@@ -1,0 +1,109 @@
+@startuml Inverter Detail & History
+hide footbox
+skinparam sequenceMessageAlign center
+
+actor User
+participant "Frontend" as FE
+participant "Monitoring\nRoute" as Ctrl
+participant "Prisma\n(Inverter)" as InvDB
+participant "Prisma\n(InverterKpi\nSnapshot)" as KpiDB
+participant "Prisma\n(InverterString\nSnapshot)" as StrDB
+
+== Inverter Realtime Detail ==
+
+User -> FE : Click on inverter
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/monitoring/inverters/:inverterId
+activate Ctrl
+
+Ctrl -> InvDB : findUnique({id: inverterId,\ninclude: {site}})
+activate InvDB
+InvDB --> Ctrl : inverter with site
+deactivate InvDB
+
+Ctrl --> FE : 200 {id, name, model,\nserialNumber, softwareVersion,\nsite, realtime: {activePower,\ndayEnergy, status, lastSyncAt}}
+deactivate Ctrl
+
+FE --> User : Display inverter detail
+deactivate FE
+deactivate User
+
+== Latest PV String Snapshot ==
+
+User -> FE : View PV strings tab
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/monitoring/inverters/:inverterId\n/strings/latest
+activate Ctrl
+
+Ctrl -> KpiDB : findFirst({where: {inverterId},\norderBy: ts desc,\nselect: {id, ts}})
+activate KpiDB
+KpiDB --> Ctrl : latestSnapshot
+deactivate KpiDB
+
+Ctrl -> StrDB : findMany({where:\n{snapshotId: snap.id},\norderBy: stringNo asc})
+activate StrDB
+StrDB --> Ctrl : strings[]
+deactivate StrDB
+
+Ctrl --> FE : 200 {ts, strings[]\n{stringNo, voltage, current, status}}
+deactivate Ctrl
+
+FE --> User : Display string data
+deactivate FE
+deactivate User
+
+== Inverter Metric History ==
+
+User -> FE : View inverter history chart
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/monitoring/inverters/:inverterId\n/history?metric=activePower&range=day
+activate Ctrl
+
+Ctrl -> Ctrl : calculate date range\nfrom range (day/week/month)
+
+Ctrl -> KpiDB : findMany({where:\n{inverterId, ts: {gte: from}},\norderBy: ts asc,\nselect: {ts, activePower,\ndayEnergy, temperature,\npowerFactor}})
+activate KpiDB
+KpiDB --> Ctrl : snapshots[]
+deactivate KpiDB
+
+Ctrl -> Ctrl : extract series:\n[{t, v: row[metric]}]
+
+Ctrl --> FE : 200 {metric, range, series[]}
+deactivate Ctrl
+
+FE --> User : Display history chart
+deactivate FE
+deactivate User
+
+== PV String History ==
+
+User -> FE : View string history chart
+activate User
+activate FE
+
+FE -> Ctrl : GET /api/monitoring/inverters/:inverterId\n/strings/history?date=2026-01-15\n&tzOffsetMinutes=-420&stringNo=1
+activate Ctrl
+
+Ctrl -> Ctrl : parse date + tzOffset\nto UTC range [from, to)
+
+Ctrl -> KpiDB : findMany({where:\n{inverterId, ts: {gte: from, lt: to}},\norderBy: ts asc,\nselect: {ts, strings: {stringNo,\nvoltage, current, status}}})
+activate KpiDB
+KpiDB --> Ctrl : snapshots[] with strings
+deactivate KpiDB
+
+Ctrl -> Ctrl : group by stringNo\nbuild seriesByString[]
+
+Ctrl --> FE : 200 {inverterId, date,\nfrom, to, seriesByString[]}
+deactivate Ctrl
+
+FE --> User : Display string history
+deactivate FE
+deactivate User
+
+@enduml
