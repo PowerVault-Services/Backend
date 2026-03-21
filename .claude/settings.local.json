@@ -38,7 +38,11 @@
       "Bash(node -e \"const j=JSON.parse\\(require\\(''fs''\\).readFileSync\\(''C:/Users/yotsa/AppData/Local/Temp/alarm_sn.json'',''utf8''\\)\\);console.log\\(''SN search results:'',j.data?.pagination?.total\\);if\\(j.data?.list?.length\\)console.log\\(''SNs found:'',j.data.list.map\\(a=>a.sn\\)\\);\")",
       "Bash(export PATH=\"/tmp/poppler_extracted/poppler-24.08.0/Library/bin:$PATH\")",
       "Bash(pdftoppm -v)",
-      "Bash(export PATH=\"$HOME/poppler-bin:$PATH\")"
+      "Bash(export PATH=\"$HOME/poppler-bin:$PATH\")",
+      "Bash(gh run:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npm ls:*)",
+      "Bash(xargs cat:*)"
     ]
   }
 }

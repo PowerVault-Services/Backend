@@ -285,18 +285,32 @@ async function getAuxDevices(site: SiteRecord): Promise<HuaweiDeviceLite[]> {
     return [];
   }
 
-  const client = pickOnDemandClient();
-  const response: any = await client.getDevList(site.plantCode);
-  const devices = Array.isArray(response?.data)
-    ? (response.data as HuaweiDeviceLite[]).filter((device) => AUX_DEVICE_TYPES.includes(Number(device.devTypeId) as AuxDeviceType))
-    : [];
+  try {
+    const client = pickOnDemandClient();
+    const response: any = await client.getDevList(site.plantCode);
+    const devices = Array.isArray(response?.data)
+      ? (response.data as HuaweiDeviceLite[]).filter((device) => AUX_DEVICE_TYPES.includes(Number(device.devTypeId) as AuxDeviceType))
+      : [];
 
-  auxDeviceMetaCache.set(site.plantCode, {
-    expiresAt: Date.now() + AUX_DEVICE_META_CACHE_TTL_MS,
-    value: devices,
-  });
+    // Only cache non-empty results or if response was explicitly successful
+    if (devices.length > 0 || response?.success === true) {
+      auxDeviceMetaCache.set(site.plantCode, {
+        expiresAt: Date.now() + AUX_DEVICE_META_CACHE_TTL_MS,
+        value: devices,
+      });
+    } else if (cached) {
+      // API returned empty/failed but we have stale cache — keep using it
+      console.warn(`⚠️ [HomeRealtime] getDevList returned empty for plant=${site.plantCode}, using stale device cache`);
+      return cached.value;
+    }
 
-  return devices;
+    return devices;
+  } catch (err: any) {
+    console.warn(`⚠️ [HomeRealtime] getDevList error for plant=${site.plantCode}:`, err?.message ?? err);
+    // Return stale cache on error
+    if (cached) return cached.value;
+    return [];
+  }
 }
 
 async function fetchAuxRealtimeInner(site: SiteRecord, refreshMode: 'auto' | 'force'): Promise<AuxRealtimeBundle> {
@@ -304,6 +318,7 @@ async function fetchAuxRealtimeInner(site: SiteRecord, refreshMode: 'auto' | 'fo
   const devices = await getAuxDevices(refreshed.site);
   const client = pickOnDemandClient();
   const realtimeByType: Partial<Record<AuxDeviceType, HuaweiRealtimeRow[]>> = {};
+  let fetchFailed = false;
 
   for (const devTypeId of AUX_DEVICE_TYPES) {
     const ids = devices
@@ -313,9 +328,18 @@ async function fetchAuxRealtimeInner(site: SiteRecord, refreshMode: 'auto' | 'fo
 
     if (ids.length === 0) continue;
 
-    const response: any = await client.getDevRealKpi({ devTypeId, devIds: ids });
-    if (response?.success && Array.isArray(response?.data)) {
-      realtimeByType[devTypeId] = response.data as HuaweiRealtimeRow[];
+    try {
+      const response: any = await client.getDevRealKpi({ devTypeId, devIds: ids });
+      if (response?.success && Array.isArray(response?.data)) {
+        realtimeByType[devTypeId] = response.data as HuaweiRealtimeRow[];
+      } else {
+        const failCode = response?.failCode ?? 'unknown';
+        console.warn(`⚠️ [HomeRealtime] getDevRealKpi failed for devType=${devTypeId} plant=${site.plantCode} failCode=${failCode}`);
+        fetchFailed = true;
+      }
+    } catch (err: any) {
+      console.warn(`⚠️ [HomeRealtime] getDevRealKpi error for devType=${devTypeId} plant=${site.plantCode}:`, err?.message ?? err);
+      fetchFailed = true;
     }
   }
 
@@ -326,6 +350,24 @@ async function fetchAuxRealtimeInner(site: SiteRecord, refreshMode: 'auto' | 'fo
     realtimeByType,
     fetchedAt: new Date().toISOString(),
   };
+
+  // If some device fetches failed, check if we have a richer stale cache to prefer
+  if (fetchFailed) {
+    const stale = auxRealtimeCache.get(site.plantCode);
+    if (stale) {
+      const staleTypeCount = Object.keys(stale.value.realtimeByType).length;
+      const freshTypeCount = Object.keys(realtimeByType).length;
+      if (staleTypeCount > freshTypeCount) {
+        // Merge: keep stale data for device types that failed, use fresh for those that succeeded
+        const merged: Partial<Record<AuxDeviceType, HuaweiRealtimeRow[]>> = { ...stale.value.realtimeByType };
+        for (const [key, val] of Object.entries(realtimeByType)) {
+          merged[Number(key) as AuxDeviceType] = val;
+        }
+        bundle.realtimeByType = merged;
+        console.log(`[HomeRealtime] Merged stale cache (${staleTypeCount} types) with fresh data (${freshTypeCount} types) for plant=${site.plantCode}`);
+      }
+    }
+  }
 
   auxRealtimeCache.set(site.plantCode, {
     expiresAt: Date.now() + AUX_DEVICE_REALTIME_CACHE_TTL_MS,
@@ -341,14 +383,23 @@ async function fetchAuxRealtime(site: SiteRecord, refreshMode: 'auto' | 'force')
     return cached.value;
   }
 
-  // Coalesce concurrent requests for the same site
-  const inflightKey = `${site.plantCode}::${refreshMode}`;
+  // Coalesce concurrent requests for the same site (use plantCode only to avoid duplicate fetches)
+  const inflightKey = site.plantCode;
   const pending = auxRealtimeInflight.get(inflightKey);
   if (pending) return pending;
 
-  const task = fetchAuxRealtimeInner(site, refreshMode).finally(() => {
-    auxRealtimeInflight.delete(inflightKey);
-  });
+  const task = fetchAuxRealtimeInner(site, refreshMode)
+    .catch((err) => {
+      // On total failure, return stale cache if available
+      if (cached) {
+        console.warn(`⚠️ [HomeRealtime] fetchAuxRealtime failed for plant=${site.plantCode}, returning stale cache:`, err?.message ?? err);
+        return cached.value;
+      }
+      throw err;
+    })
+    .finally(() => {
+      auxRealtimeInflight.delete(inflightKey);
+    });
 
   auxRealtimeInflight.set(inflightKey, task);
   return task;

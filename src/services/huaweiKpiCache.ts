@@ -77,27 +77,44 @@ export async function getCachedPlantKpi<T = any>(params: {
   }
 
   stats.misses += 1;
+  const staleEntry = cache.get(key); // keep reference to stale data for fallback
   const client = pickOnDemandClient();
   const task = (async () => {
-    const value = await client.postRaw<T>(endpoint, {
-      stationCodes: normalizeStationCodes(stationCodes),
-      collectTime,
-    });
-
-    const failCode = Number((value as any)?.failCode);
-    const isSuccess = failCode === 0 || (value as any)?.success === true;
-    if (isSuccess) {
-      cache.set(key, {
-        expiresAt: Date.now() + getTtl(endpoint),
-        value,
+    try {
+      const value = await client.postRaw<T>(endpoint, {
+        stationCodes: normalizeStationCodes(stationCodes),
+        collectTime,
       });
-      stats.stores += 1;
-      if (DEBUG) {
-        console.log(`[KPI-CACHE] store ${endpoint} ${normalizeStationCodes(stationCodes)} @ ${collectTime}`);
-      }
-    }
 
-    return value;
+      const failCode = Number((value as any)?.failCode);
+      const isSuccess = failCode === 0 || (value as any)?.success === true;
+      if (isSuccess) {
+        cache.set(key, {
+          expiresAt: Date.now() + getTtl(endpoint),
+          value,
+        });
+        stats.stores += 1;
+        if (DEBUG) {
+          console.log(`[KPI-CACHE] store ${endpoint} ${normalizeStationCodes(stationCodes)} @ ${collectTime}`);
+        }
+        return value;
+      }
+
+      // API returned a failure code — return stale data if available
+      if (staleEntry) {
+        console.warn(`[KPI-CACHE] failCode=${failCode} for ${endpoint}, returning stale cache for ${normalizeStationCodes(stationCodes)}`);
+        return staleEntry.value as T;
+      }
+
+      return value;
+    } catch (err) {
+      // Network/timeout error — return stale data if available
+      if (staleEntry) {
+        console.warn(`[KPI-CACHE] fetch error for ${endpoint}, returning stale cache for ${normalizeStationCodes(stationCodes)}:`, (err as any)?.message ?? err);
+        return staleEntry.value as T;
+      }
+      throw err;
+    }
   })();
 
   if (!bypassCache) {
