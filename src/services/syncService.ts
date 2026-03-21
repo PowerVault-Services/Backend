@@ -854,9 +854,10 @@ async function syncPlantDevicesWithFailover(
   site: SiteLite,
   runStateCount: Map<number, number>,
   opts?: SyncPlantDevicesOptions,
-  purpose: 'device' | 'ondemand' = 'device'
+  purpose: 'device' | 'ondemand' = 'device',
+  batchIndex?: number
 ): Promise<SyncPlantDevicesResult> {
-  const clients = getStationClientCandidates(site.plantCode, purpose === 'ondemand' ? 'ondemand' : 'device');
+  const clients = getStationClientCandidates(site.plantCode, purpose === 'ondemand' ? 'ondemand' : 'device', { batchIndex });
   const cachedTargets = await getCachedDeviceTargets(site.id);
   let lastError: unknown = null;
   let lastResult: SyncPlantDevicesResult | null = null;
@@ -1048,7 +1049,7 @@ const _syncMonitoringTickInner = async () => {
           const result = await syncPlantDevicesWithFailover(site, runStateCount, {
             includeInventory: true,
             includeDeviceDetail: true,
-          });
+          }, 'device', index);
           recordSyncOutcome(true);
           log.info('Device sync done', { plantCode: site.plantCode, client: result.clientLabel ?? 'UNKNOWN', inverters: result.inverters });
         } catch (e: any) {

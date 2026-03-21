@@ -13,8 +13,8 @@ type StationAccessMeta = {
 const PURPOSE_ORDER: Record<HuaweiPurpose, HuaweiLogicalClientKey[]> = {
   inventory: ['backup', 'main', 'alarm', 'ondemand'],
   siteRealtime: ['main', 'backup', 'alarm', 'ondemand'],
-  device: ['main', 'backup', 'alarm', 'ondemand'],
-  alarm: ['alarm', 'backup', 'main', 'ondemand'],
+  device: ['main', 'backup', 'alarm'],
+  alarm: ['alarm', 'backup', 'main'],
   ondemand: ['ondemand', 'alarm', 'backup', 'main'],
 };
 
