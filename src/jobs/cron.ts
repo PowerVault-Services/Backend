@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { syncInverterData, syncSiteRealtimeTick } from '../services/syncService';
+import { syncInverterData, syncSiteRealtimeTick, restoreRetryQueue } from '../services/syncService';
 import { syncActiveAlarms } from '../services/alarmSyncService';
 import { huaweiClients } from '../services/huaweiPool';
 import { getBudgetSnapshot } from '../services/huaweiBudget';
@@ -151,6 +151,7 @@ export const startCronJobs = async () => {
   }
   cronInitialized = true;
   await ensureSyncStateHydrated();
+  await restoreRetryQueue();
   console.log('startCronJobs() called');
 
   cron.schedule(SITE_REALTIME_SCHEDULE, () => {

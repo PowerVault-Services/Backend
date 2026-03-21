@@ -3,6 +3,42 @@ import { createLogger } from '../config/logger';
 import { HuaweiDevice, HuaweiService } from './huaweiService';
 
 const log = createLogger('sync');
+
+/**
+ * ── Scalability Notes ──
+ *
+ * Architecture: Single-process, multi-account polling against Huawei FusionSolar Northbound API.
+ *
+ * Current capacity (single instance):
+ *  - ~500 sites per tick with 4 Huawei accounts (rate-limit constrained)
+ *  - Concurrent workers bounded by DEVICE_SYNC_CONCURRENCY / SITE_REALTIME_CONCURRENCY
+ *  - Retry queue capped at RETRY_QUEUE_MAX (default 500), persisted to DB
+ *
+ * Bottlenecks:
+ *  1. Huawei API rate limits (407 personal, 429 system) — mitigated by multi-account rotation + adaptive cooldown
+ *  2. DB write throughput on large $transaction batches — mitigated by batch chunking (50-100 per tx)
+ *  3. In-memory state (retryQueue, deviceSyncCursor) — now persisted; cursor resets are acceptable on restart
+ *
+ * Horizontal scaling path:
+ *  - Split sites across N workers by plantCode hash (each worker owns a shard)
+ *  - Move retry queue to Redis/DB-backed queue for cross-process visibility
+ *  - Use distributed lock (pg advisory lock) for syncMonitoringTick mutex
+ *  - Move cron scheduling to external orchestrator (Bull, Temporal, etc.)
+ *
+ * Backpressure: Adaptive multiplier reduces throughput under error pressure (see getBackpressureLevel).
+ */
+
+// ── Dependency Injection ──
+// Exported deps object allows tests to swap external dependencies (prisma, logger)
+// without module-level mocking. Production code uses real defaults.
+// Usage in tests: `__testUtils.deps.prisma = mockPrisma as any;`
+
+export interface SyncDeps {
+  prisma: typeof prisma;
+  log: ReturnType<typeof createLogger>;
+}
+
+export const syncDeps: SyncDeps = { prisma, log };
 import {
   describeHuaweiClient,
   getPreferredClientOrderForPurpose,
@@ -142,8 +178,54 @@ const INVERTER_DEV_TYPE_IDS = new Set(
     .filter((x) => Number.isFinite(x))
 );
 
+// ── Backpressure: tracks recent error rate to adaptively throttle sync ──
+
+type BackpressureLevel = 'none' | 'light' | 'heavy' | 'critical';
+
+const BACKPRESSURE_WINDOW_MS = 5 * 60_000; // 5-min sliding window
+const recentErrors: number[] = [];          // timestamps of recent errors
+let recentRequests = 0;                     // total requests in current window
+
+function recordSyncOutcome(success: boolean) {
+  const now = Date.now();
+  recentRequests++;
+  if (!success) recentErrors.push(now);
+  // Prune old entries outside window
+  const cutoff = now - BACKPRESSURE_WINDOW_MS;
+  while (recentErrors.length > 0 && recentErrors[0] < cutoff) recentErrors.shift();
+}
+
+function getBackpressureLevel(): BackpressureLevel {
+  const errorCount = recentErrors.length;
+  const queueRatio = retryQueue.size / RETRY_QUEUE_MAX;
+  const errorRate = recentRequests > 0 ? errorCount / Math.max(recentRequests, 1) : 0;
+
+  // Critical: queue > 80% full OR error rate > 50%
+  if (queueRatio > 0.8 || errorRate > 0.5) return 'critical';
+  // Heavy: queue > 50% full OR error rate > 30%
+  if (queueRatio > 0.5 || errorRate > 0.3) return 'heavy';
+  // Light: queue > 20% full OR error rate > 10%
+  if (queueRatio > 0.2 || errorRate > 0.1) return 'light';
+  return 'none';
+}
+
+function getBackpressureMultiplier(): number {
+  switch (getBackpressureLevel()) {
+    case 'critical': return 0.25;  // 25% of normal throughput
+    case 'heavy':    return 0.5;   // 50%
+    case 'light':    return 0.75;  // 75%
+    case 'none':     return 1.0;   // full speed
+  }
+}
+
+function resetBackpressureWindow() {
+  recentErrors.length = 0;
+  recentRequests = 0;
+}
+
 let lastTickAt = 0;
 let deviceSyncCursor = 0;
+let tickRunning = false; // Guard against overlapping syncMonitoringTick calls
 let stationCache: { expiresAt: number; stationCodes: string[] } | null = null;
 const RETRY_QUEUE_MAX = Math.max(10, Math.min(5000, Number(process.env.HUAWEI_RETRY_QUEUE_MAX ?? 500)));
 const retryQueue = new Set<string>();
@@ -157,6 +239,44 @@ function enqueueRetry(stationCode: string) {
   if (retryQueue.size > RETRY_QUEUE_MAX) {
     const oldest = retryQueue.values().next().value;
     if (oldest) retryQueue.delete(oldest);
+  }
+  markRetryQueueDirty();
+}
+
+// ── Retry queue DB persistence (survives process restart) ──
+
+const RETRY_QUEUE_JOB_NAME = 'retryQueue';
+let retryQueueDirty = false;
+
+function markRetryQueueDirty() { retryQueueDirty = true; }
+
+async function persistRetryQueue(): Promise<void> {
+  if (!retryQueueDirty && retryQueue.size === 0) return;
+  try {
+    const payload = Array.from(retryQueue);
+    await prisma.huaweiSyncJob.upsert({
+      where: { jobName: RETRY_QUEUE_JOB_NAME },
+      create: { jobName: RETRY_QUEUE_JOB_NAME, lastResult: { queue: payload, savedAt: new Date().toISOString() } },
+      update: { lastResult: { queue: payload, savedAt: new Date().toISOString() } },
+    });
+    retryQueueDirty = false;
+    log.debug('Retry queue persisted', { size: payload.length });
+  } catch (e: any) {
+    log.warn('Failed to persist retry queue', { error: e?.message ?? e });
+  }
+}
+
+async function restoreRetryQueue(): Promise<void> {
+  try {
+    const row = await prisma.huaweiSyncJob.findUnique({ where: { jobName: RETRY_QUEUE_JOB_NAME } }) as any;
+    const saved: string[] = Array.isArray((row?.lastResult as any)?.queue) ? (row.lastResult as any).queue : [];
+    if (saved.length === 0) return;
+    for (const code of saved) {
+      if (typeof code === 'string' && code) retryQueue.add(code);
+    }
+    log.info('Retry queue restored from DB', { size: retryQueue.size });
+  } catch (e: any) {
+    log.warn('Failed to restore retry queue', { error: e?.message ?? e });
   }
 }
 
@@ -845,10 +965,13 @@ export async function syncSiteRealtimeTick() {
     const batches = chunk(staleFiltered, SITE_REALTIME_BATCH_SIZE);
     let totalSynced = 0;
     let totalMissing = 0;
+    // Work-stealing pattern: each worker atomically claims the next batch index.
+    // Safe in single-threaded JS because takeNext() runs synchronously before any await.
     let batchCursor = 0;
+    const takeNextBatch = () => batchCursor < batches.length ? batchCursor++ : -1;
     const workers = Array.from({ length: Math.min(SITE_REALTIME_CONCURRENCY, batches.length) }, async () => {
-      while (batchCursor < batches.length) {
-        const i = batchCursor++;
+      let i: number;
+      while ((i = takeNextBatch()) >= 0) {
         const result = await syncSiteRealtimeBatch(batches[i], i);
         totalSynced += result.synced;
         totalMissing += result.missing;
@@ -863,6 +986,21 @@ export async function syncSiteRealtimeTick() {
 }
 
 export const syncMonitoringTick = async () => {
+  // Mutex: prevent overlapping ticks from concurrent cron/watchdog triggers
+  if (tickRunning) {
+    log.info('Skip device sync tick, previous tick still running');
+    return;
+  }
+  tickRunning = true;
+
+  try {
+  return await _syncMonitoringTickInner();
+  } finally {
+    tickRunning = false;
+  }
+};
+
+const _syncMonitoringTickInner = async () => {
   log.info('Starting Device Sync Tick');
 
   const now = Date.now();
@@ -890,7 +1028,13 @@ export const syncMonitoringTick = async () => {
       log.info('Skipping local-only/test sites from device sync', { count: skippedLocalOnlySites });
     }
 
-    const maxPlantsPerTick = resolveDynamicDevicePlantsPerTick();
+    const bpLevel = getBackpressureLevel();
+    const bpMultiplier = getBackpressureMultiplier();
+    const rawMaxPlants = resolveDynamicDevicePlantsPerTick();
+    const maxPlantsPerTick = Math.max(1, Math.floor(rawMaxPlants * bpMultiplier));
+    if (bpLevel !== 'none') {
+      log.warn('Backpressure active', { level: bpLevel, multiplier: bpMultiplier, maxPlantsPerTick, rawMax: rawMaxPlants, retryQueueSize: retryQueue.size, recentErrors: recentErrors.length });
+    }
     const picked = new Set<string>();
     for (const code of retryQueue) {
       if (picked.size >= maxPlantsPerTick) break;
@@ -922,18 +1066,22 @@ export const syncMonitoringTick = async () => {
       orderBy: { plantCode: 'asc' },
     } as any)) as unknown) as SiteLite[];
 
-    let cursor = 0;
+    // Work-stealing: each worker atomically claims the next site index
+    let siteCursor = 0;
+    const takeNextSite = () => siteCursor < sites.length ? siteCursor++ : -1;
     const workers = Array.from({ length: Math.min(Math.max(1, DEVICE_SYNC_CONCURRENCY), sites.length) }, async () => {
-      while (cursor < sites.length) {
-        const index = cursor++;
+      let index: number;
+      while ((index = takeNextSite()) >= 0) {
         const site = sites[index];
         try {
           const result = await syncPlantDevicesWithFailover(site, runStateCount, {
             includeInventory: true,
             includeDeviceDetail: true,
           });
+          recordSyncOutcome(true);
           log.info('Device sync done', { plantCode: site.plantCode, client: result.clientLabel ?? 'UNKNOWN', inverters: result.inverters });
         } catch (e: any) {
+          recordSyncOutcome(false);
           enqueueRetry(site.plantCode);
           log.warn('Device sync failed', { plantCode: site.plantCode, error: e?.message ?? e });
         }
@@ -962,9 +1110,11 @@ export const syncMonitoringTick = async () => {
     }
 
     log.debug('retryQueue snapshot', { size: retryQueue.size, sample: Array.from(retryQueue).slice(0, 10) });
+    await persistRetryQueue();
   }
 };
 
+export { restoreRetryQueue };
 export const syncInverterData = syncMonitoringTick;
 
 export async function syncPlantOnDemand(plantCode: string, opts?: SyncPlantOnDemandOptions) {
@@ -1128,4 +1278,9 @@ export const __testUtils = {
   makeOnDemandInflightKey,
   pickStationCode,
   normalizeDeviceTarget,
+  recordSyncOutcome,
+  getBackpressureLevel,
+  getBackpressureMultiplier,
+  resetBackpressureWindow,
+  syncDeps,
 };

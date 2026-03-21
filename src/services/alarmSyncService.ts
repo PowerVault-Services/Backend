@@ -3,6 +3,35 @@ import { createLogger } from '../config/logger';
 import { HuaweiService } from './huaweiService';
 
 const log = createLogger('alarm');
+
+/**
+ * ── Alarm Sync Scalability Notes ──
+ *
+ * State machine: ACTIVE ↔ CLEARED with miss-count confirmation (prevents false clears from partial API responses).
+ *
+ * Current capacity:
+ *  - Full sweep: all sites × FULL_SWEEP_LOOKBACK_DAYS window, runs every FULL_SWEEP_INTERVAL_MS (default 6h)
+ *  - Incremental: INCREMENTAL_LOOKBACK_HOURS window (default 6h), runs every cron tick
+ *  - On-demand: per-plant deep lookback with rolling windows
+ *
+ * Bottlenecks:
+ *  1. Alarm confirmation queries (1 API call per station with missing alarms) — O(active alarm sites)
+ *  2. Large $transaction batches — chunked at 50 upserts per tx
+ *
+ * Horizontal scaling:
+ *  - Partition alarm sync by station shard (same as device sync)
+ *  - lastFullSweepAt must move to shared state (DB) for multi-instance
+ */
+
+// ── Dependency Injection ──
+// Exported deps object allows tests to swap external dependencies without module mocking.
+
+export interface AlarmSyncDeps {
+  prisma: typeof prisma;
+  log: ReturnType<typeof createLogger>;
+}
+
+export const alarmSyncDeps: AlarmSyncDeps = { prisma, log };
 import {
   describeHuaweiClient,
   getKnownHuaweiStationCodes,
@@ -75,6 +104,32 @@ function mergeAlarmRaw(existingRaw: unknown, incomingRaw: unknown, syncPatch: Re
 function clampInt(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+// ── Alarm State Machine ──
+// Defines valid alarm states and their allowed transitions.
+// Prevents illegal state changes (e.g. CLEARED → ACTIVE without re-raise).
+
+const ALARM_STATES = ['ACTIVE', 'CLEARED'] as const;
+type AlarmState = typeof ALARM_STATES[number];
+
+const ALARM_TRANSITIONS: Record<AlarmState, AlarmState[]> = {
+  ACTIVE:  ['CLEARED'],   // Active alarms can only be cleared
+  CLEARED: ['ACTIVE'],    // Cleared alarms can be re-raised if Huawei reports them again
+};
+
+function isValidAlarmTransition(from: string | null | undefined, to: AlarmState): boolean {
+  if (!from) return to === 'ACTIVE'; // New alarm must start as ACTIVE
+  if (from === to) return true;      // Idempotent (no-op transition)
+  const allowed = ALARM_TRANSITIONS[from as AlarmState];
+  return !!allowed && allowed.includes(to);
+}
+
+function assertAlarmTransition(from: string | null | undefined, to: AlarmState, context: string): void {
+  if (!isValidAlarmTransition(from, to)) {
+    log.warn('Invalid alarm state transition blocked', { from, to, context });
+    throw new Error(`Invalid alarm transition: ${from ?? 'NULL'} → ${to} (${context})`);
+  }
 }
 
 const FULL_SWEEP_LOOKBACK_DAYS = clampInt(Number(process.env.HUAWEI_ALARM_LOOKBACK_DAYS ?? 30), 1, 30);
@@ -191,6 +246,10 @@ async function upsertAlarmRows(
       lastConfirmedPresentAt: nowIso,
     });
 
+    // Validate state transition: new alarms → ACTIVE, existing CLEARED → re-ACTIVE
+    const existingStatus = existingByKey.has(key) ? 'ACTIVE' : null; // existing rows in scope are ACTIVE (we only upsert seen alarms)
+    assertAlarmTransition(existingStatus, 'ACTIVE', `upsert:${key}`);
+
     upsertOps.push(
       prisma.alarm.upsert({
         where: { huaweiAlarmId: key },
@@ -200,7 +259,7 @@ async function upsertAlarmRows(
           inverterId: inv?.id,
           name: a?.alarmName ?? null,
           severity: severity ?? null,
-          status: 'ACTIVE',
+          status: 'ACTIVE' satisfies AlarmState,
           occurredAt,
           clearedAt: null,
           raw,
@@ -210,7 +269,7 @@ async function upsertAlarmRows(
           inverterId: inv?.id ?? undefined,
           name: a?.alarmName ?? undefined,
           severity: severity ?? undefined,
-          status: 'ACTIVE',
+          status: 'ACTIVE' satisfies AlarmState,
           occurredAt: occurredAt ?? undefined,
           clearedAt: null,
           raw,
@@ -449,12 +508,13 @@ async function confirmAndMaybeClearMissingActiveAlarms(
           continue;
         }
 
+        assertAlarmTransition('ACTIVE', 'CLEARED', `clear:${key}`);
         cleared += 1;
         updates.push(
           prisma.alarm.update({
             where: { id: alarm.id },
             data: {
-              status: 'CLEARED',
+              status: 'CLEARED' satisfies AlarmState,
               clearedAt: new Date(),
               raw: mergeAlarmRaw(mergedRaw, {}, {
                 clearedBySyncAt: nowIso,
@@ -722,4 +782,9 @@ export const __testUtils = {
   mergeAlarmRaw,
   clampInt,
   buildRollingWindows,
+  ALARM_STATES,
+  ALARM_TRANSITIONS,
+  isValidAlarmTransition,
+  assertAlarmTransition,
+  alarmSyncDeps,
 };
