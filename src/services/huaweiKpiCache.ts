@@ -84,8 +84,9 @@ export async function getCachedPlantKpi<T = any>(params: {
       collectTime,
     });
 
-    const success = (value as any)?.success;
-    if (success !== false) {
+    const failCode = Number((value as any)?.failCode);
+    const isSuccess = failCode === 0 || (value as any)?.success === true;
+    if (isSuccess) {
       cache.set(key, {
         expiresAt: Date.now() + getTtl(endpoint),
         value,

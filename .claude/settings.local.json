@@ -14,7 +14,31 @@
       "Bash(find /d/Backend -maxdepth 2 -type f \\\\\\(-name .github -o -name *.yml -o -name *.yaml -o -name Dockerfile -o -name .gitignore \\\\\\))",
       "Bash(npm install:*)",
       "Bash(npx jest:*)",
-      "Bash(find D:/Backend -type f \\\\\\(-name .env* -o -name *.env \\\\\\))"
+      "Bash(find D:/Backend -type f \\\\\\(-name .env* -o -name *.env \\\\\\))",
+      "Bash(wc -l /d/Backend/src/**/*.ts)",
+      "Bash(curl -s http://localhost:3000/api/monitoring/sites)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/api/monitoring/sites)",
+      "Bash(npx ts-node:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(node -e \"const d=JSON.parse\\(require\\(''''fs''''\\).readFileSync\\(''''/dev/stdin'''',''''utf8''''\\)\\); console.log\\(''''Total sites:'''', d.data?.length\\); if\\(d.data?.length\\) { const s=d.data[0]; console.log\\(''''First site:'''', {id:s.id, name:s.name, plantCode:s.plantCode}\\); }\")",
+      "Bash(node -e \"let d=''''''''; process.stdin.on\\(''''data'''',c=>d+=c\\); process.stdin.on\\(''''end'''',\\(\\)=>{ const j=JSON.parse\\(d\\); console.log\\(''''Total sites:'''', j.data?.length\\); if\\(j.data?.length\\){const s=j.data[0]; console.log\\(''''First site:'''', JSON.stringify\\({id:s.id,name:s.name,plantCode:s.plantCode}\\)\\);} }\\);\")",
+      "Bash(curl -s \"http://localhost:3000/api/monitoring/sites/232/energy-management?view=day&date=2026-03-21\")",
+      "Bash(node -e \"let d='''''''';process.stdin.on\\(''''data'''',c=>d+=c\\);process.stdin.on\\(''''end'''',\\(\\)=>{const j=JSON.parse\\(d\\);console.log\\(''''view:'''',j.data?.view\\);console.log\\(''''endpoint:'''',j.data?.endpoint\\);console.log\\(''''_debug:'''',JSON.stringify\\(j.data?._debug\\)\\);console.log\\(''''points count:'''',j.data?.points?.length\\);const nonNull=j.data?.points?.filter\\(p=>p.pvOutput!==null\\);console.log\\(''''points with data:'''',nonNull?.length\\);}\\)\")",
+      "Bash(where pdftoppm:*)",
+      "Bash(where curl:*)",
+      "Bash(where tar:*)",
+      "Bash(curl -L -o /tmp/poppler.zip \"https://github.com/oschwartz10612/poppler-windows/releases/download/v24.08.0-0/Release-24.08.0-0.zip\")",
+      "Bash(cd /tmp)",
+      "Bash(unzip -o poppler.zip -d poppler_extracted)",
+      "Bash(curl -s \"http://localhost:3000/api/monitoring/pr/sites?startMonth=2026-03&page=1&pageSize=10\")",
+      "Bash(node -e \"const j=JSON.parse\\(require\\(''fs''\\).readFileSync\\(''C:/Users/yotsa/AppData/Local/Temp/pr_test.json'',''utf8''\\)\\);console.log\\(''pagination:'',JSON.stringify\\(j.data?.pagination\\)\\);console.log\\(''list count:'',j.data?.list?.length\\);if\\(j.data?.list?.length\\){const r=j.data.list[0];console.log\\(''First site:'',r.plantName\\);console.log\\(''  irradiation:'',JSON.stringify\\(r.totals?.irradiation\\)\\);console.log\\(''  production:'',JSON.stringify\\(r.totals?.production\\)\\);console.log\\(''  pr:'',JSON.stringify\\(r.totals?.pr\\)\\);};\")",
+      "Bash(curl -s \"http://localhost:3000/api/alarms?tab=active&pageSize=10\")",
+      "Bash(node -e \"const j=JSON.parse\\(require\\(''fs''\\).readFileSync\\(''C:/Users/yotsa/AppData/Local/Temp/alarm_test.json'',''utf8''\\)\\);console.log\\(''total:'',j.data?.pagination?.total\\);if\\(j.data?.list?.length\\){const a=j.data.list[0];console.log\\(''First alarm:'',{sn:a.sn,alarmId:a.alarmId,deviceType:a.deviceType,alarmName:a.alarmName}\\);};\")",
+      "Bash(curl -s \"http://localhost:3000/api/alarms?tab=active&sn=ES217\")",
+      "Bash(node -e \"const j=JSON.parse\\(require\\(''fs''\\).readFileSync\\(''C:/Users/yotsa/AppData/Local/Temp/alarm_sn.json'',''utf8''\\)\\);console.log\\(''SN search results:'',j.data?.pagination?.total\\);if\\(j.data?.list?.length\\)console.log\\(''SNs found:'',j.data.list.map\\(a=>a.sn\\)\\);\")",
+      "Bash(export PATH=\"/tmp/poppler_extracted/poppler-24.08.0/Library/bin:$PATH\")",
+      "Bash(pdftoppm -v)",
+      "Bash(export PATH=\"$HOME/poppler-bin:$PATH\")"
     ]
   }
 }

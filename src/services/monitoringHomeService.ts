@@ -451,6 +451,11 @@ export async function getEnergyManagementSeries(siteId: number, opts?: { view?: 
     collectTime: collectTime.getTime(),
   });
 
+  const failCode = Number(response?.failCode);
+  if (Number.isFinite(failCode) && failCode !== 0) {
+    console.warn(`⚠️ [EnergyManagement] Huawei ${endpoint} failCode=${failCode} for station ${site.plantCode}`);
+  }
+
   const rawRows: any[] = Array.isArray(response?.data) ? response.data : [];
   const mapped = rawRows.map(mapGraphPoint).filter(Boolean) as GraphPoint[];
 
@@ -487,6 +492,11 @@ export async function getEnergyManagementSeries(siteId: number, opts?: { view?: 
       irradiance: view === 'day' ? 'kWh/m²' : 'kWh/m²',
     },
     points,
+    _debug: {
+      huaweiFailCode: Number.isFinite(Number(response?.failCode)) ? Number(response.failCode) : null,
+      huaweiRowCount: rawRows.length,
+      mappedPointCount: mapped.length,
+    },
   };
 }
 

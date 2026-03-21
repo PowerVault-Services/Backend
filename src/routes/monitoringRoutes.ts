@@ -33,6 +33,11 @@ import { getCachedPlantKpi } from '../services/huaweiKpiCache';
 		const q = String(req.query.q ?? '').trim();
 		const requestedIds = String(req.query.siteIds ?? '').trim();
 
+		// pagination
+		const page = Math.max(1, Number(req.query.page ?? 1));
+		const pageSize = Math.min(200, Math.max(10, Number(req.query.pageSize ?? 50)));
+		const skip = (page - 1) * pageSize;
+
 		let months: ReturnType<typeof buildMonthRange> = [];
 		try {
 			months = buildMonthRange(startMonth, endMonth);
@@ -44,22 +49,28 @@ import { getCachedPlantKpi } from '../services/huaweiKpiCache';
 			? requestedIds.split(',').map((v) => Number(v.trim())).filter((v) => Number.isFinite(v))
 			: [];
 
-		const sites = await prisma.site.findMany({
-			where: {
-				...(siteIdList.length ? { id: { in: siteIdList } } : {}),
-				...(q
-					? {
-						OR: [
-							{ name: { contains: q, mode: 'insensitive' } },
-							{ plantCode: { contains: q, mode: 'insensitive' } },
-						],
-					}
-					: {}),
-			},
-			select: { id: true, name: true, plantCode: true, capacityKWp: true },
-			orderBy: { name: 'asc' },
-			take: 200,
-		});
+		const siteWhere: any = {
+			...(siteIdList.length ? { id: { in: siteIdList } } : {}),
+			...(q
+				? {
+					OR: [
+						{ name: { contains: q, mode: 'insensitive' } },
+						{ plantCode: { contains: q, mode: 'insensitive' } },
+					],
+				}
+				: {}),
+		};
+
+		const [total, sites] = await Promise.all([
+			prisma.site.count({ where: siteWhere }),
+			prisma.site.findMany({
+				where: siteWhere,
+				select: { id: true, name: true, plantCode: true, capacityKWp: true },
+				orderBy: { name: 'asc' },
+				skip,
+				take: pageSize,
+			}),
+		]);
 
 		// 1) Load cached actuals from DB (instant)
 		const plantCodes = sites.map((s) => s.plantCode).filter((c): c is string => !!c);
@@ -82,7 +93,18 @@ import { getCachedPlantKpi } from '../services/huaweiKpiCache';
 		);
 
 		// 2) Respond immediately with DB-cached data
-		res.json({ data: { months, list: rows } });
+		res.json({
+			data: {
+				months,
+				list: rows,
+				pagination: {
+					page,
+					pageSize,
+					total,
+					totalPages: Math.ceil(total / pageSize),
+				},
+			},
+		});
 
 		// 3) Background: refresh cache from Huawei API for next request
 		const siteIdByPlantCode = new Map(sites.filter((s) => s.plantCode).map((s) => [s.plantCode!, s.id]));
