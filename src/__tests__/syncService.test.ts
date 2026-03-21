@@ -1,6 +1,3 @@
-// Ensure timezone is consistent regardless of CI/local environment
-process.env.HUAWEI_SYNC_TIMEZONE = 'Asia/Bangkok';
-
 import { __testUtils } from '../services/syncService';
 
 const {

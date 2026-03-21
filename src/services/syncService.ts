@@ -4,35 +4,6 @@ import { HuaweiDevice, HuaweiService } from './huaweiService';
 
 const log = createLogger('sync');
 
-/**
- * ── Scalability Notes ──
- *
- * Architecture: Single-process, multi-account polling against Huawei FusionSolar Northbound API.
- *
- * Current capacity (single instance):
- *  - ~500 sites per tick with 4 Huawei accounts (rate-limit constrained)
- *  - Concurrent workers bounded by DEVICE_SYNC_CONCURRENCY / SITE_REALTIME_CONCURRENCY
- *  - Retry queue capped at RETRY_QUEUE_MAX (default 500), persisted to DB
- *
- * Bottlenecks:
- *  1. Huawei API rate limits (407 personal, 429 system) — mitigated by multi-account rotation + adaptive cooldown
- *  2. DB write throughput on large $transaction batches — mitigated by batch chunking (50-100 per tx)
- *  3. In-memory state (retryQueue, deviceSyncCursor) — now persisted; cursor resets are acceptable on restart
- *
- * Horizontal scaling path:
- *  - Split sites across N workers by plantCode hash (each worker owns a shard)
- *  - Move retry queue to Redis/DB-backed queue for cross-process visibility
- *  - Use distributed lock (pg advisory lock) for syncMonitoringTick mutex
- *  - Move cron scheduling to external orchestrator (Bull, Temporal, etc.)
- *
- * Backpressure: Adaptive multiplier reduces throughput under error pressure (see getBackpressureLevel).
- */
-
-// ── Dependency Injection ──
-// Exported deps object allows tests to swap external dependencies (prisma, logger)
-// without module-level mocking. Production code uses real defaults.
-// Usage in tests: `__testUtils.deps.prisma = mockPrisma as any;`
-
 export interface SyncDeps {
   prisma: typeof prisma;
   log: ReturnType<typeof createLogger>;
@@ -114,7 +85,7 @@ const SYNC_TIMEZONE = process.env.HUAWEI_SYNC_TIMEZONE ?? 'Asia/Bangkok';
 function startOfLocalDay(d = new Date()): Date {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: SYNC_TIMEZONE,
-    hour12: false,
+    hourCycle: 'h23',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
