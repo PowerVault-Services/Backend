@@ -43,7 +43,8 @@
       "Bash(npx vitest:*)",
       "Bash(npm ls:*)",
       "Bash(xargs cat:*)",
-      "Bash(grep -E \"^\\\\`\\(GET|POST|PUT|PATCH|DELETE|HEAD\\)\" d:/Backend/README.md)"
+      "Bash(grep -E \"^\\\\`\\(GET|POST|PUT|PATCH|DELETE|HEAD\\)\" d:/Backend/README.md)",
+      "Bash(node -e \":*)"
     ]
   }
 }

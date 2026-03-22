@@ -1792,34 +1792,295 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 #### POST `/api/cleaning/step3/checklist`
 
+บันทึกข้อมูล checklist ของงาน cleaning ซึ่งถูกนำไปใช้ใน **2 หน้า** ของ PDF report:
+
+1. **หน้า "เอกสารส่งมอบงาน" (Certificate of Completion)** — ใช้ `items[].title`, `items[].location`, `items[].signaturePV`, `items[].signatureCustomer`, `certificateApproval`, `certificateSignature`
+2. **หน้า "แผนการบำรุงรักษาเชิงป้องกัน" (Checklist)** — ใช้ `items[].title`, `items[].status`, `items[].remark`, `items[].children[]`
+
 **Headers:** `Content-Type: application/json`
 
-**Request body (example):**
+---
+
+##### โครงสร้าง Request Body
+
+```
+{
+  "jobId": number,              // (required) รหัส job
+  "checklistJson": { ... },     // (required) ข้อมูล checklist ทั้งหมด — ดูด้านล่าง
+  "step3SummaryNote": string    // (optional) สรุปการทำงาน step 3
+}
+```
+
+##### โครงสร้าง `checklistJson`
+
+```
+{
+  "items": [ ... ],                        // (required) รายการ checklist — ดูด้านล่าง
+  "certificateApproval": string | null,    // (optional) ช่องติ๊กด้านบนหน้า Certificate
+  "certificateSignature": { ... }          // (optional) ข้อมูลลงนามด้านล่างหน้า Certificate
+}
+```
+
+---
+
+##### `items[]` — รายการ checklist (รองรับ 2 แบบ)
+
+ระบบรองรับ 2 format สำหรับ `items`: **แบบ flat** (ง่าย) และ **แบบ hierarchical** (จัดกลุ่ม)
+
+ถ้ามี item ใดมี `children` → ระบบจะ render **ทุก item** แบบ hierarchical (group title + sub-items)
+ถ้าไม่มี `children` เลย → render แบบ flat ปกติ
+
+**แต่ละ item มี field ดังนี้:**
+
+| field | type | ใช้ในหน้า | คำอธิบาย |
+|-------|------|-----------|----------|
+| `title` | `string` | Certificate + Checklist | ชื่อรายการ / ชื่อกลุ่ม (ถ้าเป็น hierarchical) |
+| `status` | `string` | Checklist | สถานะ: `"done"`, `"pass"`, `"completed"`, `"yes"` → แสดง ✓ / ค่าอื่นแสดงตามที่ส่ง |
+| `remark` | `string` | Checklist | หมายเหตุ |
+| `location` | `string` | Certificate | สถานที่ทำงาน เช่น `"บนดาดฟ้า"`, `"ห้อง Inverter"` (ถ้าไม่ส่ง ใช้ค่าจาก `cleaning.locationText` หรือ `"บนดาดฟ้า"`) |
+| `signaturePV` | `string` | Certificate | ชื่อผู้ลงนามฝั่ง PowerVault ในตาราง Certificate (เช่น `"สมชาย"`) |
+| `signatureCustomer` | `string` | Certificate | ชื่อผู้ตรวจรับมอบงานในตาราง Certificate (เช่น `"สมหญิง"`) |
+| `children` | `array` | Checklist | (optional) sub-items ของกลุ่มนี้ — แต่ละ child มี `{ title, status, remark }` |
+
+---
+
+##### `certificateApproval` — ช่องติ๊กอนุมัติด้านบน
+
+ติ๊ก 1 ใน 3 ช่อง ที่ด้านบนหน้า Certificate:
+
+| ค่า | ผลลัพธ์ใน PDF |
+|-----|---------------|
+| `"approval"` | [✓] อนุมัติ/ Approval &nbsp; [ ] รับทราบ &nbsp; [ ] ระบุความคิดเห็น |
+| `"acknowledgement"` | [ ] อนุมัติ &nbsp; [✓] รับทราบ/ Acknowledgement &nbsp; [ ] ระบุความคิดเห็น |
+| `"comment"` | [ ] อนุมัติ &nbsp; [ ] รับทราบ &nbsp; [✓] ระบุความคิดเห็น/ Comment |
+| ไม่ส่ง / `null` | [ ] อนุมัติ &nbsp; [ ] รับทราบ &nbsp; [ ] ระบุความคิดเห็น (ไม่ติ๊กอะไร) |
+
+---
+
+##### `certificateSignature` — ข้อมูลลงนามด้านล่าง
+
+| field | type | คำอธิบาย |
+|-------|------|----------|
+| `engineerName` | `string` | ชื่อวิศวกร/หัวหน้างาน (ฝั่งซ้ายล่าง) เช่น `"สมชาย ใจดี"` — ถ้าไม่ส่งแสดง `...` |
+| `engineerDate` | `string` | วันที่ลงนามวิศวกร เช่น `"22/09/2568"` — ถ้าไม่ส่งแสดง `../../....` |
+| `customerName` | `string` | ชื่อผู้ตรวจรับมอบงาน/ลูกค้า (ฝั่งขวาล่าง) เช่น `"สมหญิง รักสะอาด"` — ถ้าไม่ส่ง fallback ไปใช้ `cleaning.customerName` หรือแสดง `...` |
+| `customerDate` | `string` | วันที่ลูกค้าลงนาม เช่น `"22/09/2568"` — ถ้าไม่ส่งแสดง `../../....` |
+| `customerApproval` | `string` | ช่องติ๊กด้านขวาล่าง: `"A"` = อนุมัติ, `"AC"` = ความเห็น/ข้อควรแก้ไข, `"N"` = ไม่อนุมัติ — ถ้าไม่ส่งจะไม่ติ๊กอะไร |
+| `customerNote` | `string` | Note ของลูกค้า เช่น `"ดีมาก"` — ถ้าไม่ส่งแสดง `...` |
+
+---
+
+##### ตัวอย่าง 1: Hierarchical checklist + Certificate ครบทุก field (แนะนำ)
+
+ใช้เมื่อต้องการจัดกลุ่มอุปกรณ์ (เช่น แผงโซลาร์, Inverter, Monitoring) พร้อมรายการย่อย + ข้อมูลลงนามครบ
 
 ```json
 {
-  "jobId": 22,
+  "jobId": 24,
   "checklistJson": {
     "items": [
-      { "title": "ตรวจสอบสภาพแผงโซลาร์ก่อนล้าง",       "status": "done", "remark": "-" },
-      { "title": "ฉีดล้างแผงด้วยน้ำสะอาด",              "status": "done", "remark": "-" },
-      { "title": "เช็ดทำความสะอาดขอบเฟรมแผง",           "status": "done", "remark": "-" },
-      { "title": "ตรวจสอบสายไฟและจุดเชื่อมต่อ",          "status": "done", "remark": "ไม่พบความผิดปกติ" },
-      { "title": "ตรวจสอบ Inverter",                     "status": "done", "remark": "ทำงานปกติ" },
-      { "title": "ตรวจสอบโครงสร้างรางยึดแผง",            "status": "done", "remark": "-" },
-      { "title": "ทำความสะอาดบริเวณโดยรอบ",             "status": "done", "remark": "-" },
-      { "title": "ตรวจสอบระบบสายดิน",                    "status": "pass", "remark": "-" },
-      { "title": "ถ่ายรูปหลังทำความสะอาดเสร็จ",          "status": "done", "remark": "บันทึกใน step3 evidence" }
-    ]
+      {
+        "title": "แผงโซลาร์เซลล์",
+        "location": "บนดาดฟ้า",
+        "signaturePV": "สมชาย",
+        "signatureCustomer": "สมหญิง",
+        "children": [
+          { "title": "ตรวจสอบความสะอาดแผงและล้างแผงโซลาร์เซลล์", "status": "done", "remark": "สะอาดเรียบร้อย" },
+          { "title": "ตรวจสอบสภาพแผง สีกระจก และการเกิดออกไซด์", "status": "done", "remark": "ปกติดี" }
+        ]
+      },
+      {
+        "title": "Inverter Unit",
+        "location": "ห้อง Inverter",
+        "signaturePV": "สมชาย",
+        "signatureCustomer": "สมหญิง",
+        "children": [
+          { "title": "ตรวจสอบสภาพและทำความสะอาด Filter", "status": "done", "remark": "สะอาดเรียบร้อย" }
+        ]
+      },
+      {
+        "title": "ตรวจสอบ Monitoring System",
+        "location": "ห้องควบคุม",
+        "signaturePV": "สมชาย",
+        "signatureCustomer": "สมหญิง",
+        "children": [
+          { "title": "ตรวจสอบสภาพตู้ควบคุม", "status": "done", "remark": "ปกติ" }
+        ]
+      }
+    ],
+    "certificateApproval": "approval",
+    "certificateSignature": {
+      "engineerName": "สมชาย ใจดี",
+      "engineerDate": "22/09/2568",
+      "customerName": "สมหญิง รักสะอาด",
+      "customerDate": "22/09/2568",
+      "customerApproval": "A",
+      "customerNote": ""
+    }
   },
   "step3SummaryNote": "ล้างแผงเสร็จเรียบร้อย ไม่พบความเสียหาย"
 }
 ```
 
-**Response 200 (example):**
+> **ผลลัพธ์ในหน้า "แผนการบำรุงรักษา" (Checklist):**
+>
+> | ลำดับ | อุปกรณ์/รายการ | การดำเนินการ | หมายเหตุ |
+> |-------|---------------|-------------|----------|
+> | 1 | **แผงโซลาร์เซลล์** | | |
+> | | - ตรวจสอบความสะอาดแผงฯ | ✓ | สะอาดเรียบร้อย |
+> | | - ตรวจสอบสภาพแผงฯ | ✓ | ปกติดี |
+> | 2 | **Inverter Unit** | | |
+> | | - ตรวจสอบสภาพฯ | ✓ | สะอาดเรียบร้อย |
+> | 3 | **ตรวจสอบ Monitoring System** | | |
+> | | - ตรวจสอบสภาพตู้ควบคุม | ✓ | ปกติ |
+>
+> **ผลลัพธ์ในหน้า "เอกสารส่งมอบงาน" (Certificate):**
+>
+> | ลำดับ | รายละเอียดงาน | สถานที่ทำงาน | ลงนาม/Signature PV | ผู้ตรวจรับมอบงาน |
+> |-------|--------------|-------------|-------------------|----------------|
+> | 1 | - แผงโซลาร์เซลล์ | บนดาดฟ้า | สมชาย | สมหญิง |
+> | 2 | - Inverter Unit | ห้อง Inverter | สมชาย | สมหญิง |
+> | 3 | - ตรวจสอบ Monitoring System | ห้องควบคุม | สมชาย | สมหญิง |
+
+---
+
+##### ตัวอย่าง 2: Flat checklist (ไม่จัดกลุ่ม) + ไม่มี Certificate data
+
+ใช้เมื่อ checklist เป็นรายการเดี่ยวๆ ไม่มี sub-items และไม่ต้องการกรอก Certificate (จะแสดงเป็นช่องว่าง `...`)
+
+```json
+{
+  "jobId": 24,
+  "checklistJson": {
+    "items": [
+      { "title": "ตรวจสอบสภาพแผงโซลาร์ก่อนล้าง", "status": "done", "remark": "-" },
+      { "title": "ฉีดล้างแผงด้วยน้ำสะอาด", "status": "done", "remark": "-" },
+      { "title": "ตรวจสอบสายไฟและจุดเชื่อมต่อ", "status": "done", "remark": "ไม่พบความผิดปกติ" },
+      { "title": "ตรวจสอบ Inverter", "status": "done", "remark": "ทำงานปกติ" },
+      { "title": "ตรวจสอบระบบสายดิน", "status": "pass", "remark": "-" }
+    ]
+  }
+}
+```
+
+> **ผลลัพธ์ในหน้า Checklist:** แต่ละ item เป็นแถวเดี่ยวๆ (ไม่มีกลุ่ม ไม่มีตัวหนา)
+>
+> **ผลลัพธ์ในหน้า Certificate:**
+> - ช่องติ๊กด้านบน: ไม่ติ๊กอะไร
+> - ตารางแสดง: title จาก items, location fallback เป็น `"บนดาดฟ้า"`, ช่องลงนาม/ผู้ตรวจเป็นว่าง
+> - ด้านล่าง: ชื่อวิศวกร/ลูกค้า/วันที่แสดงเป็น `...`
+
+---
+
+##### ตัวอย่าง 3: Hierarchical checklist + Certificate บางส่วน
+
+ใช้เมื่อมีข้อมูลวิศวกรแล้ว แต่ลูกค้ายังไม่ลงนาม
+
+```json
+{
+  "jobId": 24,
+  "checklistJson": {
+    "items": [
+      {
+        "title": "แผงโซลาร์เซลล์",
+        "location": "บนดาดฟ้า",
+        "signaturePV": "สมชาย",
+        "children": [
+          { "title": "ล้างแผงโซลาร์เซลล์", "status": "done", "remark": "เรียบร้อย" }
+        ]
+      },
+      {
+        "title": "Inverter Unit",
+        "location": "ห้อง Inverter",
+        "signaturePV": "สมชาย",
+        "children": [
+          { "title": "ทำความสะอาด Filter", "status": "done", "remark": "เรียบร้อย" }
+        ]
+      }
+    ],
+    "certificateApproval": "approval",
+    "certificateSignature": {
+      "engineerName": "สมชาย ใจดี",
+      "engineerDate": "15/02/2569"
+    }
+  }
+}
+```
+
+> **ผลลัพธ์ในหน้า Certificate:**
+> - [✓] อนุมัติ
+> - ตาราง: signaturePV = "สมชาย", ช่อง ผู้ตรวจรับมอบงาน = ว่าง (ไม่ได้ส่ง `signatureCustomer`)
+> - วิศวกร: สมชาย ใจดี / 15/02/2569
+> - ลูกค้า: ชื่อ = `...`, วันที่ = `../../....`, ช่องติ๊ก A/AC/N = ไม่ติ๊ก
+
+---
+
+##### ตัวอย่าง 4: ลูกค้าไม่อนุมัติ + มี Note
+
+```json
+{
+  "jobId": 24,
+  "checklistJson": {
+    "items": [
+      {
+        "title": "แผงโซลาร์เซลล์",
+        "location": "บนดาดฟ้า",
+        "signaturePV": "สมชาย",
+        "signatureCustomer": "สมหญิง",
+        "children": [
+          { "title": "ล้างแผง", "status": "done", "remark": "" }
+        ]
+      }
+    ],
+    "certificateApproval": "comment",
+    "certificateSignature": {
+      "engineerName": "สมชาย ใจดี",
+      "engineerDate": "15/02/2569",
+      "customerName": "สมหญิง รักสะอาด",
+      "customerDate": "15/02/2569",
+      "customerApproval": "N",
+      "customerNote": "ยังล้างไม่สะอาด ต้องกลับมาทำใหม่"
+    }
+  }
+}
+```
+
+> **ผลลัพธ์ในหน้า Certificate:**
+> - [ ] อนุมัติ &nbsp; [ ] รับทราบ &nbsp; [✓] ระบุความคิดเห็น
+> - ด้านล่างฝั่งลูกค้า: [✓] N - ไม่อนุมัติ, Note: ยังล้างไม่สะอาด ต้องกลับมาทำใหม่
+
+---
+
+##### ตัวอย่าง 5: Minimal (เฉพาะ checklist ไม่มี certificate เลย)
+
+ใช้เมื่อต้องการบันทึกแค่ข้อมูล checklist โดยไม่สนหน้า Certificate
+
+```json
+{
+  "jobId": 24,
+  "checklistJson": {
+    "items": [
+      { "title": "ล้างแผง", "status": "done", "remark": "เรียบร้อย" },
+      { "title": "ตรวจ Inverter", "status": "done", "remark": "ปกติ" }
+    ]
+  }
+}
+```
+
+> หน้า Certificate จะแสดงช่องว่าง `...` ทุกช่อง ไม่ติ๊กอะไร — เหมาะสำหรับพิมพ์แล้วกรอกด้วยมือ
+
+---
+
+**Response 200:**
 
 ```json
 { "success": true }
+```
+
+**Response 400:**
+
+```json
+{ "success": false, "message": "jobId is required" }
 ```
 
 #### POST `/api/cleaning/step4/generate`
@@ -1842,6 +2103,20 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 ```
 
 > NOTE: ถ้ารูป/ไฟล์บางส่วนหาไม่เจอระหว่าง generate report ระบบจะข้ามไฟล์นั้นและอาจส่ง `warning.missing` กลับมา
+
+**โครงสร้างหน้า PDF ที่ generate ได้:**
+
+| ลำดับ | หน้า | แหล่งข้อมูล |
+|-------|------|-------------|
+| 1 | ปกรายงาน (Cover) | jobNo, projectName, workDate |
+| 2 | เอกสารส่งมอบงาน (Certificate of Completion) | สร้างจาก checklist items + `certificateApproval` + `certificateSignature` |
+| 3 | Layout โครงการ (PV Layout) | ดึงจาก `SiteLayout` (client data, type=`PV_LAYOUT`) — แสดงเฉพาะเมื่อมีรูป |
+| 4 | Legacy full-page docs | STEP3_CERTIFICATE / STEP3_LAYOUT attachments (backward compat) |
+| 5 | แผนการบำรุงรักษาเชิงป้องกัน (Checklist) | `cleaningJob.checklist` JSON — รองรับทั้ง flat และ hierarchical |
+| 6+ | รูปภาพหลักฐาน (Evidence) | JobAttachment ที่ fileType ขึ้นต้นด้วย `STEP3_` |
+
+> หน้า Certificate จะแสดงเมื่อ checklist มี items — ข้อมูลส่งผ่าน `checklistJson` ตอน step3 (ดูตัวอย่างที่ `POST /api/cleaning/step3/checklist`)
+> หน้า PV Layout จะแสดงเฉพาะเมื่อมีรูปใน `SiteLayout` (upload ผ่าน client data API `POST /api/client-data/projects/:siteId/layouts/PV_LAYOUT`)
 
 #### GET `/api/cleaning/step4/download/:jobId`
 

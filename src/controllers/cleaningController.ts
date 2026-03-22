@@ -495,7 +495,7 @@ export async function generateReport(req: Request, res: Response) {
 
   const job = await prisma.job.findUnique({
     where: { id },
-    include: { site: true, attachments: true },
+    include: { site: { include: { layouts: true } }, attachments: true },
   });
   if (!job) return res.status(404).json({ success: false, message: 'Job not found' });
 
@@ -596,6 +596,46 @@ export async function generateReport(req: Request, res: Response) {
 
   const evidenceGroups = Array.from(grouped.entries()).map(([title, images]) => ({ title, images }));
 
+  // 3) PV Layout จาก client data (SiteLayout)
+  let siteLayoutPath: string | null = null;
+  const pvLayout = (job.site.layouts ?? []).find((l) => l.type === 'PV_LAYOUT');
+  console.log('[report] pvLayout from DB:', pvLayout ? { id: pvLayout.id, type: pvLayout.type, fileUrl: pvLayout.fileUrl } : 'NOT FOUND');
+  console.log('[report] site.layouts count:', (job.site.layouts ?? []).length);
+  if (pvLayout?.fileUrl) {
+    siteLayoutPath = await tryEnsureLocalFilePath(pvLayout.fileUrl);
+    console.log('[report] siteLayoutPath resolved:', siteLayoutPath);
+    if (!siteLayoutPath) missingAttachments.push(pvLayout.fileUrl);
+  }
+
+  // 4) Certificate items — ดึงจาก checklist categories
+  const certificateItems: { description: string; location: string; signaturePV?: string | null; signatureCustomer?: string | null }[] = [];
+  const checklistData = cleaning.checklist as any;
+  if (Array.isArray(checklistData?.items)) {
+    for (const item of checklistData.items) {
+      certificateItems.push({
+        description: item.title ?? '-',
+        location: (item as any).location ?? cleaning.locationText ?? 'บนดาดฟ้า',
+        signaturePV: (item as any).signaturePV ?? null,
+        signatureCustomer: (item as any).signatureCustomer ?? null,
+      });
+    }
+  }
+
+  // 5) Certificate approval & signature — ดึงจาก checklist JSON หรือ cleaning fields
+  const certApprovalRaw = checklistData?.certificateApproval ?? null;
+  const certificateApproval: 'approval' | 'acknowledgement' | 'comment' | null =
+    ['approval', 'acknowledgement', 'comment'].includes(certApprovalRaw) ? certApprovalRaw : null;
+
+  const certSig = checklistData?.certificateSignature ?? {};
+  const certificateSignature = {
+    engineerName: certSig.engineerName ?? null,
+    engineerDate: certSig.engineerDate ?? null,
+    customerName: certSig.customerName ?? cleaning.customerName ?? null,
+    customerDate: certSig.customerDate ?? null,
+    customerApproval: (['A', 'AC', 'N'].includes(certSig.customerApproval) ? certSig.customerApproval : null) as 'A' | 'AC' | 'N' | null,
+    customerNote: certSig.customerNote ?? null,
+  };
+
   const report = await generateCleaningReportPdf({
     jobNo: job.jobNo,
     projectName: cleaning.projectName ?? job.site.name,
@@ -608,6 +648,10 @@ export async function generateReport(req: Request, res: Response) {
     checklist: cleaning.checklist,
     fullPageDocs: [...cert, ...layout],
     evidenceGroups,
+    siteLayoutPath,
+    certificateItems,
+    certificateApproval,
+    certificateSignature,
   });
 
   await prisma.cleaningJob.update({
