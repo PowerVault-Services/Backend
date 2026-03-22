@@ -42,7 +42,8 @@
       "Bash(gh run:*)",
       "Bash(npx vitest:*)",
       "Bash(npm ls:*)",
-      "Bash(xargs cat:*)"
+      "Bash(xargs cat:*)",
+      "Bash(grep -E \"^\\\\`\\(GET|POST|PUT|PATCH|DELETE|HEAD\\)\" d:/Backend/README.md)"
     ]
   }
 }

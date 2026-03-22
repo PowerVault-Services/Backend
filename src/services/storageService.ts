@@ -654,7 +654,8 @@ export async function putObjectFromBuffer(objectKey: string, body: Buffer, conte
   };
 
   for (const [key, value] of Object.entries(metadata ?? {})) {
-    headers[`x-amz-meta-${key.toLowerCase()}`] = value;
+    // HTTP headers only support ASCII; URI-encode non-ASCII to prevent SignatureDoesNotMatch
+    headers[`x-amz-meta-${key.toLowerCase()}`] = encodeURIComponent(value);
   }
 
   const res = await requestObject({ method: 'PUT', objectKey, headers, body });
@@ -748,6 +749,9 @@ async function persistBufferToDestinations(args: {
     objectKey,
     bytes: buffer.length,
     contentType,
+    accessKey: maskValue(storageConfig.accessKey),
+    secretKey: maskValue(storageConfig.secretKey),
+    region: storageConfig.region,
   });
 
   await putObjectFromBuffer(objectKey, buffer, contentType, metadata);
