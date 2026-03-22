@@ -8,7 +8,7 @@ Backend นี้เป็น Express + Prisma + PostgreSQL และมี API 
 
 ### Prerequisites
 
-- Node.js (แนะนำ >= 18)
+- Node.js (แนะนำ >= 20, CI ใช้ Node 20)
 - Docker Desktop / Docker Engine
 
 ### Run locally
@@ -60,13 +60,12 @@ JWT_SECRET="your_secret_here"
 ### Email (SMTP / Gmail)
 
 ```env
-MAIL_HOST="smtp.gmail.com"
-MAIL_PORT=587
-MAIL_SECURE=false
-MAIL_USER="yourgmail@gmail.com"
-MAIL_PASS="xxxx xxxx xxxx xxxx"  # app password
-MAIL_FROM_NAME="PowerVault Service"
-MAIL_FROM_EMAIL="yourgmail@gmail.com"
+SMTP_HOST="smtp.gmail.com"
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER="yourgmail@gmail.com"
+SMTP_PASS="xxxx xxxx xxxx xxxx"  # app password
+SMTP_FROM="PowerVault Service <yourgmail@gmail.com>"
 ```
 
 ### Storage (Uploads: Local / MinIO)
@@ -98,6 +97,25 @@ MINIO_KEEP_LOCAL_COPY=true
 ```
 
 > NOTE: ถ้าเปิด MinIO แต่ค่า endpoint/bucket/credential ไม่ครบ ระบบจะ fallback เป็น local behavior ตาม flag ที่ตั้งไว้
+
+### Cron Schedules & Sync Health
+
+```env
+# cron expressions (ปรับเวลา sync ได้)
+HUAWEI_SITE_REALTIME_CRON="*/5 * * * *"
+HUAWEI_DEVICE_CRON="2-59/5 * * * *"
+HUAWEI_ALARM_CRON="1-59/5 * * * *"
+
+# watchdog: ตรวจจับ sync job ค้าง
+HUAWEI_SYNC_WATCHDOG_INTERVAL_MS=60000      # ตรวจทุก 60 วินาที
+HUAWEI_SYNC_WATCHDOG_STALE_MS=900000        # ถือว่าค้างเมื่อเกิน 15 นาที
+
+# health check (/healthz)
+HUAWEI_SYNC_HEALTH_MAX_LAG_MS=1200000       # lag เกิน 20 นาที = unhealthy (503)
+
+# alarm auto-refresh cooldown (ใช้ใน /api/alarms?refresh=1)
+HUAWEI_ALARM_AUTO_REFRESH_MIN_INTERVAL_MS=60000
+```
 
 ---
 
@@ -172,6 +190,46 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 - `400` invalid input / missing required fields
 - `404` entity not found
 - `500` internal error
+
+---
+
+## Health Check Endpoints
+
+### GET `/healthz`
+
+**Description:** Cron job health check — ตรวจว่า sync jobs ยังทำงานปกติ (ถ้า lag เกิน `HUAWEI_SYNC_HEALTH_MAX_LAG_MS` จะตอบ 503)
+
+**Response 200 (healthy):**
+
+```json
+{
+  "ok": true,
+  "now": 1711100000000,
+  "maxLagMs": 1200000,
+  "jobs": [
+    { "jobName": "siteRealtime", "running": false, "lastAttemptAt": 1711099800000, "lastSuccessAt": 1711099800000, "lagMs": 200000 }
+  ],
+  "unhealthyJobs": []
+}
+```
+
+**Response 503 (unhealthy):** เมื่อมี job ที่ lag เกินกำหนด
+
+### GET `/readyz`
+
+**Description:** Readiness check — ตรวจว่าสามารถ login Huawei API ได้
+
+**Response 200:**
+
+```json
+{ "ok": true }
+```
+
+**Response 503:**
+
+```json
+{ "ok": false, "error": "Login failed: ..." }
+```
 
 ---
 
@@ -295,6 +353,42 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 ---
 
 ## Monitoring APIs (`/api/monitoring`)
+
+### GET `/api/monitoring/sync/status`
+
+**Description:** สถานะ Cron jobs ทั้งหมด (site realtime, device, alarm sync)
+
+**Auth:** None
+
+**Response 200 (example):**
+
+```json
+{ "ok": true, "data": { "siteRealtime": { "running": false, "lastSuccessAt": "..." }, "device": { "running": false }, "alarm": { "running": false } } }
+```
+
+### GET `/api/monitoring/sync/coverage`
+
+**Description:** Fleet sync coverage snapshot (สรุปว่ามี site/inverter กี่ตัว sync สำเร็จ)
+
+**Auth:** None
+
+**Response 200 (example):**
+
+```json
+{ "ok": true, "data": { "totalSites": 10, "syncedSites": 9, "totalInverters": 50, "syncedInverters": 48 } }
+```
+
+### GET `/api/monitoring/sync/alarm-reconciliation`
+
+**Description:** Alarm reconciliation snapshot (สรุปจำนวน alarm active/cleared/stale)
+
+**Auth:** None
+
+**Response 200 (example):**
+
+```json
+{ "ok": true, "data": { "activeInDb": 25, "clearedInDb": 100, "stale": 2 } }
+```
 
 ### GET `/api/monitoring/sites`
 
@@ -1398,6 +1492,26 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 - `400` `{ "success": false, "message": "jobId is required" }`
 - `404` `{ "success": false, "message": "Job not found" }`
 
+#### GET `/api/drafts/email-signatures`
+
+**Description:** ดึงรายการลายเซ็นท้ายอีเมลสำหรับ dropdown
+
+**Auth:** None
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "supportsCustomName": true,
+    "defaultKey": "palm",
+    "defaultName": "palm",
+    "items": []
+  }
+}
+```
+
 #### GET `/api/drafts`
 
 **Description:** List draft jobs (status = `DRAFT`) เพื่อ resume งานที่ค้าง
@@ -1684,9 +1798,21 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 ```json
 {
-  "jobId": 123,
-  "checklistJson": "[{\"item\":\"...\",\"ok\":true}]",
-  "step3SummaryNote": "สรุปผล..."
+  "jobId": 22,
+  "checklistJson": {
+    "items": [
+      { "title": "ตรวจสอบสภาพแผงโซลาร์ก่อนล้าง",       "status": "done", "remark": "-" },
+      { "title": "ฉีดล้างแผงด้วยน้ำสะอาด",              "status": "done", "remark": "-" },
+      { "title": "เช็ดทำความสะอาดขอบเฟรมแผง",           "status": "done", "remark": "-" },
+      { "title": "ตรวจสอบสายไฟและจุดเชื่อมต่อ",          "status": "done", "remark": "ไม่พบความผิดปกติ" },
+      { "title": "ตรวจสอบ Inverter",                     "status": "done", "remark": "ทำงานปกติ" },
+      { "title": "ตรวจสอบโครงสร้างรางยึดแผง",            "status": "done", "remark": "-" },
+      { "title": "ทำความสะอาดบริเวณโดยรอบ",             "status": "done", "remark": "-" },
+      { "title": "ตรวจสอบระบบสายดิน",                    "status": "pass", "remark": "-" },
+      { "title": "ถ่ายรูปหลังทำความสะอาดเสร็จ",          "status": "done", "remark": "บันทึกใน step3 evidence" }
+    ]
+  },
+  "step3SummaryNote": "ล้างแผงเสร็จเรียบร้อย ไม่พบความเสียหาย"
 }
 ```
 
