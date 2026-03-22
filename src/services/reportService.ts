@@ -1048,13 +1048,9 @@ export async function generateServiceReportPdf(data: {
     </section>
   `;
 
-  const uploadedFormPage = data.serviceReportFormPath
-    ? renderFullPageImage('เอกสาร Service Report ที่อัปโหลด', data.serviceReportFormPath, 'service')
-    : '';
-
   const evidencePages = renderImageGridSection('รูปภาพประกอบการปฏิบัติงาน', data.evidencePhotos ?? [], 4, 'photo-grid-2', 'service');
 
-  const html = wrapHtml([formPage, uploadedFormPage, evidencePages].join(''));
+  const html = wrapHtml([formPage, evidencePages].join(''));
   await renderPdfToFile(html, absPath);
   return storeGeneratedReportFromLocalFile(absPath, { jobType: 'service', jobNo: data.jobNo });
 }

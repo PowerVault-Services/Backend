@@ -2654,30 +2654,329 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 #### POST `/api/service/step3/draft`
 
+บันทึกข้อมูล Service Report (Step3) ซึ่งถูกนำไปใช้ใน **2 ส่วน** ของ PDF report:
+
+1. **หน้า "Service Report Form" (หน้า 1)** — สร้าง digital form อัตโนมัติจาก `metaJson` ร่วมกับข้อมูล Step1 (projectName, workDate, systemSize ฯลฯ)
+2. **หน้า "รูปภาพประกอบ" (หน้า 2+)** — แสดงรูป `evidence` ในตาราง 2x2 (สูงสุด 4 รูป/หน้า, รวมไม่เกิน 12 รูป)
+
 **Content-Type:** `multipart/form-data`
 
-**Form fields:**
+---
 
-- `jobId` (required)
-- `metaJson` (optional): JSON string
+##### Form Fields
 
-> NOTE: `metaJson` จะถูกเก็บลง `serviceJob.step3Meta` และ backend จะพยายาม sync รายการจ่าย Stock (OUT) จาก meta ด้วย
->
-> - รองรับ field array หลายชื่อ (เช่น `stockItems`, `items`, `products`, `stockUsage`, `usedStock`)
-> - แต่ละ item ควรมี `{ productId, quantity }`
-> - ถ้า quantity เกินคงเหลือ จะตอบ `400` เช่น `{ "success": false, "message": "insufficient stock for productId=1: onHand=10" }`
+| field | type | required | คำอธิบาย |
+|-------|------|----------|----------|
+| `jobId` | `number` | ✅ | รหัส job |
+| `metaJson` | `string (JSON)` | optional | JSON string ข้อมูลรายละเอียดงานบริการ — ดูโครงสร้างด้านล่าง |
+
+##### Files (multipart)
+
+| field name | type | คำอธิบาย |
+|------------|------|----------|
+| `serviceReport` | file (single) | (optional, ไม่ใช้ใน PDF แล้ว) เก็บรูปใบ Service Report เขียนมือเป็น archive เท่านั้น — PDF ใช้ digital form จาก `metaJson` แทน |
+| `evidence` | file[] (max 30) | รูปภาพหลักฐานการปฏิบัติงาน — แสดงเป็นตาราง 2x2 ในหน้าถัดๆ ไป |
+
+---
+
+##### โครงสร้าง `metaJson`
+
+`metaJson` เป็น JSON string ที่ frontend ส่งมา — backend จะ parse แล้วเก็บลง `serviceJob.step3Meta` ทั้งก้อน
+
+```
+{
+  "serviceType": string,         // ลักษณะงานบริการ → ใช้ติ๊ก checkbox + fallback ชื่อรายการในตาราง
+  "technicianName": string,      // ชื่อ-นามสกุล ผู้เข้าตรวจสอบ
+  "technicianPosition": string,  // ตำแหน่ง (default: "Service Technician")
+  "projectType": string,         // ประเภทโครงการ → ติ๊ก checkbox (Solar Rooftop/Farm/Floating)
+  "startDate": string,           // วันที่เริ่มเข้าดำเนินการ
+  "endDate": string,             // วันที่เสร็จสิ้นงาน
+  "customerName": string,        // ชื่อผู้รับรอง (ฝั่งลูกค้า)
+  "customerPosition": string,    // สถานภาพ/ตำแหน่ง ผู้รับรอง
+  "summary": string,             // หมายเหตุ
+  "tasks": [ ... ],              // รายการงาน → ตารางลำดับ/รายการ/รายละเอียด
+  "stockItems": [ ... ]          // อุปกรณ์/อะไหล่ที่ใช้ → สร้าง Stock OUT + แสดงตาราง
+}
+```
+
+> **หมายเหตุ:** Backend รองรับ field name หลายรูปแบบเพื่อความยืดหยุ่น:
+> - `serviceType` หรือ `serviceName` / `jobType` / `title`
+> - `technicianName` หรือ `technician` / `serviceBy` / `operatorName` / `staffName`
+> - `technicianPosition` หรือ `position` / `staffPosition`
+> - `startDate` หรือ `serviceStartDate` / `workStartDate`
+> - `endDate` หรือ `serviceEndDate` / `workEndDate`
+> - `customerName` หรือ `customerSigner` / `approverName` / `ownerName`
+> - `customerPosition` หรือ `approverPosition` / `ownerPosition`
+> - `summary` หรือ `remark` / `description` / `details`
+> - `tasks` หรือ `details` / `checklist` / `items` / `works`
+> - `stockItems` หรือ `stock` / `items` / `products` / `stockUsage` / `usedStock`
+
+---
+
+##### `tasks[]` — รายการงาน
+
+แต่ละ task แสดงเป็น 1 แถวในตาราง "รายการ" ของ PDF หน้าแรก
+
+| field | type | คำอธิบาย |
+|-------|------|----------|
+| `name` | `string` | ชื่อรายการงาน (รองรับ: `name`, `title`, `topic`, `item`, `description`) |
+| `detail` | `string` | รายละเอียด/วิธีดำเนินการ (รองรับ: `detail`, `remark`, `result`, `note`) |
+
+ถ้าไม่ส่ง `tasks` → backend ใช้ `serviceType` เป็นชื่อรายการ 1 แถว + `summary` เป็นรายละเอียด
+
+ถ้า task เป็น string ธรรมดา (ไม่ใช่ object) → ใช้เป็นชื่อรายการ ช่องรายละเอียดว่าง
+
+---
+
+##### `stockItems[]` — อุปกรณ์/อะไหล่ที่ใช้
+
+| field | type | คำอธิบาย |
+|-------|------|----------|
+| `productId` | `number` | รหัสสินค้า (รองรับ: `productId`, `id`, `product_id`) |
+| `quantity` | `number` | จำนวนที่ใช้ (รองรับ: `quantity`, `qty`, `amount`) |
+
+> **Stock OUT sync:**
+> - Backend จะสร้าง `StockTransaction` type=OUT ให้อัตโนมัติจาก `stockItems`
+> - ถ้า quantity เกินคงเหลือ จะตอบ `400`: `{ "success": false, "message": "insufficient stock for productId=1: onHand=10" }`
 > - การเรียกซ้ำจะลบรายการ OUT เดิมที่สร้างจาก Step3 แล้วสร้างใหม่ (กันซ้ำ)
+> - ตาราง Stock จะแสดงใน PDF เฉพาะเมื่อมี stockItems ที่ qty > 0
 
-**Files:**
+---
 
-- `serviceReport` (file, single)
-- `evidence` (file[], max 30)
+##### `metaJson` fields → ผลลัพธ์ในหน้า PDF
 
-**Response 200 (example):**
+| field | ตำแหน่งใน PDF | ค่า default ถ้าไม่ส่ง |
+|-------|--------------|----------------------|
+| `projectType` | ช่อง checkbox "ลักษณะงานติดตั้ง" → ติ๊ก Solar Rooftop / Farm / Floating | ติ๊ก Solar Rooftop |
+| `serviceType` | ช่อง checkbox "ลักษณะงานบริการ" → ติ๊กตาม keyword (ดูตารางด้านล่าง) + ชื่อรายการ fallback ในตาราง | ไม่ติ๊กอะไร |
+| `technicianName` | "ชื่อ-นามสกุล (ผู้เข้าตรวจสอบ)" | แสดง `-` |
+| `technicianPosition` | "ตำแหน่ง" + "สถานภาพ / ตำแหน่ง" ในช่องลงนามฝั่งซ้าย | `Service Technician` |
+| `tasks` | ตาราง (ลำดับ / รายการ / รายละเอียด) | 1 แถว: ชื่อ=`serviceType` หรือ "งานบริการ", รายละเอียด=`summary` |
+| `summary` | "หมายเหตุ :" ด้านล่างตาราง | ว่าง (ใช้ `note` จาก Step1 ถ้ามี) |
+| `startDate` | "วันที่เริ่มเข้าดำเนินการ" ในช่องลงนาม | ใช้ `workDate` จาก Step1 (format ไทย) |
+| `endDate` | "วันที่เสร็จสิ้นงาน" ในช่องลงนาม | ใช้ `workDate` จาก Step1 (format ไทย) |
+| `customerName` | "ลงชื่อผู้รับรอง" ในช่องลงนามฝั่งขวา | ว่าง |
+| `customerPosition` | "สถานภาพ / ตำแหน่ง" ในช่องลงนามฝั่งขวา | ว่าง |
+| `stockItems` | ตาราง "รายการอุปกรณ์/อะไหล่ที่ใช้" (SKU/หมวดหมู่/รายการ/หน่วย/จำนวน) | ไม่แสดงตาราง |
+
+---
+
+##### `serviceType` → Checkbox mapping
+
+Backend จะเทียบ keyword ใน `serviceType` เพื่อติ๊ก checkbox "ลักษณะงานบริการ":
+
+| keyword (case-insensitive) | ช่องที่ติ๊ก |
+|----------------------------|------------|
+| `ติดตั้ง`, `install` | ✓ งานติดตั้ง |
+| `เปิดระบบ`, `commission` | ✓ งานเปิดระบบ |
+| `inspect`, `ตรวจ` | ✓ ตรวจสอบโครงการ |
+| `maintenance`, `บำรุง`, `ซ่อม`, `service` | ✓ การซ่อมบำรุง |
+| `other`, `อื่น`, `เพิ่มเติม` | ✓ งานเพิ่มเติม |
+
+##### `projectType` → Checkbox mapping
+
+| keyword (case-insensitive) | ช่องที่ติ๊ก |
+|----------------------------|------------|
+| `roof`, `rooftop` | ✓ Solar Rooftop |
+| `farm` | ✓ Solar Farm |
+| `floating` | ✓ Solar Floating |
+| ไม่ส่ง / ค่าอื่น | ✓ Solar Rooftop (default) |
+
+---
+
+##### ตัวอย่าง 1: ครบทุก field (แนะนำ)
+
+งาน Maintenance มีรายการงาน 2 รายการ + อะไหล่ที่ใช้ + ข้อมูลลงนาม
+
+```json
+// metaJson (ส่งเป็น string ใน form field)
+{
+  "serviceType": "การซ่อมบำรุง",
+  "projectType": "Solar Rooftop",
+  "technicianName": "กิตติพงษ์ กุลไพร",
+  "technicianPosition": "Service Technician",
+  "startDate": "14 พ.ค. 2568",
+  "endDate": "14 พ.ค. 2568",
+  "customerName": "สิทธิพงษ์",
+  "customerPosition": "",
+  "summary": "",
+  "tasks": [
+    {
+      "name": "เปลี่ยนพัดลม",
+      "detail": "INV 1 = 30\nINV 2 = 30\nINV 3 = 30\nINV 4 = 30\nINV 5 = 30\nจำนวนรวม 150 ตัว"
+    }
+  ],
+  "stockItems": [
+    { "productId": 5, "quantity": 150 }
+  ]
+}
+```
+
+> **ผลลัพธ์ใน PDF (หน้า 1 — Service Report Form):**
+>
+> ```
+> โครงการ: Thai Nokoan Srimahapo     วันที่ 14 เดือน พ.ค. ปี 2568
+>
+> ลักษณะงานติดตั้ง:  [✓] Solar Rooftop  [ ] Solar Farm  [ ] Solar Floating
+> ลักษณะงานบริการ:  [ ] งานติดตั้ง  [ ] งานเปิดระบบ  [ ] ตรวจสอบโครงการ  [✓] การซ่อมบำรุง  [ ] งานเพิ่มเติม
+>
+> ชื่อ-นามสกุล (ผู้เข้าตรวจสอบ): กิตติพงษ์ กุลไพร
+> ตำแหน่ง: Service Technician
+>
+> | ลำดับ | รายการ     | รายละเอียด / วิธีดำเนินการ          |
+> |-------|-----------|-------------------------------------|
+> | 1     | เปลี่ยนพัดลม | INV 1 = 30, INV 2 = 30, ... รวม 150 |
+>
+> รายการอุปกรณ์/อะไหล่ที่ใช้:
+> | SKU   | หมวดหมู่ | รายการ      | หน่วย | จำนวน |
+> | FAN01 | พัดลม   | พัดลม INV   | ตัว   | 150   |
+>
+> หมายเหตุ:
+>
+> วันที่เริ่มเข้าดำเนินการ: 14 พ.ค. 2568    วันที่เสร็จสิ้นงาน: 14 พ.ค. 2568
+> ลงชื่อผู้ตรวจสอบ:                         ลงชื่อผู้รับรอง:
+> ตำแหน่ง: Service Technician               สถานภาพ:
+> หน่วยงาน: บริษัท พาวเวอร์วอลท์ฯ            หน่วยงาน:
+> ลายเซ็น:                                 ลายเซ็น:
+> ```
+
+**Postman form-data fields:**
+
+| Key | Type | Value |
+|-----|------|-------|
+| `jobId` | Text | `777` |
+| `metaJson` | Text | `{"serviceType":"การซ่อมบำรุง","projectType":"Solar Rooftop","technicianName":"กิตติพงษ์ กุลไพร","technicianPosition":"Service Technician","startDate":"14 พ.ค. 2568","endDate":"14 พ.ค. 2568","customerName":"สิทธิพงษ์","tasks":[{"name":"เปลี่ยนพัดลม","detail":"INV 1 = 30\nINV 2 = 30\nINV 3 = 30"}],"stockItems":[{"productId":5,"quantity":150}]}` |
+| `evidence` | File | `photo1.jpg` |
+| `evidence` | File | `photo2.jpg` |
+| `evidence` | File | `photo3.jpg` |
+| `evidence` | File | `photo4.jpg` |
+
+---
+
+##### ตัวอย่าง 2: Minimal — เฉพาะ tasks ไม่มีข้อมูลเพิ่มเติม
+
+ใช้เมื่อต้องการบันทึกแค่รายการงาน ไม่มี stock ไม่มีข้อมูลลงนาม
+
+```json
+{
+  "serviceType": "maintenance",
+  "technicianName": "สมชาย",
+  "tasks": [
+    { "name": "ตรวจสอบ Inverter", "detail": "ทำงานปกติ" },
+    { "name": "ตรวจสอบสายไฟ", "detail": "ไม่พบความผิดปกติ" }
+  ]
+}
+```
+
+> **ผลลัพธ์ใน PDF:**
+> - ติ๊ก ✓ การซ่อมบำรุง (keyword "maintenance")
+> - ติ๊ก ✓ Solar Rooftop (default เมื่อไม่ส่ง projectType)
+> - ตาราง 2 แถว: ตรวจสอบ Inverter, ตรวจสอบสายไฟ
+> - ไม่มีตาราง Stock
+> - วันที่เริ่ม/เสร็จ = workDate จาก Step1 (format ไทย)
+> - ช่องลงนามฝั่งลูกค้า = ว่าง
+
+---
+
+##### ตัวอย่าง 3: งานตรวจสอบโครงการ + Solar Farm + หมายเหตุ
+
+```json
+{
+  "serviceType": "ตรวจสอบโครงการ",
+  "projectType": "Solar Farm",
+  "technicianName": "วิศวกร สมใจ",
+  "technicianPosition": "Senior Engineer",
+  "startDate": "1 มี.ค. 2569",
+  "endDate": "2 มี.ค. 2569",
+  "customerName": "คุณประสิทธิ์",
+  "customerPosition": "ผู้จัดการโรงงาน",
+  "summary": "ตรวจสอบทุกจุดเรียบร้อย ไม่พบปัญหา",
+  "tasks": [
+    { "name": "ตรวจสภาพแผงโซลาร์", "detail": "ปกติ ไม่มีรอยแตก" },
+    { "name": "ตรวจสอบ Inverter", "detail": "LED ปกติทุกตัว" },
+    { "name": "ตรวจสอบ Combiner Box", "detail": "Fuse ครบ ไม่มีรอยไหม้" },
+    { "name": "วัดค่า String Voltage", "detail": "Voc ปกติทุก String" }
+  ]
+}
+```
+
+> **ผลลัพธ์ใน PDF:**
+> - ติ๊ก ✓ Solar Farm
+> - ติ๊ก ✓ ตรวจสอบโครงการ (keyword "ตรวจ")
+> - ชื่อ: วิศวกร สมใจ / ตำแหน่ง: Senior Engineer
+> - ตาราง 4 แถว
+> - หมายเหตุ: ตรวจสอบทุกจุดเรียบร้อย ไม่พบปัญหา
+> - วันที่เริ่ม: 1 มี.ค. 2569 / วันที่เสร็จ: 2 มี.ค. 2569
+> - ผู้รับรอง: คุณประสิทธิ์ / ผู้จัดการโรงงาน
+
+---
+
+##### ตัวอย่าง 4: ไม่ส่ง metaJson เลย (ใช้แค่ไฟล์)
+
+ใช้เมื่อ frontend ไม่มีฟอร์มกรอกข้อมูล แค่อัปโหลดรูป service report + evidence
+
+```
+POST /api/service/step3/draft
+Content-Type: multipart/form-data
+
+jobId: 777
+serviceReport: [file: service-form-scan.jpg]
+evidence: [file: photo1.jpg]
+evidence: [file: photo2.jpg]
+```
+
+> **ผลลัพธ์ใน PDF:**
+> - หน้า 1 (Service Report Form): ข้อมูลจาก Step1 (projectName, workDate, systemSize) + ช่อง checkbox/ตาราง/ลงนาม เป็นค่า default ทั้งหมด
+> - หน้า 2: รูป service-form-scan.jpg เต็มหน้า (ใบ Service Report ที่เขียนด้วยมือ)
+> - หน้า 3: รูป evidence 2 รูปในตาราง 2x2
+
+---
+
+##### ตัวอย่าง 5: ส่ง tasks เป็น string array (simplified)
+
+```json
+{
+  "serviceType": "งานติดตั้ง",
+  "technicianName": "สมศักดิ์ ดีงาม",
+  "tasks": [
+    "ติดตั้งแผงโซลาร์เซลล์",
+    "ต่อสาย DC String",
+    "ติดตั้ง Inverter",
+    "เปิดระบบทดสอบ"
+  ]
+}
+```
+
+> **ผลลัพธ์ใน PDF:**
+> - ติ๊ก ✓ งานติดตั้ง
+> - ตาราง 4 แถว: ชื่อรายการ = string ที่ส่ง, ช่องรายละเอียด = ว่าง
+>
+> | ลำดับ | รายการ                  | รายละเอียด / วิธีดำเนินการ |
+> |-------|------------------------|---------------------------|
+> | 1     | ติดตั้งแผงโซลาร์เซลล์      |                           |
+> | 2     | ต่อสาย DC String        |                           |
+> | 3     | ติดตั้ง Inverter         |                           |
+> | 4     | เปิดระบบทดสอบ           |                           |
+
+---
+
+**Response 200:**
 
 ```json
 { "success": true }
 ```
+
+**Response 400:**
+
+```json
+{ "success": false, "message": "jobId is required" }
+```
+
+```json
+{ "success": false, "message": "insufficient stock for productId=1: onHand=10" }
+```
+
+---
 
 #### POST `/api/service/step4/generate`
 
@@ -2694,6 +2993,15 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 ```json
 { "success": true, "data": { "reportUrl": "/uploads/report.pdf", "download": "/api/service/step4/download/777" } }
 ```
+
+> NOTE: ถ้ารูป/ไฟล์บางส่วนหาไม่เจอระหว่าง generate report ระบบจะข้ามไฟล์นั้น
+
+**โครงสร้างหน้า PDF ที่ generate ได้:**
+
+| ลำดับ | หน้า | แหล่งข้อมูล |
+|-------|------|-------------|
+| 1 | Service Report Form (digital) | ข้อมูล Step1 (projectName, workDate, systemSize) + `step3Meta` (tasks, technician, signatures, stock) — สร้างอัตโนมัติจากข้อมูลที่กรอก |
+| 2+ | รูปภาพประกอบการปฏิบัติงาน | `SERVICE_EVIDENCE` attachments — ตาราง 2x2 สูงสุด 4 รูป/หน้า (รวมไม่เกิน 12 รูป) |
 
 #### GET `/api/service/step4/download/:jobId`
 
