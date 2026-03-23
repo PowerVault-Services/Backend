@@ -1189,6 +1189,299 @@ async function seedStockMaster() {
   console.log(`✅ Seed stock master: units=${unitNames.length}, categories=${categoryNames.length}, products=${upserted}`);
 }
 
+// =====================
+// CLIENT DATA from: CLIENT DATA.pdf (Solar O&M projects Thailand)
+// =====================
+
+// matchPlantCode = Huawei plantCode ที่มีอยู่ใน DB แล้ว (update existing site)
+const CLIENT_DATA_THAILAND = [
+  {
+    matchPlantCode: 'NE=50474988',  // DB name: TWD Bangna
+    name: 'TWD บางนา',
+    capacityKWp: 999.75,
+    projectStatus: 'INACTIVE' as const,
+    ecpPpa: 'PVS ขาย PM (EPC)',
+    codDate: new Date('2021-09-30'),
+    warrantyStart: new Date('2021-09-30'),
+    warrantyEnd: new Date('2023-09-29'),
+    freeOmText: '3time/Y',
+    warrantyOutputPct: null,
+    panelBrand: 'Jinko',
+    panelWatt: 465,
+    pvModuleCount: 2170,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท ซีอาร์ซี ไทวัสดุ จำกัด',
+    address: 'เลขที่ 88/88 หมู่ 13 ถนนบางนา-ตราด ต.บางแก้ว อ.บางพลี จ.สมุทรปราการ 10540',
+    siteEngineer: 'BIRD',
+    responsiblePerson1: 'จิรวัฒน์ สุขศาลา 083-797-3820',
+    contactEmail: 'NgNattapong@chg.co.th',
+    contactPhone: '083-797-3820',
+    remark: null,
+  },
+  {
+    matchPlantCode: 'NE=50223457',  // DB name: Toshiba 380.41kW
+    name: 'Toshiba (BOI)',
+    capacityKWp: 380.41,
+    projectStatus: 'ACTIVE' as const,
+    ecpPpa: 'EPC',
+    codDate: new Date('2022-07-22'),
+    warrantyStart: new Date('2022-07-22'),
+    warrantyEnd: new Date('2027-07-21'),
+    freeOmText: '2time/Y',
+    warrantyOutputPct: null,
+    panelBrand: 'Jinko',
+    panelWatt: 545,
+    pvModuleCount: 698,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท ไทยโตชิบา อุตสาหกรรม จำกัด',
+    address: 'นนทบุรี',
+    siteEngineer: 'Cherry',
+    responsiblePerson1: 'คุณธีรยุทธ 090-985-0166',
+    contactEmail: 'teerayutl@ttei.toshiba.co.th',
+    contactPhone: '090-985-0166',
+    remark: null,
+  },
+  {
+    matchPlantCode: 'NE=51335826',  // DB name: Semperflex Asia
+    name: 'Semperflex Asia',
+    capacityKWp: 999.44,
+    projectStatus: 'ACTIVE' as const,
+    ecpPpa: 'EPC',
+    codDate: new Date('2023-12-24'),
+    warrantyStart: new Date('2023-12-24'),
+    warrantyEnd: new Date('2026-12-23'),
+    freeOmText: '2time/Y',
+    warrantyOutputPct: null,
+    panelBrand: 'Jinko',
+    panelWatt: 620,
+    pvModuleCount: 1612,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท เซมเพอร์เฟล็กซ์ เอเซีย จำกัด',
+    address: '110/1 ถนนกาญจนวนิช ตำบลพะตง อำเภอหาดใหญ่ จังหวัดสงขลา 90230',
+    siteEngineer: 'Cherry',
+    responsiblePerson1: 'คุณตูน 063-820-7689',
+    responsiblePerson2: 'คุณวิโรจ 092-256-3772',
+    contactEmail: 'watcharapornc@sritranggroup.com',
+    contactPhone: '063-820-7689',
+    remark: 'TK ทีมเดิมเคยได้รับอบรมแล้ว, ขอข้อมูลรุ่น รูปและทะเบียนรถที่เข้าพื้นที่, ให้เข้างาน จ.-ศ.',
+  },
+  {
+    matchPlantCode: 'NE=51413522',  // DB name: Chaivaree Marin
+    name: 'ชัยวารีมารีนโปรดัคส์ (Chaivaree Marin)',
+    capacityKWp: 509.64,
+    projectStatus: 'INACTIVE' as const,
+    ecpPpa: 'EPC',
+    codDate: new Date('2024-01-14'),
+    warrantyStart: new Date('2024-01-14'),
+    warrantyEnd: new Date('2026-01-13'),
+    freeOmText: '2time/Y',
+    warrantyOutputPct: null,
+    panelBrand: 'Jinko',
+    panelWatt: 620,
+    pvModuleCount: 822,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท ชัยวารีมารีนโปรดัคส์ จำกัด',
+    address: 'ถ.เอกชัย ตำบลนาดี อำเภอเมืองสมุทรสาคร จังหวัดสมุทรสาคร 74000',
+    siteEngineer: 'Cherry',
+    responsiblePerson1: 'คุณช่อแก้ว 089-805-7038',
+    responsiblePerson2: 'คุณสุทิศ (ผู้จัดการโรงงาน) 094-649-6959',
+    contactEmail: 'store.chaivaree@gmail.com',
+    contactPhone: '089-805-7038',
+    remark: null,
+  },
+  {
+    matchPlantCode: 'NE=51419620',  // DB name: PITI SEAFOODS
+    name: 'Piti Seafood จะนะ',
+    capacityKWp: 999.44,
+    projectStatus: 'ACTIVE' as const,
+    ecpPpa: 'EPC',
+    codDate: new Date('2024-01-18'),
+    warrantyStart: new Date('2024-02-06'),
+    warrantyEnd: new Date('2027-02-05'),
+    freeOmText: '2time/Y',
+    warrantyOutputPct: null,
+    panelBrand: 'Jinko',
+    panelWatt: 620,
+    pvModuleCount: 1612,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท ปิติซีฟูดส์ จำกัด',
+    address: 'หาดใหญ่-ปัตตานี ตำบลบ้านนา อำเภอจะนะ จังหวัดสงขลา 90130',
+    siteEngineer: 'Cherry',
+    responsiblePerson1: 'คุณปอ 089-581-6369',
+    responsiblePerson2: 'คุณกิศนา 088-399-2991',
+    contactEmail: 'iso.ptf@gmail.com',
+    contactPhone: '089-581-6369',
+    remark: null,
+  },
+  {
+    matchPlantCode: 'NE=51806236',  // DB name: Sanden M2 FAC 4 7 and 8
+    name: 'SANDEN INTERCOOL 2',
+    capacityKWp: 1300.14,
+    projectStatus: 'ACTIVE' as const,
+    ecpPpa: 'EPC',
+    codDate: new Date('2024-04-05'),
+    warrantyStart: new Date('2024-07-03'),
+    warrantyEnd: new Date('2029-07-02'),
+    freeOmText: '2time/Y',
+    warrantyOutputPct: null,
+    panelBrand: 'Jinko',
+    panelWatt: 620,
+    pvModuleCount: 2097,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท ซันเด้น อินเตอร์คูล (ประเทศไทย) จำกัด',
+    address: '97-97/1 หมู่ที่ 3 ตำบลบ้านหม้อ อำเภอพรหมบุรี จังหวัดสิงห์บุรี 16120',
+    siteEngineer: 'Cherry',
+    responsiblePerson1: 'คุณสุรนาท 097-250-8424',
+    contactEmail: 'pe_05@sandenintercool.com',
+    contactPhone: '097-250-8424',
+    remark: 'อบรม 2 ชั่วโมง, เข้าได้ จ.-ศ., ลค.แจ้งขอให้ถึงหน้างาน 8.30 น. เพราะมีอบรมก่อนเริ่มงาน',
+  },
+  {
+    matchPlantCode: 'NE=51605380',  // DB name: Songserm Commercial Refrigeration
+    name: 'SONGSERM COMMERCIAL REFRIGERATION (THAILAND)',
+    capacityKWp: 350.92,
+    projectStatus: 'ACTIVE' as const,
+    ecpPpa: 'EPC',
+    codDate: new Date('2024-02-28'),
+    warrantyStart: new Date('2024-02-28'),
+    warrantyEnd: new Date('2027-02-27'),
+    freeOmText: '2time/Y',
+    warrantyOutputPct: null,
+    panelBrand: 'Jinko',
+    panelWatt: 620,
+    pvModuleCount: 566,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท ส่งเสริม คอมเมอร์เชียล รีฟรีเจอร์เรชั่น (ไทยแลนด์) จำกัด',
+    address: '103 หมู่ที่ 3 ถนนสายเอเซีย ตำบลบ้านหม้อ อำเภอพรหมบุรี จ.สิงห์บุรี',
+    siteEngineer: 'Cherry',
+    responsiblePerson1: 'คุณสำเร็จ 089-722-1166',
+    responsiblePerson2: 'คุณพัฒนา (จัดซื้อ) 085-481-7034',
+    contactEmail: 'wirat@songsermref.com',
+    contactPhone: '089-722-1166',
+    remark: 'อบรมประมาณ 30 นาที กับ จป.',
+  },
+  {
+    matchPlantCode: 'NE=52425407',  // DB name: Polar Plastic
+    name: 'Polar Plastic',
+    capacityKWp: 445.08,
+    projectStatus: 'ACTIVE' as const,
+    ecpPpa: 'EPC',
+    codDate: new Date('2024-07-04'),
+    warrantyStart: new Date('2024-07-12'),
+    warrantyEnd: new Date('2029-07-12'),
+    freeOmText: '2time/Y',
+    warrantyOutputPct: null,
+    panelBrand: 'Jinko',
+    panelWatt: 620,
+    pvModuleCount: 718,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท โพลาร์พลาสติก อินดัสทรี่ส์ จำกัด',
+    address: 'ตำบลบางบ่อ อำเภอบางบ่อ จังหวัดสมุทรปราการ',
+    siteEngineer: 'Bird',
+    responsiblePerson1: 'ช่างคมสัน 097-343-6455',
+    contactEmail: 'mt@polar-plastic.com',
+    contactPhone: '097-343-6455',
+    remark: null,
+  },
+  {
+    matchPlantCode: 'NE=54621914',  // DB name: TWD Bangna phase 2
+    name: 'TWD บางนา เฟส 2',
+    capacityKWp: 999.60,
+    projectStatus: 'ACTIVE' as const,
+    ecpPpa: 'EPC',
+    codDate: new Date('2024-11-27'),
+    warrantyStart: new Date('2025-01-19'),
+    warrantyEnd: new Date('2030-01-17'),
+    freeOmText: '2time/Y, 5Y/70%',
+    warrantyOutputPct: 70,
+    panelBrand: 'Trina',
+    panelWatt: 695,
+    pvModuleCount: 1439,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท ซีอาร์ซี ไทวัสดุ จำกัด',
+    address: 'เลขที่ 88/88 หมู่ 13 ถนนบางนา-ตราด ต.บางแก้ว อ.บางพลี จ.สมุทรปราการ 10540',
+    siteEngineer: 'Bird',
+    responsiblePerson1: 'จิรวัฒน์ สุขศาลา 083-797-3820',
+    contactEmail: 'KhoSupattra@chg.co.th',
+    contactPhone: '083-797-3820',
+    remark: 'หลังจากนี้สัญญารับเหมาติดตั้งไม่มี',
+  },
+  {
+    matchPlantCode: 'NE=54494468',  // DB name: MEGA Hatyai
+    name: 'Mega Hatyai',
+    capacityKWp: 999.41,
+    projectStatus: 'ACTIVE' as const,
+    ecpPpa: 'EPC',
+    codDate: new Date('2024-11-18'),
+    warrantyStart: new Date('2024-12-14'),
+    warrantyEnd: new Date('2026-12-13'),
+    freeOmText: '2time/Y',
+    warrantyOutputPct: null,
+    panelBrand: 'Trina',
+    panelWatt: 695,
+    pvModuleCount: 1438,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท เมกก้า หาดใหญ่ จำกัด',
+    address: '116 หมู่ 4 ตำบลเขามีเกียรติ อำเภอสะเดา จังหวัดสงขลา 90170',
+    siteEngineer: 'Yaya',
+    responsiblePerson1: 'คุณกาย 088-398-4545',
+    contactEmail: 'office.megahatyai@gmail.com',
+    contactPhone: '088-398-4545',
+    remark: null,
+  },
+  // 5 โปรเจกต์ที่ไม่มีใน DB (เอ็มซีซี ลาเบลส์, คอร์ติน่า, ดี.ที.เอส., เออาร์ พาราวูด, AIS Songkhla) — ข้ามไป
+];
+
+async function seedClientDataThailand() {
+  let updated = 0;
+  let notFound = 0;
+
+  for (const project of CLIENT_DATA_THAILAND) {
+    // Client data fields to update/create (don't overwrite name — keep DB name from Huawei)
+    const clientFields = {
+      projectStatus: project.projectStatus === 'ACTIVE' ? 'ACTIVE' as const : 'INACTIVE' as const,
+      ecpPpa: project.ecpPpa,
+      codDate: project.codDate,
+      warrantyStart: project.warrantyStart,
+      warrantyEnd: project.warrantyEnd,
+      freeOmText: project.freeOmText,
+      warrantyOutputPct: project.warrantyOutputPct,
+      panelBrand: project.panelBrand,
+      panelWatt: project.panelWatt,
+      pvModuleCount: project.pvModuleCount,
+      projectTypeText: project.projectTypeText,
+      companyName: project.companyName,
+      address: project.address,
+      siteEngineer: project.siteEngineer,
+      responsiblePerson1: project.responsiblePerson1,
+      responsiblePerson2: project.responsiblePerson2 ?? null,
+      contactEmail: project.contactEmail ?? null,
+      contactPhone: project.contactPhone,
+      remark: project.remark,
+    };
+
+    if (project.matchPlantCode) {
+      // Update existing site matched by Huawei plantCode
+      const existing = await prisma.site.findUnique({
+        where: { plantCode: project.matchPlantCode },
+      });
+      if (existing) {
+        await prisma.site.update({
+          where: { plantCode: project.matchPlantCode },
+          data: clientFields,
+        });
+        updated++;
+        console.log(`   📝 Updated: ${existing.name} (${project.matchPlantCode}) ← PDF: ${project.name}`);
+      } else {
+        console.warn(`   ⚠️  Not found in DB: plantCode=${project.matchPlantCode} (PDF: ${project.name})`);
+        notFound++;
+      }
+    }
+  }
+
+  console.log(`✅ Seed client data Thailand: ${updated} updated, ${notFound} not found (total ${CLIENT_DATA_THAILAND.length} projects)`);
+}
+
 async function seedServiceEntries() {
   // Pick the first 3 sites to create sample ServiceEntry records
   const sites = await prisma.site.findMany({
@@ -1234,6 +1527,7 @@ async function main() {
   await seedUsers();
   await seedStockMaster();
   await enrichSitesFromMappingResult();
+  await seedClientDataThailand();
   await seedServiceEntries();
 }
 
