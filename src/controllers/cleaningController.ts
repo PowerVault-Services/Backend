@@ -10,10 +10,14 @@ import { collectJobReportFiles, createReportsZip, deleteJobCascade, parseJobIds 
 const prisma = new PrismaClient();
 
 async function bumpJobStep(jobId: number, next: number) {
-  const job = await prisma.job.findUnique({ where: { id: jobId }, select: { step: true } });
+  const job = await prisma.job.findUnique({ where: { id: jobId }, select: { step: true, status: true } });
   if (!job) return;
   const step = Math.max(job.step ?? 1, next);
-  await prisma.job.update({ where: { id: jobId }, data: { step, status: JobStatus.DRAFT } });
+  const data: { step: number; status?: JobStatus } = { step };
+  if (job.status !== JobStatus.COMPLETED && job.status !== JobStatus.ASSIGNED) {
+    data.status = JobStatus.DRAFT;
+  }
+  await prisma.job.update({ where: { id: jobId }, data });
 }
 
 function toNum(v: any) {
@@ -257,6 +261,16 @@ export async function createDraftStep1(req: Request, res: Response) {
       note: note ?? null,
     },
   });
+
+    // Ensure a ServiceEntry exists so the job appears on the Client Data → PowerVault Service tab
+    const existingEntry = await prisma.serviceEntry.findFirst({
+      where: { siteId: site.id, job: JobType.CLEANING },
+    });
+    if (!existingEntry) {
+      await prisma.serviceEntry.create({
+        data: { siteId: site.id, job: JobType.CLEANING, description: `Cleaning - ${site.name}` },
+      });
+    }
 
     return res.json({ success: true, data: { jobId: created.id, jobNo: created.jobNo } });
   }
@@ -505,10 +519,10 @@ export async function generateReport(req: Request, res: Response) {
   // เปลี่ยนจาก photos -> fullPageDocs + evidenceGroups
   const attachments = job.attachments ?? [];
 
-  // 1) Full page docs (แนบเป็นหน้าเต็ม) — แนะนำให้อัปโหลดเป็นรูป (jpg/png)
+  // 1) Certificate images (เอกสารส่งมอบงาน — อัปโหลดรูปแทนตารางดิจิทัล)
   const missingAttachments: string[] = [];
 
-  const certResolved = await Promise.all(
+  const certImgResolved = await Promise.all(
     attachments
       .filter((a) => a.fileType === 'STEP3_CERTIFICATE')
       .map(async (a) => {
@@ -517,13 +531,10 @@ export async function generateReport(req: Request, res: Response) {
           missingAttachments.push(String(a.fileUrl ?? ''));
           return null;
         }
-        return {
-          title: 'เอกสารส่งมอบงาน',
-          filePath,
-        };
+        return { filePath };
       }),
   );
-  const cert = certResolved.filter(Boolean) as { title: string; filePath: string }[];
+  const certificateImages = certImgResolved.filter(Boolean) as { filePath: string }[];
 
   const layoutResolved = await Promise.all(
     attachments
@@ -607,35 +618,6 @@ export async function generateReport(req: Request, res: Response) {
     if (!siteLayoutPath) missingAttachments.push(pvLayout.fileUrl);
   }
 
-  // 4) Certificate items — ดึงจาก checklist categories
-  const certificateItems: { description: string; location: string; signaturePV?: string | null; signatureCustomer?: string | null }[] = [];
-  const checklistData = cleaning.checklist as any;
-  if (Array.isArray(checklistData?.items)) {
-    for (const item of checklistData.items) {
-      certificateItems.push({
-        description: item.title ?? '-',
-        location: (item as any).location ?? cleaning.locationText ?? 'บนดาดฟ้า',
-        signaturePV: (item as any).signaturePV ?? null,
-        signatureCustomer: (item as any).signatureCustomer ?? null,
-      });
-    }
-  }
-
-  // 5) Certificate approval & signature — ดึงจาก checklist JSON หรือ cleaning fields
-  const certApprovalRaw = checklistData?.certificateApproval ?? null;
-  const certificateApproval: 'approval' | 'acknowledgement' | 'comment' | null =
-    ['approval', 'acknowledgement', 'comment'].includes(certApprovalRaw) ? certApprovalRaw : null;
-
-  const certSig = checklistData?.certificateSignature ?? {};
-  const certificateSignature = {
-    engineerName: certSig.engineerName ?? null,
-    engineerDate: certSig.engineerDate ?? null,
-    customerName: certSig.customerName ?? cleaning.customerName ?? null,
-    customerDate: certSig.customerDate ?? null,
-    customerApproval: (['A', 'AC', 'N'].includes(certSig.customerApproval) ? certSig.customerApproval : null) as 'A' | 'AC' | 'N' | null,
-    customerNote: certSig.customerNote ?? null,
-  };
-
   const report = await generateCleaningReportPdf({
     jobNo: job.jobNo,
     projectName: cleaning.projectName ?? job.site.name,
@@ -646,12 +628,10 @@ export async function generateReport(req: Request, res: Response) {
     pvModuleEA: cleaning.pvModuleEA,
     note: cleaning.note,
     checklist: cleaning.checklist,
-    fullPageDocs: [...cert, ...layout],
+    fullPageDocs: [...layout],
     evidenceGroups,
     siteLayoutPath,
-    certificateItems,
-    certificateApproval,
-    certificateSignature,
+    certificateImages,
   });
 
   await prisma.cleaningJob.update({

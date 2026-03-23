@@ -199,10 +199,13 @@ function renderImageGridSection(title: string, images: EvidenceImage[], perPage:
 function renderFullPageImage(title: string, filePath: string, headerVariant: 'service' | 'cleaning' = 'cleaning', lineFill = true) {
   const uri = fileToDataUri(filePath);
   if (!uri) return '';
+  const titleHtml = title
+    ? `<div class="section-head${lineFill ? ' line-fill' : ''}">${escapeHtml(title)}</div>`
+    : '';
   return `
     <section class="page" style="display:flex; flex-direction:column; height:297mm;">
       ${renderHeader(getLogoDataUri(), headerVariant)}
-      <div class="section-head${lineFill ? ' line-fill' : ''}">${escapeHtml(title)}</div>
+      ${titleHtml}
       <div class="full-image-wrap"><img src="${uri}" /></div>
     </section>
   `;
@@ -214,72 +217,77 @@ function formatCheckStatus(raw: any): string {
   return raw ? String(raw) : '-';
 }
 
+// Fixed checklist categories for cleaning maintenance plan
+const CLEANING_CHECKLIST_TEMPLATE = [
+  {
+    title: 'แผงโซลาร์เซลล์',
+    children: [
+      { title: 'ตรวจสอบความสะอาดแผงและล้างแผงโซลาร์เซลล์' },
+      { title: 'ตรวจสอบสภาพแผง สีกระจก และการเกิดออกไซต์ บน Frame' },
+    ],
+  },
+  {
+    title: 'Inverter Unit',
+    children: [
+      { title: 'ตรวจสอบสภาพและทำความสะอาด Filter' },
+      { title: 'ตรวจสอบการทำงานของพัดลมระบายอากาศและดูดฝุ่น' },
+    ],
+  },
+  {
+    title: 'Monitoring System',
+    children: [
+      { title: 'ตรวจสอบสภาพและทำความสะอาดภายในตู้ควบคุม คอมพิวเตอร์' },
+    ],
+  },
+  {
+    title: 'ระบบน้ำทำความสะอาดแผงโซลาร์เซลล์',
+    children: [
+      { title: 'ตรวจสอบสภาพและความพร้อมของปั๊มน้ำและอุปกรณ์ Starter' },
+      { title: 'ตรวจสอบสภาพของหัวจ่ายน้ำ' },
+    ],
+  },
+];
+
 function renderCleaningChecklistRows(checklist: any) {
-  const items = Array.isArray(checklist?.items) ? checklist.items : [];
-  if (!items.length) {
-    return `
-      <tr>
-        <td class="center">1</td>
-        <td>-</td>
-        <td class="center">-</td>
-        <td>-</td>
-      </tr>
-    `;
+  // Build lookup from user data: key = child title -> { status, remark }
+  const userItems = Array.isArray(checklist?.items) ? checklist.items : [];
+  const childLookup = new Map<string, { status?: string; remark?: string }>();
+
+  for (const group of userItems) {
+    const children = Array.isArray(group?.children) ? group.children : [];
+    for (const child of children) {
+      if (child?.title) {
+        childLookup.set(child.title, { status: child.status, remark: child.remark });
+      }
+    }
+    // Also support flat items (backward compat)
+    if (group?.title && group?.status !== undefined && !Array.isArray(group?.children)) {
+      childLookup.set(group.title, { status: group.status, remark: group.remark });
+    }
   }
 
-  // Support hierarchical items: each item can have children (sub-items)
-  // Format A (hierarchical): { title: "แผงโซลาร์เซลล์", children: [{ title: "...", status: "done", remark: "..." }] }
-  // Format B (flat): { title: "...", status: "done", remark: "..." }
-  const hasChildren = items.some((it: any) => Array.isArray(it?.children) && it.children.length > 0);
-
-  if (hasChildren) {
-    return items.map((group: any, idx: number) => {
-      const children = Array.isArray(group?.children) ? group.children : [];
-      const groupTitle = escapeHtml(group?.title ?? '-');
-
-      if (!children.length) {
-        // Group with no sub-items — render as a single row
-        return `
-          <tr>
-            <td class="center">${idx + 1}</td>
-            <td><b>${groupTitle}</b></td>
-            <td class="center">${formatCheckStatus(group?.status)}</td>
-            <td>${escapeHtml(group?.remark ?? '')}</td>
-          </tr>
-        `;
-      }
-
-      // Group title row + child rows — ลำดับ column spans all rows (1 title + N children)
-      const totalRows = 1 + children.length;
-      const titleRow = `
+  // Render fixed structure with merged user data
+  return CLEANING_CHECKLIST_TEMPLATE.map((group, idx) => {
+    const totalRows = 1 + group.children.length;
+    const titleRow = `
+      <tr>
+        <td class="center" rowspan="${totalRows}">${idx + 1}</td>
+        <td><b>${escapeHtml(group.title)}</b></td>
+        <td class="center"></td>
+        <td></td>
+      </tr>
+    `;
+    const childRows = group.children.map((child) => {
+      const userData = childLookup.get(child.title);
+      return `
         <tr>
-          <td class="center" rowspan="${totalRows}">${idx + 1}</td>
-          <td><b>${groupTitle}</b></td>
-          <td class="center"></td>
-          <td></td>
+          <td>- ${escapeHtml(child.title)}</td>
+          <td class="center">${formatCheckStatus(userData?.status)}</td>
+          <td>${escapeHtml(userData?.remark ?? '')}</td>
         </tr>
       `;
-      const childRows = children.map((child: any) => `
-        <tr>
-          <td>- ${escapeHtml(child?.title ?? '-')}</td>
-          <td class="center">${formatCheckStatus(child?.status)}</td>
-          <td>${escapeHtml(child?.remark ?? '')}</td>
-        </tr>
-      `).join('');
-      return titleRow + childRows;
     }).join('');
-  }
-
-  // Flat items (backward compatible)
-  return items.map((it: any, idx: number) => {
-    return `
-      <tr>
-        <td class="center">${idx + 1}</td>
-        <td>${escapeHtml(it?.title ?? '-')}</td>
-        <td class="center">${formatCheckStatus(it?.status)}</td>
-        <td>${escapeHtml(it?.remark ?? '-')}</td>
-      </tr>
-    `;
+    return titleRow + childRows;
   }).join('');
 }
 
@@ -818,6 +826,7 @@ export async function generateCleaningReportPdf(data: {
   fullPageDocs?: { title: string; filePath: string }[];
   evidenceGroups?: EvidenceGroup[];
   siteLayoutPath?: string | null;
+  certificateImages?: { filePath: string }[];
   certificateItems?: CertificateItem[];
   certificateApproval?: CertificateApproval;
   certificateSignature?: CertificateSignature;
@@ -844,18 +853,11 @@ export async function generateCleaningReportPdf(data: {
     </section>
   `;
 
-  // Certificate of Completion page (digital)
-  const certificatePage = (data.certificateItems && data.certificateItems.length > 0)
-    ? renderCertificatePage(logoDataUri, {
-        projectName: data.projectName,
-        systemLabel: data.systemSizeKWp ? `Solar Rooftop ${data.systemSizeKWp} kWp` : '',
-        docNo: data.jobNo,
-        date: data.workDate,
-        items: data.certificateItems,
-        approval: data.certificateApproval,
-        signature: data.certificateSignature,
-      })
-    : '';
+  // Certificate of Completion — ใช้รูปอัปโหลด (STEP3_CERTIFICATE) แทนตารางดิจิทัล
+  // ถ้ามี certificateImages → แสดงเป็น full-page images
+  const certificatePages = (data.certificateImages ?? [])
+    .map((img) => renderFullPageImage('เอกสารส่งมอบงาน', img.filePath, 'cleaning', true))
+    .join('');
 
   // Legacy full-page docs (STEP3_LAYOUT / STEP3_CERTIFICATE attachments — backward compat)
   const legacyFullPageDocs = (data.fullPageDocs ?? [])
@@ -919,7 +921,7 @@ export async function generateCleaningReportPdf(data: {
     .map((group) => renderImageGridSection(group.title, group.images, 6, 'photo-grid-2'))
     .join('');
 
-  const html = wrapHtml([coverPage, certificatePage, siteLayoutPage, legacyFullPageDocs, planPage, evidencePages].join(''));
+  const html = wrapHtml([coverPage, certificatePages, siteLayoutPage, legacyFullPageDocs, planPage, evidencePages].join(''));
   await renderPdfToFile(html, absPath);
   return storeGeneratedReportFromLocalFile(absPath, { jobType: 'cleaning', jobNo: data.jobNo });
 }
@@ -934,7 +936,7 @@ export async function generateServiceReportPdf(data: {
   systemSizeKWp?: number | null;
   pvModuleEA?: number | null;
   note?: string | null;
-  serviceReportFormPath?: string | null;
+  serviceReportImages?: { filePath: string }[];
   evidencePhotos?: EvidenceImage[];
   meta?: any;
   stockUsage?: ServiceStockUsage;
@@ -1048,9 +1050,13 @@ export async function generateServiceReportPdf(data: {
     </section>
   `;
 
+  const serviceReportPages = (data.serviceReportImages ?? [])
+    .map((img) => renderFullPageImage('', img.filePath, 'service', false))
+    .join('');
+
   const evidencePages = renderImageGridSection('รูปภาพประกอบการปฏิบัติงาน', data.evidencePhotos ?? [], 4, 'photo-grid-2', 'service');
 
-  const html = wrapHtml([formPage, evidencePages].join(''));
+  const html = wrapHtml([serviceReportPages || formPage, evidencePages].join(''));
   await renderPdfToFile(html, absPath);
   return storeGeneratedReportFromLocalFile(absPath, { jobType: 'service', jobNo: data.jobNo });
 }

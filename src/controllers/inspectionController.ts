@@ -10,10 +10,15 @@ import { collectJobReportFiles, createReportsZip, deleteJobCascade, parseJobIds 
 const prisma = new PrismaClient();
 
 async function bumpJobStep(jobId: number, next: number) {
-  const job = await prisma.job.findUnique({ where: { id: jobId }, select: { step: true } });
+  const job = await prisma.job.findUnique({ where: { id: jobId }, select: { step: true, status: true } });
   if (!job) return;
   const step = Math.max(job.step ?? 1, next);
-  await prisma.job.update({ where: { id: jobId }, data: { step, status: JobStatus.DRAFT } });
+  const data: { step: number; status?: JobStatus } = { step };
+  // Only set DRAFT if the job isn't already at a later status (ASSIGNED / COMPLETED)
+  if (job.status !== JobStatus.COMPLETED && job.status !== JobStatus.ASSIGNED) {
+    data.status = JobStatus.DRAFT;
+  }
+  await prisma.job.update({ where: { id: jobId }, data });
 }
 
 function makeJobNo() {
@@ -247,6 +252,16 @@ export async function createDraftStep1(req: Request, res: Response) {
         note: note ?? null,
       },
     });
+
+    // Ensure a ServiceEntry exists so the job appears on the Client Data → PowerVault Service tab
+    const existingEntry = await prisma.serviceEntry.findFirst({
+      where: { siteId: site.id, job: JobType.INSPECTION },
+    });
+    if (!existingEntry) {
+      await prisma.serviceEntry.create({
+        data: { siteId: site.id, job: JobType.INSPECTION, description: `Inspection - ${site.name}` },
+      });
+    }
 
     return res.json({ success: true, data: { jobId: created.id, jobNo: created.jobNo } });
   }

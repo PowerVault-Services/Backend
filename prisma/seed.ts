@@ -1189,10 +1189,52 @@ async function seedStockMaster() {
   console.log(`✅ Seed stock master: units=${unitNames.length}, categories=${categoryNames.length}, products=${upserted}`);
 }
 
+async function seedServiceEntries() {
+  // Pick the first 3 sites to create sample ServiceEntry records
+  const sites = await prisma.site.findMany({
+    take: 3,
+    orderBy: { id: 'asc' },
+    select: { id: true, name: true },
+  });
+
+  if (sites.length === 0) {
+    console.log('⏭️  No sites found — skipping ServiceEntry seed');
+    return;
+  }
+
+  const jobTypes: Array<{ job: 'SERVICE' | 'CLEANING' | 'INSPECTION'; label: string }> = [
+    { job: 'SERVICE', label: 'Service' },
+    { job: 'CLEANING', label: 'Cleaning' },
+    { job: 'INSPECTION', label: 'Inspection' },
+  ];
+
+  let created = 0;
+  for (const site of sites) {
+    for (const { job, label } of jobTypes) {
+      const exists = await prisma.serviceEntry.findFirst({
+        where: { siteId: site.id, job },
+      });
+      if (!exists) {
+        await prisma.serviceEntry.create({
+          data: {
+            siteId: site.id,
+            job,
+            description: `${label} — ${site.name}`,
+          },
+        });
+        created++;
+      }
+    }
+  }
+
+  console.log(`✅ Seed service entries: ${created} created (${sites.length} sites × ${jobTypes.length} job types)`);
+}
+
 async function main() {
   await seedUsers();
   await seedStockMaster();
   await enrichSitesFromMappingResult();
+  await seedServiceEntries();
 }
 
 main()

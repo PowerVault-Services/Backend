@@ -9,20 +9,20 @@ Backend นี้เป็น Express + Prisma + PostgreSQL และมี API 
 ### Prerequisites
 
 - Node.js (แนะนำ >= 20, CI ใช้ Node 20)
-- Docker Desktop / Docker Engine
+- เชื่อมต่อ VPN / อยู่ในเครือข่ายเดียวกับ cloud server ได้ (DB + MinIO อยู่บน cloud)
 
 ### Run locally
 
 ```bash
 npm install
 
-# start postgres
-docker compose up -d
+# generate prisma client
+npx prisma generate
 
-# create/update database schema
+# create/update database schema (ใช้กับ cloud DB โดยตรง)
 npx prisma migrate dev
 
-# seed (optional)
+# seed (optional — ใส่ข้อมูลเริ่มต้น)
 npx prisma db seed
 
 # run dev
@@ -31,6 +31,9 @@ npm run dev
 
 Default server: `http://localhost:3000`
 
+> NOTE: ปัจจุบัน DB (PostgreSQL) และ Object Storage (MinIO) อยู่บน cloud server แล้ว ไม่ต้องรัน `docker compose up -d` อีกต่อไป
+> ตรวจสอบ `.env` ว่า `DATABASE_URL` และ `MINIO_ENDPOINT` ชี้ไปที่ server ที่ถูกต้อง
+
 ---
 
 ## Environment variables (.env)
@@ -38,8 +41,10 @@ Default server: `http://localhost:3000`
 ### Database
 
 ```env
-DATABASE_URL="postgresql://admin:password123@localhost:5433/solar_db?schema=public"
+DATABASE_URL="postgresql://solar_admin:<password>@<cloud-ip>:5432/solar_db?schema=public"
 ```
+
+> NOTE: DB อยู่บน cloud server แล้ว — ดู IP จริงใน `.env`
 
 ### Huawei FusionSolar (Northbound API)
 
@@ -70,7 +75,7 @@ SMTP_FROM="PowerVault Service <yourgmail@gmail.com>"
 
 ### Storage (Uploads: Local / MinIO)
 
-ค่า default ปัจจุบันคือ local disk (`uploads/`) แต่โค้ดรองรับ object storage (MinIO/S3-compatible) ผ่าน gateway เดียวกัน (`/uploads/...`)
+ปัจจุบันใช้ MinIO (object storage บน cloud server) เป็นหลัก โค้ดรองรับทั้ง local disk และ MinIO/S3-compatible ผ่าน gateway เดียวกัน (`/uploads/...`)
 
 ```env
 # local | minio
@@ -1777,7 +1782,8 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 - `jobId` (required)
 - `labelType` (optional):
-  - เอกสารหน้าเต็ม: `CERTIFICATE` | `LAYOUT`
+  - เอกสารส่งมอบงาน (full-page image ใน PDF): `CERTIFICATE`
+  - Layout หน้าเต็ม: `LAYOUT`
   - รูปตามหัวข้อหน้าเว็บ Step3.1: `BEFORE_PANEL` | `DURING_PANEL` | `AFTER_PANEL` | `BEFORE_INVERTER` | `DURING_INVERTER` | `AFTER_INVERTER` | `ZONE_WORK` | `ZONE_CHECKLIST`
   - รองรับของเดิม (เก่า): `BEFORE` | `AFTER`
   - ถ้าไม่ส่งมา จะถือเป็น `EVIDENCE`
@@ -1792,10 +1798,9 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 #### POST `/api/cleaning/step3/checklist`
 
-บันทึกข้อมูล checklist ของงาน cleaning ซึ่งถูกนำไปใช้ใน **2 หน้า** ของ PDF report:
+บันทึกข้อมูล checklist ของงาน cleaning → ใช้ในหน้า **"แผนการบำรุงรักษาเชิงป้องกัน"** ของ PDF report
 
-1. **หน้า "เอกสารส่งมอบงาน" (Certificate of Completion)** — ใช้ `items[].title`, `items[].location`, `items[].signaturePV`, `items[].signatureCustomer`, `certificateApproval`, `certificateSignature`
-2. **หน้า "แผนการบำรุงรักษาเชิงป้องกัน" (Checklist)** — ใช้ `items[].title`, `items[].status`, `items[].remark`, `items[].children[]`
+> NOTE: หน้า "เอกสารส่งมอบงาน" (Certificate of Completion) ไม่ใช้ข้อมูลจาก checklist อีกต่อไป — ใช้การอัปโหลดรูปผ่าน `POST /api/cleaning/step3/evidence` แทน (labelType = `CERTIFICATE`)
 
 **Headers:** `Content-Type: application/json`
 
@@ -1806,7 +1811,7 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 ```
 {
   "jobId": number,              // (required) รหัส job
-  "checklistJson": { ... },     // (required) ข้อมูล checklist ทั้งหมด — ดูด้านล่าง
+  "checklistJson": { ... },     // (required) ข้อมูล checklist — ดูด้านล่าง
   "step3SummaryNote": string    // (optional) สรุปการทำงาน step 3
 }
 ```
@@ -1815,64 +1820,39 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 ```
 {
-  "items": [ ... ],                        // (required) รายการ checklist — ดูด้านล่าง
-  "certificateApproval": string | null,    // (optional) ช่องติ๊กด้านบนหน้า Certificate
-  "certificateSignature": { ... }          // (optional) ข้อมูลลงนามด้านล่างหน้า Certificate
+  "items": [ ... ]    // (required) รายการ checklist — ดูด้านล่าง
 }
 ```
 
 ---
 
-##### `items[]` — รายการ checklist (รองรับ 2 แบบ)
+##### `items[]` — รายการ checklist (หัวข้อ fix ตายตัว)
 
-ระบบรองรับ 2 format สำหรับ `items`: **แบบ flat** (ง่าย) และ **แบบ hierarchical** (จัดกลุ่ม)
+**ตาราง "แผนการบำรุงรักษา" ใน PDF มีหัวข้อ fix ตายตัว 4 หมวด 7 รายการย่อย** — FE ส่งแค่ `status` (ติ๊กถูก) และ `remark` (หมายเหตุ) ของแต่ละรายการย่อย โดยใช้ `title` เป็น key สำหรับ match
 
-ถ้ามี item ใดมี `children` → ระบบจะ render **ทุก item** แบบ hierarchical (group title + sub-items)
-ถ้าไม่มี `children` เลย → render แบบ flat ปกติ
+**หัวข้อที่ fix ไว้:**
 
-**แต่ละ item มี field ดังนี้:**
+| ลำดับ | หมวด | รายการย่อย |
+|-------|------|-----------|
+| 1 | **แผงโซลาร์เซลล์** | - ตรวจสอบความสะอาดแผงและล้างแผงโซลาร์เซลล์ |
+| | | - ตรวจสอบสภาพแผง สีกระจก และการเกิดออกไซต์ บน Frame |
+| 2 | **Inverter Unit** | - ตรวจสอบสภาพและทำความสะอาด Filter |
+| | | - ตรวจสอบการทำงานของพัดลมระบายอากาศและดูดฝุ่น |
+| 3 | **Monitoring System** | - ตรวจสอบสภาพและทำความสะอาดภายในตู้ควบคุม คอมพิวเตอร์ |
+| 4 | **ระบบน้ำทำความสะอาดแผงโซลาร์เซลล์** | - ตรวจสอบสภาพและความพร้อมของปั๊มน้ำและอุปกรณ์ Starter |
+| | | - ตรวจสอบสภาพของหัวจ่ายน้ำ |
 
-| field | type | ใช้ในหน้า | คำอธิบาย |
-|-------|------|-----------|----------|
-| `title` | `string` | Certificate + Checklist | ชื่อรายการ / ชื่อกลุ่ม (ถ้าเป็น hierarchical) |
-| `status` | `string` | Checklist | สถานะ: `"done"`, `"pass"`, `"completed"`, `"yes"` → แสดง ✓ / ค่าอื่นแสดงตามที่ส่ง |
-| `remark` | `string` | Checklist | หมายเหตุ |
-| `location` | `string` | Certificate | สถานที่ทำงาน เช่น `"บนดาดฟ้า"`, `"ห้อง Inverter"` (ถ้าไม่ส่ง ใช้ค่าจาก `cleaning.locationText` หรือ `"บนดาดฟ้า"`) |
-| `signaturePV` | `string` | Certificate | ชื่อผู้ลงนามฝั่ง PowerVault ในตาราง Certificate (เช่น `"สมชาย"`) |
-| `signatureCustomer` | `string` | Certificate | ชื่อผู้ตรวจรับมอบงานในตาราง Certificate (เช่น `"สมหญิง"`) |
-| `children` | `array` | Checklist | (optional) sub-items ของกลุ่มนี้ — แต่ละ child มี `{ title, status, remark }` |
-
----
-
-##### `certificateApproval` — ช่องติ๊กอนุมัติด้านบน
-
-ติ๊ก 1 ใน 3 ช่อง ที่ด้านบนหน้า Certificate:
-
-| ค่า | ผลลัพธ์ใน PDF |
-|-----|---------------|
-| `"approval"` | [✓] อนุมัติ/ Approval &nbsp; [ ] รับทราบ &nbsp; [ ] ระบุความคิดเห็น |
-| `"acknowledgement"` | [ ] อนุมัติ &nbsp; [✓] รับทราบ/ Acknowledgement &nbsp; [ ] ระบุความคิดเห็น |
-| `"comment"` | [ ] อนุมัติ &nbsp; [ ] รับทราบ &nbsp; [✓] ระบุความคิดเห็น/ Comment |
-| ไม่ส่ง / `null` | [ ] อนุมัติ &nbsp; [ ] รับทราบ &nbsp; [ ] ระบุความคิดเห็น (ไม่ติ๊กอะไร) |
-
----
-
-##### `certificateSignature` — ข้อมูลลงนามด้านล่าง
+**แต่ละ child item มี field:**
 
 | field | type | คำอธิบาย |
 |-------|------|----------|
-| `engineerName` | `string` | ชื่อวิศวกร/หัวหน้างาน (ฝั่งซ้ายล่าง) เช่น `"สมชาย ใจดี"` — ถ้าไม่ส่งแสดง `...` |
-| `engineerDate` | `string` | วันที่ลงนามวิศวกร เช่น `"22/09/2568"` — ถ้าไม่ส่งแสดง `../../....` |
-| `customerName` | `string` | ชื่อผู้ตรวจรับมอบงาน/ลูกค้า (ฝั่งขวาล่าง) เช่น `"สมหญิง รักสะอาด"` — ถ้าไม่ส่ง fallback ไปใช้ `cleaning.customerName` หรือแสดง `...` |
-| `customerDate` | `string` | วันที่ลูกค้าลงนาม เช่น `"22/09/2568"` — ถ้าไม่ส่งแสดง `../../....` |
-| `customerApproval` | `string` | ช่องติ๊กด้านขวาล่าง: `"A"` = อนุมัติ, `"AC"` = ความเห็น/ข้อควรแก้ไข, `"N"` = ไม่อนุมัติ — ถ้าไม่ส่งจะไม่ติ๊กอะไร |
-| `customerNote` | `string` | Note ของลูกค้า เช่น `"ดีมาก"` — ถ้าไม่ส่งแสดง `...` |
+| `title` | `string` | ชื่อรายการ (ต้องตรงกับหัวข้อ fix ด้านบน เพื่อ match ข้อมูลลง PDF) |
+| `status` | `string` | สถานะ: `"done"`, `"pass"`, `"completed"`, `"yes"` → แสดง ✓ / ค่าอื่นแสดงตามที่ส่ง |
+| `remark` | `string` | หมายเหตุ |
 
 ---
 
-##### ตัวอย่าง 1: Hierarchical checklist + Certificate ครบทุก field (แนะนำ)
-
-ใช้เมื่อต้องการจัดกลุ่มอุปกรณ์ (เช่น แผงโซลาร์, Inverter, Monitoring) พร้อมรายการย่อย + ข้อมูลลงนามครบ
+##### ตัวอย่าง: ส่ง checklist ครบทุกหัวข้อ (แนะนำ)
 
 ```json
 {
@@ -1881,193 +1861,52 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
     "items": [
       {
         "title": "แผงโซลาร์เซลล์",
-        "location": "บนดาดฟ้า",
-        "signaturePV": "สมชาย",
-        "signatureCustomer": "สมหญิง",
         "children": [
-          { "title": "ตรวจสอบความสะอาดแผงและล้างแผงโซลาร์เซลล์", "status": "done", "remark": "สะอาดเรียบร้อย" },
-          { "title": "ตรวจสอบสภาพแผง สีกระจก และการเกิดออกไซด์", "status": "done", "remark": "ปกติดี" }
+          { "title": "ตรวจสอบความสะอาดแผงและล้างแผงโซลาร์เซลล์", "status": "done", "remark": "แผงโซลาร์เซลล์สะอาดเรียบร้อย" },
+          { "title": "ตรวจสอบสภาพแผง สีกระจก และการเกิดออกไซต์ บน Frame", "status": "done", "remark": "สภาพของกระจกยังปกติดี" }
         ]
       },
       {
         "title": "Inverter Unit",
-        "location": "ห้อง Inverter",
-        "signaturePV": "สมชาย",
-        "signatureCustomer": "สมหญิง",
         "children": [
-          { "title": "ตรวจสอบสภาพและทำความสะอาด Filter", "status": "done", "remark": "สะอาดเรียบร้อย" }
+          { "title": "ตรวจสอบสภาพและทำความสะอาด Filter", "status": "done", "remark": "อินเวอร์เตอร์สะอาดเรียบร้อย" },
+          { "title": "ตรวจสอบการทำงานของพัดลมระบายอากาศและดูดฝุ่น", "status": "done", "remark": "ทำงานปกติ" }
         ]
       },
       {
-        "title": "ตรวจสอบ Monitoring System",
-        "location": "ห้องควบคุม",
-        "signaturePV": "สมชาย",
-        "signatureCustomer": "สมหญิง",
+        "title": "Monitoring System",
         "children": [
-          { "title": "ตรวจสอบสภาพตู้ควบคุม", "status": "done", "remark": "ปกติ" }
+          { "title": "ตรวจสอบสภาพและทำความสะอาดภายในตู้ควบคุม คอมพิวเตอร์", "status": "done", "remark": "สะอาดเรียบร้อยดี" }
+        ]
+      },
+      {
+        "title": "ระบบน้ำทำความสะอาดแผงโซลาร์เซลล์",
+        "children": [
+          { "title": "ตรวจสอบสภาพและความพร้อมของปั๊มน้ำและอุปกรณ์ Starter", "status": "done", "remark": "ปกติดี" },
+          { "title": "ตรวจสอบสภาพของหัวจ่ายน้ำ", "status": "done", "remark": "ปกติดี" }
         ]
       }
-    ],
-    "certificateApproval": "approval",
-    "certificateSignature": {
-      "engineerName": "สมชาย ใจดี",
-      "engineerDate": "22/09/2568",
-      "customerName": "สมหญิง รักสะอาด",
-      "customerDate": "22/09/2568",
-      "customerApproval": "A",
-      "customerNote": ""
-    }
+    ]
   },
   "step3SummaryNote": "ล้างแผงเสร็จเรียบร้อย ไม่พบความเสียหาย"
 }
 ```
 
-> **ผลลัพธ์ในหน้า "แผนการบำรุงรักษา" (Checklist):**
+> **ผลลัพธ์ในหน้า "แผนการบำรุงรักษา":**
 >
 > | ลำดับ | อุปกรณ์/รายการ | การดำเนินการ | หมายเหตุ |
 > |-------|---------------|-------------|----------|
 > | 1 | **แผงโซลาร์เซลล์** | | |
-> | | - ตรวจสอบความสะอาดแผงฯ | ✓ | สะอาดเรียบร้อย |
-> | | - ตรวจสอบสภาพแผงฯ | ✓ | ปกติดี |
+> | | - ตรวจสอบความสะอาดแผงและล้างแผงโซลาร์เซลล์ | ✓ | แผงโซลาร์เซลล์สะอาดเรียบร้อย |
+> | | - ตรวจสอบสภาพแผง สีกระจก และการเกิดออกไซต์ บน Frame | ✓ | สภาพของกระจกยังปกติดี |
 > | 2 | **Inverter Unit** | | |
-> | | - ตรวจสอบสภาพฯ | ✓ | สะอาดเรียบร้อย |
-> | 3 | **ตรวจสอบ Monitoring System** | | |
-> | | - ตรวจสอบสภาพตู้ควบคุม | ✓ | ปกติ |
->
-> **ผลลัพธ์ในหน้า "เอกสารส่งมอบงาน" (Certificate):**
->
-> | ลำดับ | รายละเอียดงาน | สถานที่ทำงาน | ลงนาม/Signature PV | ผู้ตรวจรับมอบงาน |
-> |-------|--------------|-------------|-------------------|----------------|
-> | 1 | - แผงโซลาร์เซลล์ | บนดาดฟ้า | สมชาย | สมหญิง |
-> | 2 | - Inverter Unit | ห้อง Inverter | สมชาย | สมหญิง |
-> | 3 | - ตรวจสอบ Monitoring System | ห้องควบคุม | สมชาย | สมหญิง |
-
----
-
-##### ตัวอย่าง 2: Flat checklist (ไม่จัดกลุ่ม) + ไม่มี Certificate data
-
-ใช้เมื่อ checklist เป็นรายการเดี่ยวๆ ไม่มี sub-items และไม่ต้องการกรอก Certificate (จะแสดงเป็นช่องว่าง `...`)
-
-```json
-{
-  "jobId": 24,
-  "checklistJson": {
-    "items": [
-      { "title": "ตรวจสอบสภาพแผงโซลาร์ก่อนล้าง", "status": "done", "remark": "-" },
-      { "title": "ฉีดล้างแผงด้วยน้ำสะอาด", "status": "done", "remark": "-" },
-      { "title": "ตรวจสอบสายไฟและจุดเชื่อมต่อ", "status": "done", "remark": "ไม่พบความผิดปกติ" },
-      { "title": "ตรวจสอบ Inverter", "status": "done", "remark": "ทำงานปกติ" },
-      { "title": "ตรวจสอบระบบสายดิน", "status": "pass", "remark": "-" }
-    ]
-  }
-}
-```
-
-> **ผลลัพธ์ในหน้า Checklist:** แต่ละ item เป็นแถวเดี่ยวๆ (ไม่มีกลุ่ม ไม่มีตัวหนา)
->
-> **ผลลัพธ์ในหน้า Certificate:**
-> - ช่องติ๊กด้านบน: ไม่ติ๊กอะไร
-> - ตารางแสดง: title จาก items, location fallback เป็น `"บนดาดฟ้า"`, ช่องลงนาม/ผู้ตรวจเป็นว่าง
-> - ด้านล่าง: ชื่อวิศวกร/ลูกค้า/วันที่แสดงเป็น `...`
-
----
-
-##### ตัวอย่าง 3: Hierarchical checklist + Certificate บางส่วน
-
-ใช้เมื่อมีข้อมูลวิศวกรแล้ว แต่ลูกค้ายังไม่ลงนาม
-
-```json
-{
-  "jobId": 24,
-  "checklistJson": {
-    "items": [
-      {
-        "title": "แผงโซลาร์เซลล์",
-        "location": "บนดาดฟ้า",
-        "signaturePV": "สมชาย",
-        "children": [
-          { "title": "ล้างแผงโซลาร์เซลล์", "status": "done", "remark": "เรียบร้อย" }
-        ]
-      },
-      {
-        "title": "Inverter Unit",
-        "location": "ห้อง Inverter",
-        "signaturePV": "สมชาย",
-        "children": [
-          { "title": "ทำความสะอาด Filter", "status": "done", "remark": "เรียบร้อย" }
-        ]
-      }
-    ],
-    "certificateApproval": "approval",
-    "certificateSignature": {
-      "engineerName": "สมชาย ใจดี",
-      "engineerDate": "15/02/2569"
-    }
-  }
-}
-```
-
-> **ผลลัพธ์ในหน้า Certificate:**
-> - [✓] อนุมัติ
-> - ตาราง: signaturePV = "สมชาย", ช่อง ผู้ตรวจรับมอบงาน = ว่าง (ไม่ได้ส่ง `signatureCustomer`)
-> - วิศวกร: สมชาย ใจดี / 15/02/2569
-> - ลูกค้า: ชื่อ = `...`, วันที่ = `../../....`, ช่องติ๊ก A/AC/N = ไม่ติ๊ก
-
----
-
-##### ตัวอย่าง 4: ลูกค้าไม่อนุมัติ + มี Note
-
-```json
-{
-  "jobId": 24,
-  "checklistJson": {
-    "items": [
-      {
-        "title": "แผงโซลาร์เซลล์",
-        "location": "บนดาดฟ้า",
-        "signaturePV": "สมชาย",
-        "signatureCustomer": "สมหญิง",
-        "children": [
-          { "title": "ล้างแผง", "status": "done", "remark": "" }
-        ]
-      }
-    ],
-    "certificateApproval": "comment",
-    "certificateSignature": {
-      "engineerName": "สมชาย ใจดี",
-      "engineerDate": "15/02/2569",
-      "customerName": "สมหญิง รักสะอาด",
-      "customerDate": "15/02/2569",
-      "customerApproval": "N",
-      "customerNote": "ยังล้างไม่สะอาด ต้องกลับมาทำใหม่"
-    }
-  }
-}
-```
-
-> **ผลลัพธ์ในหน้า Certificate:**
-> - [ ] อนุมัติ &nbsp; [ ] รับทราบ &nbsp; [✓] ระบุความคิดเห็น
-> - ด้านล่างฝั่งลูกค้า: [✓] N - ไม่อนุมัติ, Note: ยังล้างไม่สะอาด ต้องกลับมาทำใหม่
-
----
-
-##### ตัวอย่าง 5: Minimal (เฉพาะ checklist ไม่มี certificate เลย)
-
-ใช้เมื่อต้องการบันทึกแค่ข้อมูล checklist โดยไม่สนหน้า Certificate
-
-```json
-{
-  "jobId": 24,
-  "checklistJson": {
-    "items": [
-      { "title": "ล้างแผง", "status": "done", "remark": "เรียบร้อย" },
-      { "title": "ตรวจ Inverter", "status": "done", "remark": "ปกติ" }
-    ]
-  }
-}
-```
-
-> หน้า Certificate จะแสดงช่องว่าง `...` ทุกช่อง ไม่ติ๊กอะไร — เหมาะสำหรับพิมพ์แล้วกรอกด้วยมือ
+> | | - ตรวจสอบสภาพและทำความสะอาด Filter | ✓ | อินเวอร์เตอร์สะอาดเรียบร้อย |
+> | | - ตรวจสอบการทำงานของพัดลมระบายอากาศและดูดฝุ่น | ✓ | ทำงานปกติ |
+> | 3 | **Monitoring System** | | |
+> | | - ตรวจสอบสภาพและทำความสะอาดภายในตู้ควบคุม คอมพิวเตอร์ | ✓ | สะอาดเรียบร้อยดี |
+> | 4 | **ระบบน้ำทำความสะอาดแผงโซลาร์เซลล์** | | |
+> | | - ตรวจสอบสภาพและความพร้อมของปั๊มน้ำและอุปกรณ์ Starter | ✓ | ปกติดี |
+> | | - ตรวจสอบสภาพของหัวจ่ายน้ำ | ✓ | ปกติดี |
 
 ---
 
@@ -2109,13 +1948,13 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 | ลำดับ | หน้า | แหล่งข้อมูล |
 |-------|------|-------------|
 | 1 | ปกรายงาน (Cover) | jobNo, projectName, workDate |
-| 2 | เอกสารส่งมอบงาน (Certificate of Completion) | สร้างจาก checklist items + `certificateApproval` + `certificateSignature` |
+| 2 | เอกสารส่งมอบงาน (Certificate of Completion) | รูปที่อัปโหลดผ่าน `step3/evidence` (labelType=`CERTIFICATE`) — แสดงเป็น full-page image |
 | 3 | Layout โครงการ (PV Layout) | ดึงจาก `SiteLayout` (client data, type=`PV_LAYOUT`) — แสดงเฉพาะเมื่อมีรูป |
-| 4 | Legacy full-page docs | STEP3_CERTIFICATE / STEP3_LAYOUT attachments (backward compat) |
-| 5 | แผนการบำรุงรักษาเชิงป้องกัน (Checklist) | `cleaningJob.checklist` JSON — รองรับทั้ง flat และ hierarchical |
-| 6+ | รูปภาพหลักฐาน (Evidence) | JobAttachment ที่ fileType ขึ้นต้นด้วย `STEP3_` |
+| 4 | Legacy full-page docs | STEP3_LAYOUT attachments (backward compat) |
+| 5 | แผนการบำรุงรักษาเชิงป้องกัน (Checklist) | `cleaningJob.checklist` JSON — หัวข้อ fix ตายตัว 4 หมวด ดูรายละเอียดที่ `step3/checklist` |
+| 6+ | รูปภาพหลักฐาน (Evidence) | JobAttachment ที่ fileType ขึ้นต้นด้วย `STEP3_` (ยกเว้น CERTIFICATE/LAYOUT) |
 
-> หน้า Certificate จะแสดงเมื่อ checklist มี items — ข้อมูลส่งผ่าน `checklistJson` ตอน step3 (ดูตัวอย่างที่ `POST /api/cleaning/step3/checklist`)
+> หน้า Certificate จะแสดงเมื่อมีรูปอัปโหลด `CERTIFICATE` — อัปโหลดผ่าน `POST /api/cleaning/step3/evidence` (labelType=`CERTIFICATE`)
 > หน้า PV Layout จะแสดงเฉพาะเมื่อมีรูปใน `SiteLayout` (upload ผ่าน client data API `POST /api/client-data/projects/:siteId/layouts/PV_LAYOUT`)
 
 #### GET `/api/cleaning/step4/download/:jobId`
@@ -2654,10 +2493,10 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 #### POST `/api/service/step3/draft`
 
-บันทึกข้อมูล Service Report (Step3) ซึ่งถูกนำไปใช้ใน **2 ส่วน** ของ PDF report:
+บันทึกข้อมูล Service Report (Step3) — อัปโหลดรูป Service Report + รูปหลักฐาน
 
-1. **หน้า "Service Report Form" (หน้า 1)** — สร้าง digital form อัตโนมัติจาก `metaJson` ร่วมกับข้อมูล Step1 (projectName, workDate, systemSize ฯลฯ)
-2. **หน้า "รูปภาพประกอบ" (หน้า 2+)** — แสดงรูป `evidence` ในตาราง 2x2 (สูงสุด 4 รูป/หน้า, รวมไม่เกิน 12 รูป)
+**หลักการ:** หน้า Service Report ใน PDF ใช้ **รูปที่อัปโหลด** แสดงเต็มหน้า (รูปละ 1 หน้า) แทนการสร้าง digital form
+ถ้าไม่อัปโหลดรูป `serviceReport` เลย → fallback เป็น digital form อัตโนมัติจาก `metaJson` + ข้อมูล Step1
 
 **Content-Type:** `multipart/form-data`
 
@@ -2668,63 +2507,38 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 | field | type | required | คำอธิบาย |
 |-------|------|----------|----------|
 | `jobId` | `number` | ✅ | รหัส job |
-| `metaJson` | `string (JSON)` | optional | JSON string ข้อมูลรายละเอียดงานบริการ — ดูโครงสร้างด้านล่าง |
+| `metaJson` | `string (JSON)` | optional | JSON string ข้อมูลรายละเอียดงานบริการ — ใช้เป็น fallback เมื่อไม่อัปโหลดรูป `serviceReport` และใช้สำหรับ stock sync |
 
 ##### Files (multipart)
 
 | field name | type | คำอธิบาย |
 |------------|------|----------|
-| `serviceReport` | file (single) | (optional, ไม่ใช้ใน PDF แล้ว) เก็บรูปใบ Service Report เขียนมือเป็น archive เท่านั้น — PDF ใช้ digital form จาก `metaJson` แทน |
+| `serviceReport` | file[] (max 20) | รูป Service Report ที่เขียนด้วยมือ/scan — แสดงเป็นรูปเต็มหน้าใน PDF (รูปละ 1 หน้า) |
 | `evidence` | file[] (max 30) | รูปภาพหลักฐานการปฏิบัติงาน — แสดงเป็นตาราง 2x2 ในหน้าถัดๆ ไป |
 
 ---
 
-##### โครงสร้าง `metaJson`
+##### โครงสร้าง `metaJson` (optional — ใช้เป็น fallback + stock sync)
 
 `metaJson` เป็น JSON string ที่ frontend ส่งมา — backend จะ parse แล้วเก็บลง `serviceJob.step3Meta` ทั้งก้อน
 
+> **หมายเหตุ:** ถ้าอัปโหลดรูป `serviceReport` แล้ว ข้อมูลใน `metaJson` จะ **ไม่ถูกใช้สร้างหน้า PDF** (ยกเว้น `stockItems` ที่ยังใช้ sync stock)
+
 ```
 {
-  "serviceType": string,         // ลักษณะงานบริการ → ใช้ติ๊ก checkbox + fallback ชื่อรายการในตาราง
+  "serviceType": string,         // ลักษณะงานบริการ
   "technicianName": string,      // ชื่อ-นามสกุล ผู้เข้าตรวจสอบ
   "technicianPosition": string,  // ตำแหน่ง (default: "Service Technician")
-  "projectType": string,         // ประเภทโครงการ → ติ๊ก checkbox (Solar Rooftop/Farm/Floating)
+  "projectType": string,         // ประเภทโครงการ (Solar Rooftop/Farm/Floating)
   "startDate": string,           // วันที่เริ่มเข้าดำเนินการ
   "endDate": string,             // วันที่เสร็จสิ้นงาน
   "customerName": string,        // ชื่อผู้รับรอง (ฝั่งลูกค้า)
   "customerPosition": string,    // สถานภาพ/ตำแหน่ง ผู้รับรอง
   "summary": string,             // หมายเหตุ
-  "tasks": [ ... ],              // รายการงาน → ตารางลำดับ/รายการ/รายละเอียด
-  "stockItems": [ ... ]          // อุปกรณ์/อะไหล่ที่ใช้ → สร้าง Stock OUT + แสดงตาราง
+  "tasks": [ ... ],              // รายการงาน
+  "stockItems": [ ... ]          // อุปกรณ์/อะไหล่ที่ใช้ → สร้าง Stock OUT
 }
 ```
-
-> **หมายเหตุ:** Backend รองรับ field name หลายรูปแบบเพื่อความยืดหยุ่น:
-> - `serviceType` หรือ `serviceName` / `jobType` / `title`
-> - `technicianName` หรือ `technician` / `serviceBy` / `operatorName` / `staffName`
-> - `technicianPosition` หรือ `position` / `staffPosition`
-> - `startDate` หรือ `serviceStartDate` / `workStartDate`
-> - `endDate` หรือ `serviceEndDate` / `workEndDate`
-> - `customerName` หรือ `customerSigner` / `approverName` / `ownerName`
-> - `customerPosition` หรือ `approverPosition` / `ownerPosition`
-> - `summary` หรือ `remark` / `description` / `details`
-> - `tasks` หรือ `details` / `checklist` / `items` / `works`
-> - `stockItems` หรือ `stock` / `items` / `products` / `stockUsage` / `usedStock`
-
----
-
-##### `tasks[]` — รายการงาน
-
-แต่ละ task แสดงเป็น 1 แถวในตาราง "รายการ" ของ PDF หน้าแรก
-
-| field | type | คำอธิบาย |
-|-------|------|----------|
-| `name` | `string` | ชื่อรายการงาน (รองรับ: `name`, `title`, `topic`, `item`, `description`) |
-| `detail` | `string` | รายละเอียด/วิธีดำเนินการ (รองรับ: `detail`, `remark`, `result`, `note`) |
-
-ถ้าไม่ส่ง `tasks` → backend ใช้ `serviceType` เป็นชื่อรายการ 1 แถว + `summary` เป็นรายละเอียด
-
-ถ้า task เป็น string ธรรมดา (ไม่ใช่ object) → ใช้เป็นชื่อรายการ ช่องรายละเอียดว่าง
 
 ---
 
@@ -2743,220 +2557,64 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 ---
 
-##### `metaJson` fields → ผลลัพธ์ในหน้า PDF
+##### ตัวอย่าง 1: อัปโหลดรูป Service Report (แนะนำ)
 
-| field | ตำแหน่งใน PDF | ค่า default ถ้าไม่ส่ง |
-|-------|--------------|----------------------|
-| `projectType` | ช่อง checkbox "ลักษณะงานติดตั้ง" → ติ๊ก Solar Rooftop / Farm / Floating | ติ๊ก Solar Rooftop |
-| `serviceType` | ช่อง checkbox "ลักษณะงานบริการ" → ติ๊กตาม keyword (ดูตารางด้านล่าง) + ชื่อรายการ fallback ในตาราง | ไม่ติ๊กอะไร |
-| `technicianName` | "ชื่อ-นามสกุล (ผู้เข้าตรวจสอบ)" | แสดง `-` |
-| `technicianPosition` | "ตำแหน่ง" + "สถานภาพ / ตำแหน่ง" ในช่องลงนามฝั่งซ้าย | `Service Technician` |
-| `tasks` | ตาราง (ลำดับ / รายการ / รายละเอียด) | 1 แถว: ชื่อ=`serviceType` หรือ "งานบริการ", รายละเอียด=`summary` |
-| `summary` | "หมายเหตุ :" ด้านล่างตาราง | ว่าง (ใช้ `note` จาก Step1 ถ้ามี) |
-| `startDate` | "วันที่เริ่มเข้าดำเนินการ" ในช่องลงนาม | ใช้ `workDate` จาก Step1 (format ไทย) |
-| `endDate` | "วันที่เสร็จสิ้นงาน" ในช่องลงนาม | ใช้ `workDate` จาก Step1 (format ไทย) |
-| `customerName` | "ลงชื่อผู้รับรอง" ในช่องลงนามฝั่งขวา | ว่าง |
-| `customerPosition` | "สถานภาพ / ตำแหน่ง" ในช่องลงนามฝั่งขวา | ว่าง |
-| `stockItems` | ตาราง "รายการอุปกรณ์/อะไหล่ที่ใช้" (SKU/หมวดหมู่/รายการ/หน่วย/จำนวน) | ไม่แสดงตาราง |
-
----
-
-##### `serviceType` → Checkbox mapping
-
-Backend จะเทียบ keyword ใน `serviceType` เพื่อติ๊ก checkbox "ลักษณะงานบริการ":
-
-| keyword (case-insensitive) | ช่องที่ติ๊ก |
-|----------------------------|------------|
-| `ติดตั้ง`, `install` | ✓ งานติดตั้ง |
-| `เปิดระบบ`, `commission` | ✓ งานเปิดระบบ |
-| `inspect`, `ตรวจ` | ✓ ตรวจสอบโครงการ |
-| `maintenance`, `บำรุง`, `ซ่อม`, `service` | ✓ การซ่อมบำรุง |
-| `other`, `อื่น`, `เพิ่มเติม` | ✓ งานเพิ่มเติม |
-
-##### `projectType` → Checkbox mapping
-
-| keyword (case-insensitive) | ช่องที่ติ๊ก |
-|----------------------------|------------|
-| `roof`, `rooftop` | ✓ Solar Rooftop |
-| `farm` | ✓ Solar Farm |
-| `floating` | ✓ Solar Floating |
-| ไม่ส่ง / ค่าอื่น | ✓ Solar Rooftop (default) |
-
----
-
-##### ตัวอย่าง 1: ครบทุก field (แนะนำ)
-
-งาน Maintenance มีรายการงาน 2 รายการ + อะไหล่ที่ใช้ + ข้อมูลลงนาม
-
-```json
-// metaJson (ส่งเป็น string ใน form field)
-{
-  "serviceType": "การซ่อมบำรุง",
-  "projectType": "Solar Rooftop",
-  "technicianName": "กิตติพงษ์ กุลไพร",
-  "technicianPosition": "Service Technician",
-  "startDate": "14 พ.ค. 2568",
-  "endDate": "14 พ.ค. 2568",
-  "customerName": "สิทธิพงษ์",
-  "customerPosition": "",
-  "summary": "",
-  "tasks": [
-    {
-      "name": "เปลี่ยนพัดลม",
-      "detail": "INV 1 = 30\nINV 2 = 30\nINV 3 = 30\nINV 4 = 30\nINV 5 = 30\nจำนวนรวม 150 ตัว"
-    }
-  ],
-  "stockItems": [
-    { "productId": 5, "quantity": 150 }
-  ]
-}
-```
-
-> **ผลลัพธ์ใน PDF (หน้า 1 — Service Report Form):**
->
-> ```
-> โครงการ: Thai Nokoan Srimahapo     วันที่ 14 เดือน พ.ค. ปี 2568
->
-> ลักษณะงานติดตั้ง:  [✓] Solar Rooftop  [ ] Solar Farm  [ ] Solar Floating
-> ลักษณะงานบริการ:  [ ] งานติดตั้ง  [ ] งานเปิดระบบ  [ ] ตรวจสอบโครงการ  [✓] การซ่อมบำรุง  [ ] งานเพิ่มเติม
->
-> ชื่อ-นามสกุล (ผู้เข้าตรวจสอบ): กิตติพงษ์ กุลไพร
-> ตำแหน่ง: Service Technician
->
-> | ลำดับ | รายการ     | รายละเอียด / วิธีดำเนินการ          |
-> |-------|-----------|-------------------------------------|
-> | 1     | เปลี่ยนพัดลม | INV 1 = 30, INV 2 = 30, ... รวม 150 |
->
-> รายการอุปกรณ์/อะไหล่ที่ใช้:
-> | SKU   | หมวดหมู่ | รายการ      | หน่วย | จำนวน |
-> | FAN01 | พัดลม   | พัดลม INV   | ตัว   | 150   |
->
-> หมายเหตุ:
->
-> วันที่เริ่มเข้าดำเนินการ: 14 พ.ค. 2568    วันที่เสร็จสิ้นงาน: 14 พ.ค. 2568
-> ลงชื่อผู้ตรวจสอบ:                         ลงชื่อผู้รับรอง:
-> ตำแหน่ง: Service Technician               สถานภาพ:
-> หน่วยงาน: บริษัท พาวเวอร์วอลท์ฯ            หน่วยงาน:
-> ลายเซ็น:                                 ลายเซ็น:
-> ```
-
-**Postman form-data fields:**
-
-| Key | Type | Value |
-|-----|------|-------|
-| `jobId` | Text | `777` |
-| `metaJson` | Text | `{"serviceType":"การซ่อมบำรุง","projectType":"Solar Rooftop","technicianName":"กิตติพงษ์ กุลไพร","technicianPosition":"Service Technician","startDate":"14 พ.ค. 2568","endDate":"14 พ.ค. 2568","customerName":"สิทธิพงษ์","tasks":[{"name":"เปลี่ยนพัดลม","detail":"INV 1 = 30\nINV 2 = 30\nINV 3 = 30"}],"stockItems":[{"productId":5,"quantity":150}]}` |
-| `evidence` | File | `photo1.jpg` |
-| `evidence` | File | `photo2.jpg` |
-| `evidence` | File | `photo3.jpg` |
-| `evidence` | File | `photo4.jpg` |
-
----
-
-##### ตัวอย่าง 2: Minimal — เฉพาะ tasks ไม่มีข้อมูลเพิ่มเติม
-
-ใช้เมื่อต้องการบันทึกแค่รายการงาน ไม่มี stock ไม่มีข้อมูลลงนาม
-
-```json
-{
-  "serviceType": "maintenance",
-  "technicianName": "สมชาย",
-  "tasks": [
-    { "name": "ตรวจสอบ Inverter", "detail": "ทำงานปกติ" },
-    { "name": "ตรวจสอบสายไฟ", "detail": "ไม่พบความผิดปกติ" }
-  ]
-}
-```
-
-> **ผลลัพธ์ใน PDF:**
-> - ติ๊ก ✓ การซ่อมบำรุง (keyword "maintenance")
-> - ติ๊ก ✓ Solar Rooftop (default เมื่อไม่ส่ง projectType)
-> - ตาราง 2 แถว: ตรวจสอบ Inverter, ตรวจสอบสายไฟ
-> - ไม่มีตาราง Stock
-> - วันที่เริ่ม/เสร็จ = workDate จาก Step1 (format ไทย)
-> - ช่องลงนามฝั่งลูกค้า = ว่าง
-
----
-
-##### ตัวอย่าง 3: งานตรวจสอบโครงการ + Solar Farm + หมายเหตุ
-
-```json
-{
-  "serviceType": "ตรวจสอบโครงการ",
-  "projectType": "Solar Farm",
-  "technicianName": "วิศวกร สมใจ",
-  "technicianPosition": "Senior Engineer",
-  "startDate": "1 มี.ค. 2569",
-  "endDate": "2 มี.ค. 2569",
-  "customerName": "คุณประสิทธิ์",
-  "customerPosition": "ผู้จัดการโรงงาน",
-  "summary": "ตรวจสอบทุกจุดเรียบร้อย ไม่พบปัญหา",
-  "tasks": [
-    { "name": "ตรวจสภาพแผงโซลาร์", "detail": "ปกติ ไม่มีรอยแตก" },
-    { "name": "ตรวจสอบ Inverter", "detail": "LED ปกติทุกตัว" },
-    { "name": "ตรวจสอบ Combiner Box", "detail": "Fuse ครบ ไม่มีรอยไหม้" },
-    { "name": "วัดค่า String Voltage", "detail": "Voc ปกติทุก String" }
-  ]
-}
-```
-
-> **ผลลัพธ์ใน PDF:**
-> - ติ๊ก ✓ Solar Farm
-> - ติ๊ก ✓ ตรวจสอบโครงการ (keyword "ตรวจ")
-> - ชื่อ: วิศวกร สมใจ / ตำแหน่ง: Senior Engineer
-> - ตาราง 4 แถว
-> - หมายเหตุ: ตรวจสอบทุกจุดเรียบร้อย ไม่พบปัญหา
-> - วันที่เริ่ม: 1 มี.ค. 2569 / วันที่เสร็จ: 2 มี.ค. 2569
-> - ผู้รับรอง: คุณประสิทธิ์ / ผู้จัดการโรงงาน
-
----
-
-##### ตัวอย่าง 4: ไม่ส่ง metaJson เลย (ใช้แค่ไฟล์)
-
-ใช้เมื่อ frontend ไม่มีฟอร์มกรอกข้อมูล แค่อัปโหลดรูป service report + evidence
+อัปโหลดรูป Service Report ที่เขียนด้วยมือ + รูปหลักฐาน
 
 ```
 POST /api/service/step3/draft
 Content-Type: multipart/form-data
 
 jobId: 777
-serviceReport: [file: service-form-scan.jpg]
+serviceReport: [file: service-report-page1.jpg]
+serviceReport: [file: service-report-page2.jpg]
 evidence: [file: photo1.jpg]
 evidence: [file: photo2.jpg]
+evidence: [file: photo3.jpg]
+evidence: [file: photo4.jpg]
 ```
 
 > **ผลลัพธ์ใน PDF:**
-> - หน้า 1 (Service Report Form): ข้อมูลจาก Step1 (projectName, workDate, systemSize) + ช่อง checkbox/ตาราง/ลงนาม เป็นค่า default ทั้งหมด
-> - หน้า 2: รูป service-form-scan.jpg เต็มหน้า (ใบ Service Report ที่เขียนด้วยมือ)
-> - หน้า 3: รูป evidence 2 รูปในตาราง 2x2
+> - หน้า 1: รูป service-report-page1.jpg เต็มหน้า
+> - หน้า 2: รูป service-report-page2.jpg เต็มหน้า
+> - หน้า 3+: รูป evidence ในตาราง 2x2
 
 ---
 
-##### ตัวอย่าง 5: ส่ง tasks เป็น string array (simplified)
+##### ตัวอย่าง 2: อัปโหลดรูป + ส่ง stock items
 
-```json
-{
-  "serviceType": "งานติดตั้ง",
-  "technicianName": "สมศักดิ์ ดีงาม",
-  "tasks": [
-    "ติดตั้งแผงโซลาร์เซลล์",
-    "ต่อสาย DC String",
-    "ติดตั้ง Inverter",
-    "เปิดระบบทดสอบ"
-  ]
-}
+```
+POST /api/service/step3/draft
+Content-Type: multipart/form-data
+
+jobId: 777
+metaJson: {"stockItems":[{"productId":5,"quantity":150}]}
+serviceReport: [file: service-form-scan.jpg]
+evidence: [file: photo1.jpg]
+```
+
+> **ผลลัพธ์:**
+> - PDF ใช้รูปที่อัปโหลดเป็นหน้า Service Report
+> - Stock OUT ถูก sync จาก stockItems ใน metaJson
+
+---
+
+##### ตัวอย่าง 3: ไม่อัปโหลดรูป (fallback เป็น digital form)
+
+ถ้าไม่อัปโหลดรูป `serviceReport` → backend จะ generate digital form จาก `metaJson` + ข้อมูล Step1 เหมือนเดิม
+
+```
+POST /api/service/step3/draft
+Content-Type: multipart/form-data
+
+jobId: 777
+metaJson: {"serviceType":"การซ่อมบำรุง","technicianName":"กิตติพงษ์ กุลไพร","tasks":[{"name":"เปลี่ยนพัดลม","detail":"INV 1 = 30"}]}
+evidence: [file: photo1.jpg]
 ```
 
 > **ผลลัพธ์ใน PDF:**
-> - ติ๊ก ✓ งานติดตั้ง
-> - ตาราง 4 แถว: ชื่อรายการ = string ที่ส่ง, ช่องรายละเอียด = ว่าง
->
-> | ลำดับ | รายการ                  | รายละเอียด / วิธีดำเนินการ |
-> |-------|------------------------|---------------------------|
-> | 1     | ติดตั้งแผงโซลาร์เซลล์      |                           |
-> | 2     | ต่อสาย DC String        |                           |
-> | 3     | ติดตั้ง Inverter         |                           |
-> | 4     | เปิดระบบทดสอบ           |                           |
+> - หน้า 1: Digital Service Report Form (สร้างอัตโนมัติจาก metaJson)
+> - หน้า 2: รูป evidence
 
 ---
 
@@ -3000,8 +2658,8 @@ evidence: [file: photo2.jpg]
 
 | ลำดับ | หน้า | แหล่งข้อมูล |
 |-------|------|-------------|
-| 1 | Service Report Form (digital) | ข้อมูล Step1 (projectName, workDate, systemSize) + `step3Meta` (tasks, technician, signatures, stock) — สร้างอัตโนมัติจากข้อมูลที่กรอก |
-| 2+ | รูปภาพประกอบการปฏิบัติงาน | `SERVICE_EVIDENCE` attachments — ตาราง 2x2 สูงสุด 4 รูป/หน้า (รวมไม่เกิน 12 รูป) |
+| 1+ | SERVICE REPORT | รูปที่อัปโหลดผ่าน field `serviceReport` — แสดงเต็มหน้า (รูปละ 1 หน้า) ถ้าไม่มีรูป → fallback เป็น digital form จาก `step3Meta` |
+| ถัดไป | รูปภาพประกอบการปฏิบัติงาน | `SERVICE_EVIDENCE` attachments — ตาราง 2x2 สูงสุด 4 รูป/หน้า (รวมไม่เกิน 12 รูป) |
 
 #### GET `/api/service/step4/download/:jobId`
 

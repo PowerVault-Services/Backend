@@ -168,6 +168,36 @@ export async function listProjectsThailand(req: Request, res: Response) {
 }
 
 // =====================================================
+// Backfill: create ServiceEntry rows for Jobs that don't have one yet
+// =====================================================
+
+let backfillDone = false;
+
+async function backfillServiceEntries() {
+  if (backfillDone) return;
+  backfillDone = true;
+
+  const jobs = await prisma.job.findMany({
+    select: { siteId: true, type: true, title: true },
+  });
+
+  for (const job of jobs) {
+    const exists = await prisma.serviceEntry.findFirst({
+      where: { siteId: job.siteId, job: job.type },
+    });
+    if (!exists) {
+      await prisma.serviceEntry.create({
+        data: {
+          siteId: job.siteId,
+          job: job.type,
+          description: job.title ?? null,
+        },
+      });
+    }
+  }
+}
+
+// =====================================================
 // LIST: PowerVault Service (table with Job + Description)
 // =====================================================
 
@@ -179,6 +209,9 @@ export async function listProjectsThailand(req: Request, res: Response) {
  *  - page, pageSize
  */
 export async function listProjectsService(req: Request, res: Response) {
+  // Backfill: ensure every Job has a corresponding ServiceEntry
+  await backfillServiceEntries();
+
   const projectNo = String(req.query.projectNo ?? '').trim();
   const projectName = String(req.query.projectName ?? '').trim();
   const systemSizeKWp = toNumber(req.query.systemSizeKWp);

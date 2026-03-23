@@ -45,12 +45,12 @@ router.post('/step2/send', sendStep2Email);
 // Step3: draft (Service Report form + evidence) — multipart
 // fields: jobId, (optional) metaJson
 // files:
-//   - serviceReport (single) : รูปฟอร์ม Service Report (แนะนำ jpg/png)
-//   - evidence (multi)       : รูปหลักฐานอื่น ๆ
+//   - serviceReport (multi) : รูป Service Report (อัพโหลดหลายรูปได้)
+//   - evidence (multi)      : รูปหลักฐานอื่น ๆ
 router.post(
   '/step3/draft',
   upload.fields([
-    { name: 'serviceReport', maxCount: 1 },
+    { name: 'serviceReport', maxCount: 20 },
     { name: 'evidence', maxCount: 30 },
   ]),
   saveStep3Draft,

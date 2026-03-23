@@ -10,10 +10,14 @@ import { collectJobReportFiles, createReportsZip, deleteJobCascade, parseJobIds 
 const prisma = new PrismaClient();
 
 async function bumpJobStep(jobId: number, next: number) {
-  const job = await prisma.job.findUnique({ where: { id: jobId }, select: { step: true } });
+  const job = await prisma.job.findUnique({ where: { id: jobId }, select: { step: true, status: true } });
   if (!job) return;
   const step = Math.max(job.step ?? 1, next);
-  await prisma.job.update({ where: { id: jobId }, data: { step, status: JobStatus.DRAFT } });
+  const data: { step: number; status?: JobStatus } = { step };
+  if (job.status !== JobStatus.COMPLETED && job.status !== JobStatus.ASSIGNED) {
+    data.status = JobStatus.DRAFT;
+  }
+  await prisma.job.update({ where: { id: jobId }, data });
 }
 
 function normalizeWorkTimeText(input: { startTime?: any; endTime?: any; workTimeText?: any }) {
@@ -261,6 +265,16 @@ export async function createDraftStep1(req: Request, res: Response) {
       },
     });
 
+    // Ensure a ServiceEntry exists so the job appears on the Client Data → PowerVault Service tab
+    const existingEntry = await prisma.serviceEntry.findFirst({
+      where: { siteId: site.id, job: JobType.SERVICE },
+    });
+    if (!existingEntry) {
+      await prisma.serviceEntry.create({
+        data: { siteId: site.id, job: JobType.SERVICE, description: `Service - ${site.name}` },
+      });
+    }
+
     return res.json({ success: true, data: { jobId: created.id, jobNo: created.jobNo } });
   }
 
@@ -449,7 +463,7 @@ export async function sendStep2Email(req: Request, res: Response) {
  * POST /api/service/step3/draft (multipart)
  * fields: jobId, metaJson? (optional)
  * files:
- *  - serviceReport (single): รูปฟอร์ม Service Report (แนะนำ jpg/png)
+ *  - serviceReport (multi): รูป Service Report (อัพโหลดหลายรูปได้)
  *  - evidence (multi): รูปหลักฐานอื่น ๆ
  */
 export async function saveStep3Draft(req: Request, res: Response) {
@@ -460,10 +474,10 @@ export async function saveStep3Draft(req: Request, res: Response) {
 
   const files = (req.files as any) ?? {};
 
-  const formFile: Express.Multer.File | undefined = (files.serviceReport?.[0] as any) ?? undefined;
+  const formFiles: Express.Multer.File[] = (files.serviceReport as any) ?? [];
   const evidenceFiles: Express.Multer.File[] = (files.evidence as any) ?? [];
 
-  if (formFile) {
+  for (const formFile of formFiles) {
     const stored = await storeIncomingUserUpload(formFile, {
       scopeParts: ['jobs', `job_${jobId}`, 'service-form'],
     });
@@ -604,11 +618,16 @@ export async function generateReport(req: Request, res: Response) {
 
   const missingAttachments: string[] = [];
 
-  const formAttachment = attachments
-    .filter((a) => a.fileType === 'SERVICE_REPORT_FORM')
-    .slice(-1)[0];
-  const form = formAttachment ? await tryEnsureLocalFilePath(formAttachment.fileUrl) : undefined;
-  if (formAttachment && !form) missingAttachments.push(String(formAttachment.fileUrl ?? ''));
+  const formImgResolved = await Promise.all(
+    attachments
+      .filter((a) => a.fileType === 'SERVICE_REPORT_FORM')
+      .map(async (a) => {
+        const filePath = await tryEnsureLocalFilePath(a.fileUrl);
+        if (!filePath) { missingAttachments.push(String(a.fileUrl ?? '')); return null; }
+        return { filePath };
+      }),
+  );
+  const serviceReportImages = formImgResolved.filter(Boolean) as { filePath: string }[];
 
   const evidenceResolved = await Promise.all(
     attachments
@@ -621,7 +640,7 @@ export async function generateReport(req: Request, res: Response) {
           return null;
         }
         return {
-          label: 'รูปภาพ',
+          label: '',
           filePath,
         };
       }),
@@ -638,7 +657,7 @@ export async function generateReport(req: Request, res: Response) {
     pvModuleEA: service.pvModuleEA,
     note: service.note,
 
-    serviceReportFormPath: form ?? null,
+    serviceReportImages,
     evidencePhotos: evidence,
     meta: service.step3Meta,
 

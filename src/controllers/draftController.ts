@@ -42,12 +42,14 @@ export async function saveDraftProgress(req: Request, res: Response) {
   // update step แบบไม่ถอยหลัง (เก็บ progress ที่ไกลสุด)
   const nextStep = Math.max(job.step ?? 1, step);
 
+  const data: { step: number; status?: JobStatus } = { step: nextStep };
+  if (job.status !== JobStatus.COMPLETED && job.status !== JobStatus.ASSIGNED) {
+    data.status = JobStatus.DRAFT;
+  }
+
   const updated = await prisma.job.update({
     where: { id: jobId },
-    data: {
-      status: JobStatus.DRAFT,
-      step: nextStep,
-    },
+    data,
     select: { id: true, jobNo: true, type: true, status: true, step: true, updatedAt: true },
   });
 

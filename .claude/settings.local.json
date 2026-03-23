@@ -44,7 +44,12 @@
       "Bash(npm ls:*)",
       "Bash(xargs cat:*)",
       "Bash(grep -E \"^\\\\`\\(GET|POST|PUT|PATCH|DELETE|HEAD\\)\" d:/Backend/README.md)",
-      "Bash(node -e \":*)"
+      "Bash(node -e \":*)",
+      "Bash(grep -r \"mongodb\\\\|cassandra\\\\|elasticsearch\\\\|kafka\\\\|rabbitmq\\\\|amqp\" /d/Backend --include=*.ts --include=*.json)",
+      "Bash(where pg_dump)",
+      "Bash(PGPASSWORD='password123' pg_dump -h localhost -p 5433 -U admin -d solar_db --data-only --disable-triggers)",
+      "Bash(PGPASSWORD='SolarDB2026!' psql -h 10.240.68.192 -p 5432 -U solar_admin -d solar_db)",
+      "Bash(PGPASSWORD=password123 pg_dump -h localhost -p 5433 -U admin -d solar_db --data-only --disable-triggers)"
     ]
   }
 }
