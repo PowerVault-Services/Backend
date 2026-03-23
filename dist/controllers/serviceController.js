@@ -16,16 +16,38 @@ exports.deleteServiceJob = deleteServiceJob;
 exports.downloadServiceReportsZip = downloadServiceReportsZip;
 const client_1 = require("@prisma/client");
 const emailService_1 = require("../services/emailService");
+const emailSignatureService_1 = require("../services/emailSignatureService");
 const storageService_1 = require("../services/storageService");
 const reportService_1 = require("../services/reportService");
 const jobManagement_1 = require("../utils/jobManagement");
 const prisma = new client_1.PrismaClient();
 async function bumpJobStep(jobId, next) {
-    const job = await prisma.job.findUnique({ where: { id: jobId }, select: { step: true } });
+    const job = await prisma.job.findUnique({ where: { id: jobId }, select: { step: true, status: true } });
     if (!job)
         return;
     const step = Math.max(job.step ?? 1, next);
-    await prisma.job.update({ where: { id: jobId }, data: { step, status: client_1.JobStatus.DRAFT } });
+    const data = { step };
+    if (job.status !== client_1.JobStatus.COMPLETED && job.status !== client_1.JobStatus.ASSIGNED) {
+        data.status = client_1.JobStatus.DRAFT;
+    }
+    await prisma.job.update({ where: { id: jobId }, data });
+}
+function normalizeWorkTimeText(input) {
+    const start = String(input.startTime ?? '').trim();
+    const end = String(input.endTime ?? '').trim();
+    if (start && end)
+        return `${start}-${end}`;
+    const raw = String(input.workTimeText ?? '').trim();
+    return raw || null;
+}
+function splitWorkTimeText(workTimeText) {
+    const raw = String(workTimeText ?? '').trim();
+    const match = raw.match(/^([^\-]+)\s*-\s*([^\-]+)$/);
+    return {
+        startTime: match ? match[1].trim() : null,
+        endTime: match ? match[2].trim() : null,
+        workTimeText: raw || null,
+    };
 }
 function makeJobNo() {
     const d = new Date();
@@ -103,6 +125,8 @@ async function listServiceJobs(req, res) {
         const projectName = String(req.query.projectName ?? '').trim();
         const status = String(req.query.status ?? '').trim();
         const service = String(req.query.service ?? '').trim();
+        const contractor = String(req.query.contractor ?? '').trim();
+        const problem = String(req.query.problem ?? '').trim();
         const systemSizeKWp = Number.isFinite(Number(req.query.systemSizeKWp)) ? Number(req.query.systemSizeKWp) : null;
         const pvModuleEA = Number.isFinite(Number(req.query.pvModuleEA)) ? Number(req.query.pvModuleEA) : null;
         const dateStr = String(req.query.date ?? '').trim();
@@ -116,6 +140,10 @@ async function listServiceJobs(req, res) {
             whereJob.projectType = { contains: projectType, mode: 'insensitive' };
         if (status)
             whereJob.status = status;
+        if (contractor)
+            whereJob.contractor = { contains: contractor, mode: 'insensitive' };
+        if (problem)
+            whereJob.details = { contains: problem, mode: 'insensitive' };
         const whereSvc = {};
         if (projectName)
             whereSvc.projectName = { contains: projectName, mode: 'insensitive' };
@@ -170,6 +198,9 @@ async function listServiceJobs(req, res) {
                 pvModuleEA: j.serviceJob?.pvModuleEA ?? null,
                 date: j.serviceJob?.workDate ?? null,
                 time: j.serviceJob?.workTimeText ?? null,
+                ...splitWorkTimeText(j.serviceJob?.workTimeText ?? null),
+                contractor: j.contractor ?? null,
+                problem: j.details ?? null,
                 status: j.status,
             })),
         });
@@ -183,13 +214,14 @@ async function listServiceJobs(req, res) {
  * body: { jobId?, siteId, projectType?, contactPhone?, contactEmail?, workDate?, workTimeText?, customerName?, note? }
  */
 async function createDraftStep1(req, res) {
-    const { jobId, siteId, projectType, contactPhone, contactEmail, workDate, workTimeText, customerName, note, } = req.body ?? {};
+    const { jobId, siteId, projectType, contactPhone, contactEmail, workDate, workTimeText, startTime, endTime, contractor, customerName, note, problem, } = req.body ?? {};
     if (!siteId)
         return res.status(400).json({ success: false, message: 'siteId is required' });
     const site = await prisma.site.findUnique({ where: { id: Number(siteId) } });
     if (!site)
         return res.status(404).json({ success: false, message: 'Site not found' });
     const dt = workDate ? new Date(String(workDate)) : null;
+    const normalizedWorkTimeText = normalizeWorkTimeText({ startTime, endTime, workTimeText });
     // create new draft
     if (!jobId) {
         const created = await prisma.job.create({
@@ -201,6 +233,9 @@ async function createDraftStep1(req, res) {
                 step: 1,
                 scheduledDate: dt,
                 siteId: site.id,
+                projectType: projectType ?? null,
+                contractor: contractor ?? null,
+                details: problem ?? null,
                 createdById: 1, // TODO: auth
             },
         });
@@ -215,11 +250,20 @@ async function createDraftStep1(req, res) {
                 contactPhone: contactPhone ?? site.contactPhone ?? null,
                 contactEmail: contactEmail ?? site.contactEmail ?? null,
                 workDate: dt,
-                workTimeText: workTimeText ?? null,
+                workTimeText: normalizedWorkTimeText,
                 customerName: customerName ?? null,
                 note: note ?? null,
             },
         });
+        // Ensure a ServiceEntry exists so the job appears on the Client Data → PowerVault Service tab
+        const existingEntry = await prisma.serviceEntry.findFirst({
+            where: { siteId: site.id, job: client_1.JobType.SERVICE },
+        });
+        if (!existingEntry) {
+            await prisma.serviceEntry.create({
+                data: { siteId: site.id, job: client_1.JobType.SERVICE, description: `Service - ${site.name}` },
+            });
+        }
         return res.json({ success: true, data: { jobId: created.id, jobNo: created.jobNo } });
     }
     // update existing
@@ -232,6 +276,9 @@ async function createDraftStep1(req, res) {
             scheduledDate: dt,
             siteId: site.id,
             title: `Service - ${site.name}`,
+            projectType: projectType ?? null,
+            contractor: contractor ?? null,
+            details: problem ?? null,
             step: 1,
         },
     });
@@ -247,7 +294,7 @@ async function createDraftStep1(req, res) {
             contactPhone: contactPhone ?? site.contactPhone ?? null,
             contactEmail: contactEmail ?? site.contactEmail ?? null,
             workDate: dt,
-            workTimeText: workTimeText ?? null,
+            workTimeText: normalizedWorkTimeText,
             customerName: customerName ?? null,
             note: note ?? null,
         },
@@ -260,7 +307,7 @@ async function createDraftStep1(req, res) {
             contactPhone: contactPhone ?? site.contactPhone ?? null,
             contactEmail: contactEmail ?? site.contactEmail ?? null,
             workDate: dt,
-            workTimeText: workTimeText ?? null,
+            workTimeText: normalizedWorkTimeText,
             customerName: customerName ?? null,
             note: note ?? null,
         },
@@ -286,7 +333,7 @@ async function getServiceJob(req, res) {
     if (!job)
         return res.status(404).json({ success: false, message: 'Job not found' });
     const service = await prisma.serviceJob.findUnique({ where: { jobId } });
-    res.json({ success: true, data: { job, service } });
+    res.json({ success: true, data: { job, service, timeRange: splitWorkTimeText(service?.workTimeText ?? null) } });
 }
 /**
  * POST /api/service/step2/draft (multipart)
@@ -298,6 +345,7 @@ async function saveStep2Draft(req, res) {
     const to = String(req.body.to ?? '').trim();
     const subject = String(req.body.subject ?? '').trim();
     const body = String(req.body.body ?? '').trim();
+    const signature = (0, emailSignatureService_1.extractEmailSignatureInput)(req.body);
     if (!jobId)
         return res.status(400).json({ success: false, message: 'jobId is required' });
     const files = req.files ?? [];
@@ -318,7 +366,7 @@ async function saveStep2Draft(req, res) {
         data: {
             step2EmailTo: to || null,
             step2EmailSubject: subject || null,
-            step2EmailBody: body || null,
+            step2EmailBody: body ? (0, emailSignatureService_1.applyEmailSignature)(body, signature) : null,
         },
     });
     await bumpJobStep(jobId, 2);
@@ -341,9 +389,18 @@ async function sendStep2Email(req, res) {
     if (!service?.step2EmailTo || !service.step2EmailSubject || !service.step2EmailBody) {
         return res.status(400).json({ success: false, message: 'Email draft incomplete (ต้องมี To/Subject/Body)' });
     }
-    const att = await Promise.all((job.attachments ?? [])
+    const missing = [];
+    const attResolved = await Promise.all((job.attachments ?? [])
         .filter((a) => a.fileType === 'SERVICE_STEP2_ATTACHMENT')
-        .map((a) => (0, storageService_1.resolveEmailAttachment)(a.fileUrl)));
+        .map(async (a) => {
+        const attachment = await (0, storageService_1.tryResolveEmailAttachment)(a.fileUrl);
+        if (!attachment) {
+            missing.push(String(a.fileUrl ?? ''));
+            return null;
+        }
+        return attachment;
+    }));
+    const att = attResolved.filter(Boolean);
     const send = await (0, emailService_1.sendEmailNow)({
         jobId: id,
         step: 2,
@@ -365,13 +422,16 @@ async function sendStep2Email(req, res) {
         where: { id },
         data: { status: client_1.JobStatus.ASSIGNED },
     });
-    res.json({ success: true });
+    return res.json({
+        success: true,
+        warning: missing.length ? { message: 'บางไฟล์แนบไม่พบ จึงไม่ถูกแนบในอีเมล', missing } : undefined,
+    });
 }
 /**
  * POST /api/service/step3/draft (multipart)
  * fields: jobId, metaJson? (optional)
  * files:
- *  - serviceReport (single): รูปฟอร์ม Service Report (แนะนำ jpg/png)
+ *  - serviceReport (multi): รูป Service Report (อัพโหลดหลายรูปได้)
  *  - evidence (multi): รูปหลักฐานอื่น ๆ
  */
 async function saveStep3Draft(req, res) {
@@ -380,9 +440,9 @@ async function saveStep3Draft(req, res) {
     if (!jobId)
         return res.status(400).json({ success: false, message: 'jobId is required' });
     const files = req.files ?? {};
-    const formFile = files.serviceReport?.[0] ?? undefined;
+    const formFiles = files.serviceReport ?? [];
     const evidenceFiles = files.evidence ?? [];
-    if (formFile) {
+    for (const formFile of formFiles) {
         const stored = await (0, storageService_1.storeIncomingUserUpload)(formFile, {
             scopeParts: ['jobs', `job_${jobId}`, 'service-form'],
         });
@@ -506,17 +566,33 @@ async function generateReport(req, res) {
     if (!service)
         return res.status(404).json({ success: false, message: 'ServiceJob not found' });
     const attachments = job.attachments ?? [];
-    const formAttachment = attachments
+    const missingAttachments = [];
+    const formImgResolved = await Promise.all(attachments
         .filter((a) => a.fileType === 'SERVICE_REPORT_FORM')
-        .slice(-1)[0];
-    const form = formAttachment ? await (0, storageService_1.ensureLocalFilePath)(formAttachment.fileUrl) : undefined;
-    const evidence = await Promise.all(attachments
+        .map(async (a) => {
+        const filePath = await (0, storageService_1.tryEnsureLocalFilePath)(a.fileUrl);
+        if (!filePath) {
+            missingAttachments.push(String(a.fileUrl ?? ''));
+            return null;
+        }
+        return { filePath };
+    }));
+    const serviceReportImages = formImgResolved.filter(Boolean);
+    const evidenceResolved = await Promise.all(attachments
         .filter((a) => a.fileType === 'SERVICE_EVIDENCE')
         .slice(0, 12)
-        .map(async (a) => ({
-        label: 'รูปภาพ',
-        filePath: await (0, storageService_1.ensureLocalFilePath)(a.fileUrl),
-    })));
+        .map(async (a) => {
+        const filePath = await (0, storageService_1.tryEnsureLocalFilePath)(a.fileUrl);
+        if (!filePath) {
+            missingAttachments.push(String(a.fileUrl ?? ''));
+            return null;
+        }
+        return {
+            label: '',
+            filePath,
+        };
+    }));
+    const evidence = evidenceResolved.filter(Boolean);
     const report = await (0, reportService_1.generateServiceReportPdf)({
         jobNo: job.jobNo,
         projectName: service.projectName ?? job.site.name,
@@ -526,7 +602,7 @@ async function generateReport(req, res) {
         systemSizeKWp: service.systemSizeKWp,
         pvModuleEA: service.pvModuleEA,
         note: service.note,
-        serviceReportFormPath: form ?? null,
+        serviceReportImages,
         evidencePhotos: evidence,
         meta: service.step3Meta,
         // include stock usage in the report
@@ -552,6 +628,7 @@ async function generateReport(req, res) {
  */
 async function saveStep5Draft(req, res) {
     const { jobId, to, subject, body } = req.body ?? {};
+    const signature = (0, emailSignatureService_1.extractEmailSignatureInput)(req.body);
     const id = Number(jobId);
     if (!id)
         return res.status(400).json({ success: false, message: 'jobId is required' });
@@ -560,7 +637,7 @@ async function saveStep5Draft(req, res) {
         data: {
             step5EmailTo: to ? String(to) : null,
             step5EmailSubject: subject ? String(subject) : null,
-            step5EmailBody: body ? String(body) : null,
+            step5EmailBody: body ? (0, emailSignatureService_1.applyEmailSignature)(String(body), signature) : null,
         },
     });
     await bumpJobStep(id, 5);
@@ -580,6 +657,7 @@ async function downloadReportRedirect(req, res) {
  */
 async function sendStep5Email(req, res) {
     const { jobId, to, subject, body } = req.body ?? {};
+    const signature = (0, emailSignatureService_1.extractEmailSignatureInput)(req.body);
     const id = Number(jobId);
     const job = await prisma.job.findUnique({ where: { id }, include: { site: true } });
     if (!job)
@@ -587,13 +665,15 @@ async function sendStep5Email(req, res) {
     const service = await prisma.serviceJob.findUnique({ where: { jobId: id } });
     if (!service?.reportFileUrl)
         return res.status(400).json({ success: false, message: 'Report not generated' });
-    const reportAbs = await (0, storageService_1.ensureLocalFilePath)(service.reportFileUrl);
+    const reportAbs = await (0, storageService_1.tryEnsureLocalFilePath)(service.reportFileUrl);
+    if (!reportAbs)
+        return res.status(400).json({ success: false, message: 'Report file not found' });
     const send = await (0, emailService_1.sendEmailNow)({
         jobId: id,
         step: 5,
         to: String(to),
         subject: String(subject),
-        html: String(body),
+        html: (0, emailSignatureService_1.applyEmailSignature)(String(body), signature),
         attachments: [{ filename: `Service-Report-${job.jobNo}.pdf`, path: reportAbs }],
     });
     if (!send.success)
@@ -603,7 +683,7 @@ async function sendStep5Email(req, res) {
         data: {
             step5EmailTo: String(to),
             step5EmailSubject: String(subject),
-            step5EmailBody: String(body),
+            step5EmailBody: (0, emailSignatureService_1.applyEmailSignature)(String(body), signature),
             step5SentAt: new Date(),
             step5SentByUserId: 1,
         },

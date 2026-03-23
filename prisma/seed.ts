@@ -1,7 +1,6 @@
 import { Role } from '@prisma/client';
 import prisma from '../src/config/prisma';
 import bcrypt from 'bcryptjs';
-import * as process from 'process';
 
 // =====================
 // Data generated from: ข้อมูลตัวอย่าง เว็บ PV.xlsx

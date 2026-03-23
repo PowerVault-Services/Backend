@@ -2,7 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.saveDraftProgress = saveDraftProgress;
 exports.listDrafts = listDrafts;
+exports.listEmailSignatures = listEmailSignatures;
 const client_1 = require("@prisma/client");
+const emailSignatureService_1 = require("../services/emailSignatureService");
 const prisma = new client_1.PrismaClient();
 // จำนวน step สูงสุดของแต่ละประเภท job (ตาม requirement)
 const MAX_STEP_BY_TYPE = {
@@ -39,12 +41,13 @@ async function saveDraftProgress(req, res) {
     const step = clampStep(job.type, stepIn);
     // update step แบบไม่ถอยหลัง (เก็บ progress ที่ไกลสุด)
     const nextStep = Math.max(job.step ?? 1, step);
+    const data = { step: nextStep };
+    if (job.status !== client_1.JobStatus.COMPLETED && job.status !== client_1.JobStatus.ASSIGNED) {
+        data.status = client_1.JobStatus.DRAFT;
+    }
     const updated = await prisma.job.update({
         where: { id: jobId },
-        data: {
-            status: client_1.JobStatus.DRAFT,
-            step: nextStep,
-        },
+        data,
         select: { id: true, jobNo: true, type: true, status: true, step: true, updatedAt: true },
     });
     res.json({ success: true, data: updated });
@@ -78,5 +81,20 @@ async function listDrafts(req, res) {
             projectName: j.site?.name ?? null,
             updatedAt: j.updatedAt,
         })),
+    });
+}
+/**
+ * GET /api/drafts/email-signatures
+ * ใช้สำหรับ dropdown เลือกลายเซ็นท้ายอีเมล
+ */
+async function listEmailSignatures(_req, res) {
+    res.json({
+        success: true,
+        data: {
+            supportsCustomName: true,
+            defaultKey: 'palm',
+            defaultName: 'palm',
+            items: (0, emailSignatureService_1.getEmailSignaturePresets)(),
+        },
     });
 }

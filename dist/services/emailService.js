@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendEmailNow = sendEmailNow;
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const prisma_1 = __importDefault(require("../config/prisma"));
+const emailSignatureService_1 = require("./emailSignatureService");
 /**
  * ===== DEBUG: เช็ค ENV ตอนโหลดไฟล์ =====
  * ถ้าตรงนี้ยังเป็น 127.0.0.1 แปลว่า dotenv / restart มีปัญหา
@@ -45,14 +46,24 @@ async function sendEmailNow(opts) {
         to: opts.to,
         subject: opts.subject,
         attachments: opts.attachments?.length ?? 0,
+        signatureKey: opts.signature?.signatureKey ?? null,
+        signatureName: opts.signature?.signatureName ?? null,
     });
+    const finalHtml = (0, emailSignatureService_1.applyEmailSignature)(opts.html, opts.signature);
+    const finalAttachments = [...(opts.attachments ?? [])];
+    const signatureLogo = (0, emailSignatureService_1.getEmailSignatureLogoAttachment)();
+    if (signatureLogo &&
+        (0, emailSignatureService_1.emailHtmlUsesPowerVaultSignatureLogo)(finalHtml) &&
+        !finalAttachments.some((item) => item.cid === signatureLogo.cid)) {
+        finalAttachments.push(signatureLogo);
+    }
     try {
         const info = await transporter.sendMail({
             from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
             to: opts.to,
             subject: opts.subject,
-            html: opts.html,
-            attachments: opts.attachments ?? [],
+            html: finalHtml,
+            attachments: finalAttachments,
             replyTo: process.env.SMTP_USER,
             headers: {
                 'X-Entity-Ref-ID': String(opts.jobId ?? ''),
@@ -75,7 +86,7 @@ async function sendEmailNow(opts) {
                 step: opts.step,
                 to: opts.to,
                 subject: opts.subject,
-                bodyPreview: opts.html.slice(0, 500),
+                bodyPreview: finalHtml.slice(0, 500),
                 status: 'SENT',
             },
         });
@@ -99,7 +110,7 @@ async function sendEmailNow(opts) {
                 step: opts.step,
                 to: opts.to,
                 subject: opts.subject,
-                bodyPreview: opts.html.slice(0, 500),
+                bodyPreview: finalHtml.slice(0, 500),
                 status: 'FAILED',
                 errorMessage: e?.message ?? String(e),
             },

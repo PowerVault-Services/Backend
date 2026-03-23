@@ -5,10 +5,156 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const prisma_1 = __importDefault(require("../config/prisma"));
-const huaweiService_1 = require("../services/huaweiService");
 const syncService_1 = require("../services/syncService");
 const monitoringHomeService_1 = require("../services/monitoringHomeService");
+const siteAnalyticsService_1 = require("../services/siteAnalyticsService");
+const alarmSyncService_1 = require("../services/alarmSyncService");
+const cron_1 = require("../jobs/cron");
+const huaweiKpiCache_1 = require("../services/huaweiKpiCache");
 const router = (0, express_1.Router)();
+router.get('/sync/status', async (_req, res) => {
+    return res.json({ ok: true, data: (0, cron_1.getCronStatus)() });
+});
+router.get('/sync/coverage', async (_req, res) => {
+    const snapshot = await (0, syncService_1.getFleetSyncCoverageSnapshot)();
+    return res.json({ ok: true, data: snapshot });
+});
+router.get('/sync/alarm-reconciliation', async (_req, res) => {
+    const snapshot = await (0, alarmSyncService_1.getAlarmReconciliationSnapshot)();
+    return res.json({ ok: true, data: snapshot });
+});
+router.get('/pr/sites', async (req, res) => {
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const startMonth = String(req.query.startMonth ?? '').trim() || currentMonth;
+    const endMonth = String(req.query.endMonth ?? '').trim() || startMonth;
+    const q = String(req.query.q ?? '').trim();
+    const requestedIds = String(req.query.siteIds ?? '').trim();
+    // pagination
+    const page = Math.max(1, Number(req.query.page ?? 1));
+    const pageSize = Math.min(200, Math.max(10, Number(req.query.pageSize ?? 50)));
+    const skip = (page - 1) * pageSize;
+    let months = [];
+    try {
+        months = (0, siteAnalyticsService_1.buildMonthRange)(startMonth, endMonth);
+    }
+    catch (e) {
+        return res.status(e?.statusCode ?? 400).json({ error: e?.message ?? 'Invalid month range' });
+    }
+    const siteIdList = requestedIds
+        ? requestedIds.split(',').map((v) => Number(v.trim())).filter((v) => Number.isFinite(v))
+        : [];
+    const siteWhere = {
+        ...(siteIdList.length ? { id: { in: siteIdList } } : {}),
+        ...(q
+            ? {
+                OR: [
+                    { name: { contains: q, mode: 'insensitive' } },
+                    { plantCode: { contains: q, mode: 'insensitive' } },
+                ],
+            }
+            : {}),
+    };
+    const [total, sites] = await Promise.all([
+        prisma_1.default.site.count({ where: siteWhere }),
+        prisma_1.default.site.findMany({
+            where: siteWhere,
+            select: { id: true, name: true, plantCode: true, capacityKWp: true },
+            orderBy: { name: 'asc' },
+            skip,
+            take: pageSize,
+        }),
+    ]);
+    // 1) Load cached actuals from DB (instant)
+    const plantCodes = sites.map((s) => s.plantCode).filter((c) => !!c);
+    const cachedActuals = await (0, siteAnalyticsService_1.loadCachedMonthlyActuals)(plantCodes, months);
+    const rows = await Promise.all(sites.map(async (site) => {
+        const siteActuals = (site.plantCode ? cachedActuals.get(site.plantCode) : undefined) ?? new Map();
+        const summary = await (0, siteAnalyticsService_1.summarizeSitePrRange)(site.id, startMonth, endMonth, siteActuals);
+        return {
+            siteId: site.id,
+            plantName: site.name,
+            plantCode: site.plantCode,
+            systemSizeKWp: site.capacityKWp,
+            period: { startMonth, endMonth },
+            totals: summary.totals,
+            months: summary.rows,
+        };
+    }));
+    // 2) Respond immediately with DB-cached data
+    res.json({
+        data: {
+            months,
+            list: rows,
+            pagination: {
+                page,
+                pageSize,
+                total,
+                totalPages: Math.ceil(total / pageSize),
+            },
+        },
+    });
+    // 3) Background: refresh cache from Huawei API for next request
+    const siteIdByPlantCode = new Map(sites.filter((s) => s.plantCode).map((s) => [s.plantCode, s.id]));
+    (0, siteAnalyticsService_1.refreshAndCacheMonthlyActuals)(plantCodes, months, siteIdByPlantCode).catch(() => { });
+});
+router.get('/pr/export', async (req, res) => {
+    const startMonth = String(req.query.startMonth ?? '').trim();
+    const endMonth = String(req.query.endMonth ?? req.query.startMonth ?? '').trim();
+    const requestedIds = String(req.query.siteIds ?? '').trim();
+    if (!startMonth)
+        return res.status(400).json({ error: 'startMonth is required (YYYY-MM)' });
+    if (!requestedIds)
+        return res.status(400).json({ error: 'siteIds is required' });
+    const siteIds = requestedIds.split(',').map((v) => Number(v.trim())).filter((v) => Number.isFinite(v));
+    const sites = await prisma_1.default.site.findMany({
+        where: { id: { in: siteIds } },
+        select: { id: true, name: true, plantCode: true },
+        orderBy: { name: 'asc' },
+    });
+    const esc = (value) => {
+        const str = value == null ? '' : String(value);
+        return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+    };
+    const lines = [
+        [
+            'plantName',
+            'plantCode',
+            'periodStart',
+            'periodEnd',
+            'irradiationActual',
+            'irradiationForecast',
+            'irradiationVarPct',
+            'productionActual',
+            'productionForecast',
+            'productionVarPct',
+            'prActual',
+            'prForecast',
+            'prVarPct',
+        ].join(','),
+    ];
+    for (const site of sites) {
+        const summary = await (0, siteAnalyticsService_1.summarizeSitePrRange)(site.id, startMonth, endMonth || startMonth);
+        lines.push([
+            site.name,
+            site.plantCode,
+            startMonth,
+            endMonth || startMonth,
+            summary.totals.irradiation.actual,
+            summary.totals.irradiation.forecast,
+            summary.totals.irradiation.varPct,
+            summary.totals.production.actual,
+            summary.totals.production.forecast,
+            summary.totals.production.varPct,
+            summary.totals.pr.actual,
+            summary.totals.pr.forecast,
+            summary.totals.pr.varPct,
+        ].map(esc).join(','));
+    }
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="pr-summary-${startMonth}-${endMonth || startMonth}.csv"`);
+    return res.send(lines.join('\n'));
+});
 router.get('/pr', async (req, res) => {
     const siteId = Number(req.query.siteId);
     const granularity = String(req.query.granularity ?? 'month');
@@ -73,7 +219,8 @@ router.get('/pr', async (req, res) => {
     try {
         const collectTime = resolveCollectTime();
         if (granularity === 'month') {
-            const raw = await huaweiService_1.huaweiOnDemand.postRaw('/thirdData/getKpiStationMonth', {
+            const raw = await (0, huaweiKpiCache_1.getCachedPlantKpi)({
+                endpoint: '/thirdData/getKpiStationMonth',
                 stationCodes: site.plantCode,
                 collectTime,
             });
@@ -87,7 +234,8 @@ router.get('/pr', async (req, res) => {
             }
         }
         if (granularity === 'day') {
-            const raw = await huaweiService_1.huaweiOnDemand.postRaw('/thirdData/getKpiStationDay', {
+            const raw = await (0, huaweiKpiCache_1.getCachedPlantKpi)({
+                endpoint: '/thirdData/getKpiStationDay',
                 stationCodes: site.plantCode,
                 collectTime,
             });
@@ -103,7 +251,8 @@ router.get('/pr', async (req, res) => {
                 .filter(Boolean);
         }
         if (granularity === 'year') {
-            const raw = await huaweiService_1.huaweiOnDemand.postRaw('/thirdData/getKpiStationYear', {
+            const raw = await (0, huaweiKpiCache_1.getCachedPlantKpi)({
+                endpoint: '/thirdData/getKpiStationYear',
                 stationCodes: site.plantCode,
                 collectTime,
             });

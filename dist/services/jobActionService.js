@@ -38,8 +38,8 @@ async function buildReportsZipForJobs(args) {
                 : job.serviceJob?.reportFileUrl;
         if (!reportFileUrl)
             return null;
-        const absPath = await (0, storageService_1.ensureLocalFilePath)(reportFileUrl);
-        if (!fs_1.default.existsSync(absPath))
+        const absPath = await (0, storageService_1.tryEnsureLocalFilePath)(reportFileUrl);
+        if (!absPath || !fs_1.default.existsSync(absPath))
             return null;
         const ext = path_1.default.extname(absPath) || '.pdf';
         const sanitizedJobNo = (job.jobNo || `job-${job.id}`).replace(/[^a-zA-Z0-9-_]+/g, '_');

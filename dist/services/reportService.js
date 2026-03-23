@@ -9,6 +9,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const puppeteer_1 = __importDefault(require("puppeteer"));
 const storageService_1 = require("./storageService");
+const runtimePaths_1 = require("../config/runtimePaths");
 function escapeHtml(s) {
     return String(s ?? '')
         .split('&').join('&amp;')
@@ -67,8 +68,8 @@ function getFontFaceCss() {
     const candidates = [
         {
             family: 'ReportThai',
-            normal: path_1.default.join(process.cwd(), 'assets', 'fonts', 'THSarabunNew.ttf'),
-            bold: path_1.default.join(process.cwd(), 'assets', 'fonts', 'THSarabunNew Bold.ttf'),
+            normal: (0, runtimePaths_1.resolveFromProjectRoot)('assets', 'fonts', 'THSarabunNew.ttf'),
+            bold: (0, runtimePaths_1.resolveFromProjectRoot)('assets', 'fonts', 'THSarabunNew Bold.ttf'),
         },
         {
             family: 'ReportThai',
@@ -101,10 +102,27 @@ function getFontFaceCss() {
     };
 }
 function getLogoDataUri() {
-    const logoPath = path_1.default.join(process.cwd(), 'assets', 'powervault-logo.png');
+    const logoPath = (0, runtimePaths_1.resolveFromProjectRoot)('assets', 'powervault-logo.png');
     return fs_1.default.existsSync(logoPath) ? fileToDataUri(logoPath) : null;
 }
-function renderHeader(logoDataUri) {
+function renderHeader(logoDataUri, variant = 'cleaning') {
+    if (variant === 'service') {
+        return `
+      <div class="report-header">
+        <div class="header-left">
+          ${logoDataUri ? `<img class="logo" src="${logoDataUri}" />` : '<div class="logo-fallback">POWER VAULT</div>'}
+        </div>
+        <div class="header-right">
+          <div class="company-th">บริษัท พาวเวอร์วอลท์(ประเทศไทย)</div>
+          <div>จำกัด (สำนักงานใหญ่)</div>
+          <div>407 หมู่ที่ 2 ต.สำโรงเหนือ อ.เมือง</div>
+          <div>สมุทรปราการ จ.สมุทรปราการ 10270</div>
+          <div>เลขประจำตัวผู้เสียภาษี 0105561040684</div>
+        </div>
+      </div>
+      <div class="header-rule"></div>
+    `;
+    }
     return `
     <div class="report-header">
       <div class="header-left">
@@ -113,27 +131,20 @@ function renderHeader(logoDataUri) {
       <div class="header-right">
         <div class="company-th">บริษัท พาวเวอร์วอลท์ เซอร์วิส จำกัด</div>
         <div>407 หมู่ที่ 2 ต.สำโรงเหนือ อ.เมือง</div>
-        <div>สมุทรปราการ จ.สมุทรปราการ 10270</div>
+        <div>สมุทรปราการ</div>
+        <div>จ.สมุทรปราการ 10270</div>
       </div>
     </div>
     <div class="header-rule"></div>
   `;
 }
-function renderInfoRow(label, value, line = false) {
-    return `
-    <div class="info-row ${line ? 'line-row' : ''}">
-      <div class="info-label">${escapeHtml(label)}</div>
-      <div class="info-value">${escapeHtml(value ?? '-')}</div>
-    </div>
-  `;
-}
-function renderImageGridSection(title, images, perPage, gridClass = 'photo-grid-2') {
+function renderImageGridSection(title, images, perPage, gridClass = 'photo-grid-2', headerVariant = 'cleaning') {
     if (!images.length)
         return '';
     return splitIntoChunks(images, perPage)
         .map((chunk, index) => `
       <section class="page">
-        ${renderHeader(getLogoDataUri())}
+        ${renderHeader(getLogoDataUri(), headerVariant)}
         <div class="photo-title">${escapeHtml(title)}${images.length > perPage ? ` (${index + 1})` : ''}</div>
         <div class="${gridClass}">
           ${chunk.map((img) => {
@@ -150,44 +161,225 @@ function renderImageGridSection(title, images, perPage, gridClass = 'photo-grid-
     `)
         .join('');
 }
-function renderFullPageImage(title, filePath) {
+function renderFullPageImage(title, filePath, headerVariant = 'cleaning', lineFill = true) {
     const uri = fileToDataUri(filePath);
     if (!uri)
         return '';
+    const titleHtml = title
+        ? `<div class="section-head${lineFill ? ' line-fill' : ''}">${escapeHtml(title)}</div>`
+        : '';
     return `
-    <section class="page">
-      ${renderHeader(getLogoDataUri())}
-      <div class="section-head line-fill">${escapeHtml(title)}</div>
+    <section class="page" style="display:flex; flex-direction:column; height:297mm;">
+      ${renderHeader(getLogoDataUri(), headerVariant)}
+      ${titleHtml}
       <div class="full-image-wrap"><img src="${uri}" /></div>
     </section>
   `;
 }
+function formatCheckStatus(raw) {
+    const s = String(raw ?? '').trim().toLowerCase();
+    if (s === 'done' || s === 'pass' || s === 'completed' || s === 'yes' || s === 'true' || s === '1')
+        return '✓';
+    return raw ? String(raw) : '-';
+}
+// Fixed checklist categories for cleaning maintenance plan
+const CLEANING_CHECKLIST_TEMPLATE = [
+    {
+        title: 'แผงโซลาร์เซลล์',
+        children: [
+            { title: 'ตรวจสอบความสะอาดแผงและล้างแผงโซลาร์เซลล์' },
+            { title: 'ตรวจสอบสภาพแผง สีกระจก และการเกิดออกไซต์ บน Frame' },
+        ],
+    },
+    {
+        title: 'Inverter Unit',
+        children: [
+            { title: 'ตรวจสอบสภาพและทำความสะอาด Filter' },
+            { title: 'ตรวจสอบการทำงานของพัดลมระบายอากาศและดูดฝุ่น' },
+        ],
+    },
+    {
+        title: 'Monitoring System',
+        children: [
+            { title: 'ตรวจสอบสภาพและทำความสะอาดภายในตู้ควบคุม คอมพิวเตอร์' },
+        ],
+    },
+    {
+        title: 'ระบบน้ำทำความสะอาดแผงโซลาร์เซลล์',
+        children: [
+            { title: 'ตรวจสอบสภาพและความพร้อมของปั๊มน้ำและอุปกรณ์ Starter' },
+            { title: 'ตรวจสอบสภาพของหัวจ่ายน้ำ' },
+        ],
+    },
+];
 function renderCleaningChecklistRows(checklist) {
-    const items = Array.isArray(checklist?.items) ? checklist.items : [];
-    if (!items.length) {
-        return `
-      <tr>
-        <td class="center">1</td>
-        <td>-</td>
-        <td class="center">-</td>
-        <td>-</td>
-      </tr>
-    `;
+    // Build lookup from user data: key = child title -> { status, remark }
+    const userItems = Array.isArray(checklist?.items) ? checklist.items : [];
+    const childLookup = new Map();
+    for (const group of userItems) {
+        const children = Array.isArray(group?.children) ? group.children : [];
+        for (const child of children) {
+            if (child?.title) {
+                childLookup.set(child.title, { status: child.status, remark: child.remark });
+            }
+        }
+        // Also support flat items (backward compat)
+        if (group?.title && group?.status !== undefined && !Array.isArray(group?.children)) {
+            childLookup.set(group.title, { status: group.status, remark: group.remark });
+        }
     }
-    return items.map((it, idx) => {
-        const statusRaw = String(it?.status ?? '').trim().toLowerCase();
-        const status = statusRaw === 'done' || statusRaw === 'pass' || statusRaw === 'completed' || statusRaw === 'yes'
-            ? '✓'
-            : (it?.status ? String(it.status) : '-');
-        return `
+    // Render fixed structure with merged user data
+    return CLEANING_CHECKLIST_TEMPLATE.map((group, idx) => {
+        const totalRows = 1 + group.children.length;
+        const titleRow = `
       <tr>
-        <td class="center">${idx + 1}</td>
-        <td>${escapeHtml(it?.title ?? '-')}</td>
-        <td class="center">${escapeHtml(status)}</td>
-        <td>${escapeHtml(it?.remark ?? '-')}</td>
+        <td class="center" rowspan="${totalRows}">${idx + 1}</td>
+        <td><b>${escapeHtml(group.title)}</b></td>
+        <td class="center"></td>
+        <td></td>
       </tr>
     `;
+        const childRows = group.children.map((child) => {
+            const userData = childLookup.get(child.title);
+            return `
+        <tr>
+          <td>- ${escapeHtml(child.title)}</td>
+          <td class="center">${formatCheckStatus(userData?.status)}</td>
+          <td>${escapeHtml(userData?.remark ?? '')}</td>
+        </tr>
+      `;
+        }).join('');
+        return titleRow + childRows;
     }).join('');
+}
+function renderCertificatePage(logoDataUri, data) {
+    const dateObj = data.date ?? new Date();
+    const thaiDay = String(dateObj.getDate());
+    const thaiMonthNames = [
+        '', 'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+        'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม',
+    ];
+    const thaiMonth = thaiMonthNames[dateObj.getMonth() + 1] || '';
+    const thaiYear = String(dateObj.getFullYear() + 543);
+    const dateStr = `${thaiDay} ${thaiMonth} ${thaiYear}`;
+    const sig = data.signature ?? {};
+    const emptyRows = Math.max(0, 8 - data.items.length);
+    return `
+    <section class="page">
+      ${renderHeader(logoDataUri, 'cleaning')}
+
+      <!-- Certificate inner box -->
+      <div style="border:1.5px solid #333; padding: 5mm 6mm; font-size:11pt; line-height:1.4;">
+
+        <!-- Inner header -->
+        <div style="display:flex; align-items:flex-start; gap:4mm; margin-bottom:3mm;">
+          <div style="width:55%;">
+            ${logoDataUri ? `<img src="${logoDataUri}" style="width:38mm; margin-bottom:1mm;" />` : ''}
+            <div style="font-size:11pt; font-weight:700;">บริษัท พาวเวอร์วอลท์ (ประเทศไทย)</div>
+            <div style="font-size:10pt;">PowerVault (Thailand) Company Limited</div>
+          </div>
+          <div style="width:45%; text-align:right;">
+            <div style="font-size:14pt; font-weight:700;">เอกสารส่งมอบงาน</div>
+            <div style="font-size:11pt;">(Certificate of Completion)</div>
+          </div>
+        </div>
+
+        <!-- Project / Date fields -->
+        <table style="width:100%; border-collapse:collapse; font-size:10.5pt; margin-bottom:2mm;">
+          <tr>
+            <td style="width:55%;">โครงการ/ Project : <span style="border-bottom:1px dotted #555; padding-bottom:0.5mm;">${escapeHtml(data.projectName)}</span></td>
+            <td>เลขที่/ Doc.No. : <span style="border-bottom:1px dotted #555; padding-bottom:0.5mm;">${escapeHtml(data.docNo || '')}</span></td>
+          </tr>
+          <tr>
+            <td>ระบบ/ System : <span style="border-bottom:1px dotted #555; padding-bottom:0.5mm;">${escapeHtml(data.systemLabel || '')}</span></td>
+            <td>วันที่/ Date : <span style="border-bottom:1px dotted #555; padding-bottom:0.5mm;">${escapeHtml(dateStr)}</span></td>
+          </tr>
+        </table>
+
+        <!-- Recipient -->
+        <div style="margin:3mm 0 1mm; font-size:10.5pt;">
+          <b>เรียน</b> ลูกค้า/ผู้ตรวจรับมอบงาน
+        </div>
+        <div style="font-size:10pt; margin-bottom:2mm;">
+          บริษัทฯ ขอนำส่งเอกสารส่งมอบงาน เพื่อพิจารณา
+        </div>
+
+        <!-- Approval checkboxes -->
+        <div style="display:flex; gap:8mm; font-size:10pt; margin-bottom:3mm;">
+          <span>[${data.approval === 'approval' ? '✓' : ' '}] อนุมัติ/ Approval</span>
+          <span>[${data.approval === 'acknowledgement' ? '✓' : ' '}] รับทราบ/ Acknowledgement</span>
+          <span>[${data.approval === 'comment' ? '✓' : ' '}] ระบุความคิดเห็น/ Comment</span>
+        </div>
+
+        <!-- Items table -->
+        <table style="width:100%; border-collapse:collapse; font-size:10pt;">
+          <thead>
+            <tr>
+              <th style="border:1px solid #444; padding:1.5mm 2mm; width:8%; text-align:center;">ลำดับ<br/>(Item)</th>
+              <th style="border:1px solid #444; padding:1.5mm 2mm; width:32%; text-align:center;">รายละเอียดงาน<br/>(Description)</th>
+              <th style="border:1px solid #444; padding:1.5mm 2mm; width:18%; text-align:center;">สถานที่ทำงาน<br/>(Location)</th>
+              <th style="border:1px solid #444; padding:1.5mm 2mm; width:21%; text-align:center;" colspan="1">ลงนาม/ Signature<br/>PowerVault (Thailand)</th>
+              <th style="border:1px solid #444; padding:1.5mm 2mm; width:21%; text-align:center;">ผู้ตรวจรับมอบงาน</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.items.map((item, i) => `
+              <tr>
+                <td style="border:1px solid #444; padding:1.5mm 2mm; text-align:center;">${i + 1}</td>
+                <td style="border:1px solid #444; padding:1.5mm 2mm;">- ${escapeHtml(item.description)}</td>
+                <td style="border:1px solid #444; padding:1.5mm 2mm; text-align:center;">${escapeHtml(item.location)}</td>
+                <td style="border:1px solid #444; padding:1.5mm 2mm; text-align:center;">${escapeHtml(item.signaturePV ?? '')}</td>
+                <td style="border:1px solid #444; padding:1.5mm 2mm; text-align:center;">${escapeHtml(item.signatureCustomer ?? '')}</td>
+              </tr>
+            `).join('')}
+            ${Array.from({ length: emptyRows }, () => `
+              <tr>
+                <td style="border:1px solid #444; padding:1.5mm 2mm; height:7mm;"></td>
+                <td style="border:1px solid #444; padding:1.5mm 2mm;"></td>
+                <td style="border:1px solid #444; padding:1.5mm 2mm;"></td>
+                <td style="border:1px solid #444; padding:1.5mm 2mm;"></td>
+                <td style="border:1px solid #444; padding:1.5mm 2mm;"></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        <!-- Bottom signatures -->
+        <div style="display:flex; gap:4mm; margin-top:5mm; font-size:9.5pt; line-height:1.5;">
+          <!-- Left: Engineer -->
+          <div style="width:50%;">
+            <div style="margin-bottom:2mm;"><b>เรียน ผู้บริหาร และผู้เกี่ยวข้อง</b></div>
+            <div style="font-size:9pt; line-height:1.4;">
+              ข้าพเจ้าในฐานะตัวแทนผู้รับเหมาได้ทำงานเสร็จสิ้น และตรวจสอบงาน<br/>
+              ในเบื้องต้นแล้ว จึงใคร่ให้ท่านตรวจสอบการเสร็จสิ้นสุดท้าย เพื่อที่จะได้ดำเนินงาน<br/>
+              ต่อไป
+            </div>
+            <div style="margin-top:10mm;">
+              <div>ลงชื่อ/ Name : ${sig.engineerName ? `<span style="border-bottom:1px dotted #555; padding:0 2mm;">${escapeHtml(sig.engineerName)}</span>` : '...................................'}</div>
+              <div style="text-align:center; margin-top:1mm;">(Engineer/ Foreman)</div>
+              <div style="margin-top:2mm;">วันที่/ Date : ${sig.engineerDate ? `<span style="border-bottom:1px dotted #555; padding:0 2mm;">${escapeHtml(sig.engineerDate)}</span>` : '......../......../........'}</div>
+            </div>
+          </div>
+          <!-- Right: Customer -->
+          <div style="width:50%;">
+            <div style="margin-bottom:2mm;">ผู้บริหารงานและผู้เกี่ยวข้อนได้ตรวจสอบ และขอแจ้งผลให้ทราบดังนี้</div>
+            <div style="font-size:9pt; line-height:1.5;">
+              [${sig.customerApproval === 'A' ? '✓' : ' '}] A - อนุมัติ/ Approved<br/>
+              [${sig.customerApproval === 'AC' ? '✓' : ' '}] AC - ความเห็น, ข้อควรแก้ไข/ Comment<br/>
+              [${sig.customerApproval === 'N' ? '✓' : ' '}] N - ไม่อนุมัติ/ Not Approved
+            </div>
+            <div style="margin-top:1mm;">Note : ${sig.customerNote ? `<span style="border-bottom:1px dotted #555; padding:0 2mm;">${escapeHtml(sig.customerNote)}</span>` : '...................................'}</div>
+            <div style="margin-top:8mm;">
+              <div>ลงชื่อ /Name : ${sig.customerName ? `<span style="border-bottom:1px dotted #555; padding:0 2mm;">${escapeHtml(sig.customerName)}</span>` : '...................................'}</div>
+              <div style="text-align:center; margin-top:1mm;">(ผู้ตรวจรับมอบงาน ลูกค้า)</div>
+              <div style="margin-top:2mm;">วันที่/ Date : ${sig.customerDate ? `<span style="border-bottom:1px dotted #555; padding:0 2mm;">${escapeHtml(sig.customerDate)}</span>` : '......../......../........'}</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+  `;
 }
 function pickMetaValue(meta, keys) {
     if (!meta || typeof meta !== 'object')
@@ -312,7 +504,7 @@ async function renderPdfToFile(html, absPath) {
     });
     try {
         const page = await browser.newPage();
-        await page.setContent(html, { waitUntil: 'networkidle0' });
+        await page.setContent(html, { waitUntil: 'domcontentloaded' });
         await page.pdf({
             path: absPath,
             format: 'A4',
@@ -415,24 +607,6 @@ function wrapHtml(bodyHtml) {
       letter-spacing: 0.5px;
       margin-left: 2mm;
     }
-    .summary-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 2.5mm 9mm;
-      margin-top: 3mm;
-      font-size: 13pt;
-    }
-    .info-row {
-      display: flex;
-      align-items: flex-end;
-      gap: 3mm;
-      line-height: 1.3;
-      min-height: 8mm;
-    }
-    .info-label { width: 36mm; font-weight: 700; }
-    .info-value { flex: 1; border-bottom: 1px dotted #555; padding-bottom: 0.5mm; }
-    .line-row .info-label { width: auto; }
-    .line-row .info-value { min-height: 8mm; }
     .clean-table {
       width: 100%;
       border-collapse: collapse;
@@ -479,15 +653,22 @@ function wrapHtml(bodyHtml) {
     .photo-box img { width: 100%; height: 100%; object-fit: cover; }
     .photo-empty { color: #777; font-size: 12pt; }
     .photo-label { font-size: 11pt; text-align: center; color: #333; }
+    .full-page-body {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+    }
     .full-image-wrap {
       width: 100%;
-      height: 232mm;
+      flex: 1;
       display: flex;
       align-items: center;
       justify-content: center;
       border: 1px solid #777;
       overflow: hidden;
       background: #fff;
+      min-height: 0;
     }
     .full-image-wrap img { width: 100%; height: 100%; object-fit: contain; }
     .service-heading-en {
@@ -553,7 +734,7 @@ function wrapHtml(bodyHtml) {
       gap: 2mm;
       margin-top: 3mm;
     }
-    .sign-line-label { min-width: 14mm; }
+    .sign-line-label { min-width: 32mm; white-space: nowrap; }
     .sign-line-value {
       flex: 1;
       border-bottom: 1px dotted #555;
@@ -595,31 +776,56 @@ async function generateCleaningReportPdf(data) {
       </div>
     </section>
   `;
-    const layoutAndCertificatePages = (data.fullPageDocs ?? [])
-        .map((doc) => renderFullPageImage(doc.title, doc.filePath))
+    // Certificate of Completion — ใช้รูปอัปโหลด (STEP3_CERTIFICATE) แทนตารางดิจิทัล
+    // ถ้ามี certificateImages → แสดงเป็น full-page images
+    const certificatePages = (data.certificateImages ?? [])
+        .map((img) => renderFullPageImage('เอกสารส่งมอบงาน', img.filePath, 'cleaning', true))
         .join('');
+    // Legacy full-page docs (STEP3_LAYOUT / STEP3_CERTIFICATE attachments — backward compat)
+    const legacyFullPageDocs = (data.fullPageDocs ?? [])
+        .map((doc) => {
+        const isLayout = doc.title === 'Layout';
+        const title = isLayout
+            ? (data.projectName ? `Layout โครงการ ${data.projectName}` : 'Layout โครงการ')
+            : doc.title;
+        return renderFullPageImage(title, doc.filePath, 'cleaning', !isLayout);
+    })
+        .join('');
+    // PV Layout page from SiteLayout (client data)
+    // ถ้ามี siteLayoutPath → แสดงรูปจาก SiteLayout
+    // ถ้าไม่มี siteLayoutPath แต่มี legacy STEP3_LAYOUT → ไม่ต้องแสดงหน้าว่าง (legacy จะแสดงแทน)
+    // ถ้าไม่มีทั้งสองอย่าง → ไม่แสดงหน้า layout เลย
+    const layoutTitle = data.projectName
+        ? `Layout โครงการ ${data.projectName}`
+        : 'Layout โครงการ';
+    const siteLayoutPage = data.siteLayoutPath
+        ? renderFullPageImage(layoutTitle, data.siteLayoutPath, 'cleaning', false)
+        : '';
     const planPage = `
     <section class="page">
-      ${renderHeader(logoDataUri)}
-      <div class="section-head">แผนการบำรุงรักษาเชิงป้องกัน โครงการ ${escapeHtml(data.projectName || '.............................................')}</div>
-      <div style="font-size:13pt; line-height:1.45; margin-bottom:2mm;">
-        รายละเอียด และแผนการดูแล ควบคุม ตรวจสอบ และบำรุงรักษาเชิงป้องกัน อุปกรณ์ต่างๆ (เบื้องต้น)
+      ${renderHeader(logoDataUri, 'cleaning')}
+      <div class="section-head">แผนการบำรุงรักษาเชิงป้องกัน โครงการ${escapeHtml(data.projectName ? ' ' + data.projectName : '.............................................')}</div>
+      <div style="font-size:12pt; line-height:1.45; margin-bottom:3mm; font-weight:700; text-align:center;">
+        รายละเอียด และแผนการดูแล ควบคุม ตรวจสอบ และบำรุงรักษาเชิงป้องกัน อุปกรณ์ต่างๆ<br/>(เบื้องต้น)
       </div>
-      <div class="summary-grid">
-        ${renderInfoRow('ลูกค้า', data.projectName)}
-        ${renderInfoRow('โครงการ', data.projectName)}
-        ${renderInfoRow('ขนาดระบบ Solar Rooftop', data.systemSizeKWp ? `${data.systemSizeKWp} kWp` : '-')}
-        ${renderInfoRow('วันที่เข้าทำการบำรุงรักษาระบบ', formatThaiDate(data.workDate))}
-        ${renderInfoRow('จำนวนแผง PV', data.pvModuleEA ?? '-')}
-        ${renderInfoRow('เวลา', data.workTime ?? '-')}
-        ${renderInfoRow('สถานที่', data.address ?? '-', true)}
-        ${renderInfoRow('หมายเหตุ', data.note ?? '-', true)}
-      </div>
+      <table class="service-meta-grid" style="font-size:12pt;">
+        <tr>
+          <td style="width:50%;"><b>ลูกค้า</b></td>
+          <td style="width:50%;"><b>โครงการ</b> ${escapeHtml(data.projectName || '............')}</td>
+        </tr>
+        <tr>
+          <td><b>ขนาดระบบ Solar Rooftop</b> &nbsp; ${escapeHtml(data.systemSizeKWp ? `${data.systemSizeKWp} kWp` : '-')}</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td colspan="2"><b>วันที่เข้าทำการบำรุงรักษาระบบ</b> &nbsp; ${escapeHtml(formatThaiDate(data.workDate))}</td>
+        </tr>
+      </table>
       <table class="clean-table">
         <thead>
           <tr>
-            <th style="width:10%;">ลำดับ</th>
-            <th style="width:40%;">อุปกรณ์/รายการ</th>
+            <th style="width:8%;">ลำดับ</th>
+            <th style="width:42%;">อุปกรณ์/รายการ</th>
             <th style="width:14%;">การดำเนินการ</th>
             <th>หมายเหตุ</th>
           </tr>
@@ -633,7 +839,7 @@ async function generateCleaningReportPdf(data) {
     const evidencePages = (data.evidenceGroups ?? [])
         .map((group) => renderImageGridSection(group.title, group.images, 6, 'photo-grid-2'))
         .join('');
-    const html = wrapHtml([coverPage, layoutAndCertificatePages, planPage, evidencePages].join(''));
+    const html = wrapHtml([coverPage, certificatePages, siteLayoutPage, legacyFullPageDocs, planPage, evidencePages].join(''));
     await renderPdfToFile(html, absPath);
     return (0, storageService_1.storeGeneratedReportFromLocalFile)(absPath, { jobType: 'cleaning', jobNo: data.jobNo });
 }
@@ -647,19 +853,38 @@ async function generateServiceReportPdf(data) {
   `;
     const projectType = pickMetaValue(meta, ['projectType', 'systemType']) || 'Solar Rooftop';
     const selectedWorkType = (detail.serviceType || '').toLowerCase();
+    const workDateObj = data.workDate ?? new Date();
+    const thaiDay = String(workDateObj.getDate());
+    const thaiMonthNames = ['', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+    const thaiMonth = thaiMonthNames[workDateObj.getMonth() + 1] || '';
+    const thaiYear = String(workDateObj.getFullYear() + 543);
     const formPage = `
     <section class="page">
-      ${renderHeader(logoDataUri)}
+      ${renderHeader(logoDataUri, 'service')}
       <div class="service-heading-en">PowerVault Service Center</div>
       <div class="service-heading-sub">SERVICE REPORT</div>
 
       <table class="service-meta-grid">
         <tr>
           <td style="width:50%;">
-            <div><b>โครงการ</b> ${escapeHtml(data.projectName)}</div>
+            <div><b>โครงการ</b> &nbsp; ${escapeHtml(data.projectName)}</div>
           </td>
-          <td style="width:50%; text-align:right;">
-            <div><b>วันที่</b> ${escapeHtml(formatThaiDate(data.workDate))}</div>
+          <td style="width:50%;">
+            <div style="display:flex; gap:4mm;">
+              <span><b>วันที่</b> ${escapeHtml(thaiDay)}</span>
+              <span><b>เดือน</b> ${escapeHtml(thaiMonth)}</span>
+              <span><b>ปี</b> ${escapeHtml(thaiYear)}</span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="2">
+            <div><b>ลักษณะงานติดตั้ง</b></div>
+            <div class="checkbox-row">
+              ${checkbox('Solar Rooftop', projectType.toLowerCase().includes('roof') || projectType.toLowerCase().includes('rooftop') || (!projectType.toLowerCase().includes('farm') && !projectType.toLowerCase().includes('floating')))}
+              ${checkbox('Solar Farm', projectType.toLowerCase().includes('farm'))}
+              ${checkbox('Solar Floating', projectType.toLowerCase().includes('floating'))}
+            </div>
           </td>
         </tr>
         <tr>
@@ -667,35 +892,19 @@ async function generateServiceReportPdf(data) {
             <div><b>ลักษณะงานบริการ</b></div>
             <div class="checkbox-row">
               ${checkbox('งานติดตั้ง', selectedWorkType.includes('ติดตั้ง') || selectedWorkType.includes('install'))}
-              ${checkbox('งานบริการ', !selectedWorkType || selectedWorkType.includes('service') || selectedWorkType.includes('ซ่อม') || selectedWorkType.includes('บำรุง'))}
+              ${checkbox('งานเปิดระบบ', selectedWorkType.includes('เปิดระบบ') || selectedWorkType.includes('commission'))}
               ${checkbox('ตรวจสอบโครงการ', selectedWorkType.includes('inspect') || selectedWorkType.includes('ตรวจ'))}
-              ${checkbox('การซ่อมบำรุง', selectedWorkType.includes('maintenance') || selectedWorkType.includes('บำรุง'))}
-              ${checkbox('งานแก้ไขอื่นๆ', selectedWorkType.includes('other') || selectedWorkType.includes('อื่น'))}
+              ${checkbox('การซ่อมบำรุง', selectedWorkType.includes('maintenance') || selectedWorkType.includes('บำรุง') || selectedWorkType.includes('ซ่อม') || selectedWorkType.includes('service'))}
+              ${checkbox('งานเพิ่มเติม', selectedWorkType.includes('other') || selectedWorkType.includes('อื่น') || selectedWorkType.includes('เพิ่มเติม'))}
             </div>
           </td>
         </tr>
         <tr>
-          <td>
-            <div><b>ลักษณะระบบบริการ</b></div>
-            <div class="checkbox-row">
-              ${checkbox('Solar Rooftop', projectType.toLowerCase().includes('roof') || projectType.toLowerCase().includes('rooftop') || projectType.toLowerCase().includes('solar'))}
-              ${checkbox('Solar Farm', projectType.toLowerCase().includes('farm'))}
-              ${checkbox('Solar Floating', projectType.toLowerCase().includes('floating'))}
+          <td colspan="2">
+            <div style="display:flex; gap:6mm;">
+              <span><b>ชื่อ-นามสกุล (ผู้เข้าตรวจสอบ)</b> &nbsp; ${escapeHtml(detail.technician || '-')}</span>
             </div>
-          </td>
-          <td>
-            <div><b>เลขที่งาน</b> ${escapeHtml(data.jobNo)}</div>
-            <div><b>เวลา</b> ${escapeHtml(data.workTime ?? '-')}</div>
-          </td>
-        </tr>
-        <tr>
-          <td>
-            <div><b>ชื่อ-นามสกุล ผู้ปฏิบัติงานภายนอก</b> ${escapeHtml(detail.technician || '-')}</div>
-            <div><b>ตำแหน่ง</b> ${escapeHtml(detail.position || 'Service Technician')}</div>
-          </td>
-          <td>
-            <div><b>สถานที่</b> ${escapeHtml(data.address ?? '-')}</div>
-            <div><b>ขนาดระบบ</b> ${escapeHtml(data.systemSizeKWp ? `${data.systemSizeKWp} kWp` : '-')}</div>
+            <div><b>ตำแหน่ง</b> &nbsp; ${escapeHtml(detail.position || 'Service Technician')}</div>
           </td>
         </tr>
       </table>
@@ -715,33 +924,35 @@ async function generateServiceReportPdf(data) {
 
       ${renderStockTable(data.stockUsage)}
 
+      <div style="margin-top:4mm; font-size:12pt;">
+        <b>หมายเหตุ :</b> ${escapeHtml(detail.summary || data.note || '')}
+      </div>
+
       <table class="signature-grid">
         <tr>
           <td style="width:50%;">
-            <div><b>วันที่เริ่มดำเนินการ :</b> ${escapeHtml(detail.startDate || formatThaiDate(data.workDate))}</div>
+            <div><b>วันที่เริ่มเข้าดำเนินการ :</b> &nbsp; ${escapeHtml(detail.startDate || formatThaiDate(data.workDate))}</div>
             <div style="margin-top:2mm;"><b>ลงชื่อผู้ตรวจสอบ :</b></div>
-            <div class="sign-line"><div class="sign-line-label">ชื่อ</div><div class="sign-line-value">${escapeHtml(detail.technician || '-')}</div></div>
-            <div class="sign-line"><div class="sign-line-label">ตำแหน่ง</div><div class="sign-line-value">${escapeHtml(detail.position || 'Service Technician')}</div></div>
-            <div class="sign-line"><div class="sign-line-label">หน่วยงาน</div><div class="sign-line-value">บริษัท พาวเวอร์วอลท์ (ประเทศไทย) จำกัด</div></div>
-            <div class="sign-line"><div class="sign-line-label">ลายเซ็น</div><div class="sign-line-value"></div></div>
+            <div class="sign-line"><div class="sign-line-label">สถานภาพ / ตำแหน่ง :</div><div class="sign-line-value">${escapeHtml(detail.position || 'Service Technician')}</div></div>
+            <div class="sign-line"><div class="sign-line-label">หน่วยงาน / สังกัด :</div><div class="sign-line-value">บริษัท พาวเวอร์วอลท์ (ประเทศไทย) จำกัด</div></div>
+            <div class="sign-line"><div class="sign-line-label">ลายเซ็น :</div><div class="sign-line-value"></div></div>
           </td>
           <td style="width:50%;">
-            <div><b>วันที่ดำเนินงานแล้วเสร็จ :</b> ${escapeHtml(detail.endDate || formatThaiDate(data.workDate))}</div>
-            <div style="margin-top:2mm;"><b>ลงชื่อผู้รับมอบงาน :</b></div>
-            <div class="sign-line"><div class="sign-line-label">ชื่อ</div><div class="sign-line-value">${escapeHtml(detail.customerSigner || '-')}</div></div>
-            <div class="sign-line"><div class="sign-line-label">ตำแหน่ง</div><div class="sign-line-value">${escapeHtml(detail.customerPosition || '-')}</div></div>
-            <div class="sign-line"><div class="sign-line-label">หมายเหตุ</div><div class="sign-line-value">${escapeHtml(detail.summary || data.note || '-')}</div></div>
-            <div class="sign-line"><div class="sign-line-label">ลายเซ็น</div><div class="sign-line-value"></div></div>
+            <div><b>วันที่เสร็จสิ้นงาน :</b> &nbsp; ${escapeHtml(detail.endDate || formatThaiDate(data.workDate))}</div>
+            <div style="margin-top:2mm;"><b>ลงชื่อผู้รับรอง :</b></div>
+            <div class="sign-line"><div class="sign-line-label">สถานภาพ / ตำแหน่ง :</div><div class="sign-line-value">${escapeHtml(detail.customerPosition || '')}</div></div>
+            <div class="sign-line"><div class="sign-line-label">หน่วยงาน / สังกัด :</div><div class="sign-line-value"></div></div>
+            <div class="sign-line"><div class="sign-line-label">ลายเซ็น :</div><div class="sign-line-value"></div></div>
           </td>
         </tr>
       </table>
     </section>
   `;
-    const uploadedFormPage = data.serviceReportFormPath
-        ? renderFullPageImage('เอกสาร Service Report ที่อัปโหลด', data.serviceReportFormPath)
-        : '';
-    const evidencePages = renderImageGridSection('รูปภาพประกอบการปฏิบัติงาน', data.evidencePhotos ?? [], 4, 'photo-grid-2');
-    const html = wrapHtml([formPage, uploadedFormPage, evidencePages].join(''));
+    const serviceReportPages = (data.serviceReportImages ?? [])
+        .map((img) => renderFullPageImage('', img.filePath, 'service', false))
+        .join('');
+    const evidencePages = renderImageGridSection('รูปภาพประกอบการปฏิบัติงาน', data.evidencePhotos ?? [], 4, 'photo-grid-2', 'service');
+    const html = wrapHtml([serviceReportPages || formPage, evidencePages].join(''));
     await renderPdfToFile(html, absPath);
-    return (0, storageService_1.storeGeneratedReportFromLocalFile)(absPath, { jobType: 'cleaning', jobNo: data.jobNo });
+    return (0, storageService_1.storeGeneratedReportFromLocalFile)(absPath, { jobType: 'service', jobNo: data.jobNo });
 }

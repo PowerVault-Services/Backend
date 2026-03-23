@@ -33,6 +33,7 @@ router.delete('/warranty/customer/:itemId', clientDataController_1.deleteWarrant
 router.post('/projects/:siteId/layouts/:type', upload_1.upload.single('file'), clientDataController_1.upsertLayout);
 // Forecast
 router.put('/projects/:siteId/forecast/pvsyst', clientDataController_1.upsertForecastMonthly);
+router.post('/projects/:siteId/forecast/defaults', clientDataController_1.generateForecastDefaults);
 router.put('/projects/:siteId/forecast/warranty-energy', clientDataController_1.upsertForecastYearly);
 // Other tab
 router.post('/projects/:siteId/other', clientDataController_1.createOtherRow);

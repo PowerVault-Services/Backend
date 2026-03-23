@@ -16,16 +16,24 @@ function getAckMeta(raw) {
     const deletedBy = meta?.deletedBy ?? null;
     return { acknowledgedAt, acknowledgedBy, deletedAt, deletedBy };
 }
+const DEV_TYPE_MAP = {
+    1: 'Inverter',
+    10: 'EMI',
+    17: 'Power Meter',
+    38: 'Residential Inverter',
+    39: 'Residential ESS',
+    41: 'C&I ESS',
+    47: 'Power Sensor',
+    63: 'Smart Logger',
+};
 function getDeviceType(a) {
     const raw = a?.raw;
-    // Prefer Huawei alarm payload if present
     const devTypeName = raw?.devTypeName ?? raw?.deviceTypeName ?? null;
     const devTypeId = raw?.devTypeId ?? raw?.deviceTypeId ?? null;
-    // Fallback to inverter model (best-effort)
-    const model = a?.inverter?.model ?? null;
+    const typeId = devTypeId != null ? Number(devTypeId) : null;
     return {
-        deviceType: devTypeName ?? model,
-        deviceTypeId: devTypeId != null ? Number(devTypeId) : null,
+        deviceType: devTypeName ?? (typeId != null ? DEV_TYPE_MAP[typeId] : null) ?? null,
+        deviceTypeId: typeId,
     };
 }
 function getSeverityText(a) {
@@ -81,6 +89,7 @@ router.get('/', async (req, res) => {
     const alarmId = String(req.query.alarmId ?? '').trim();
     const sn = String(req.query.sn ?? '').trim();
     const q = String(req.query.q ?? '').trim();
+    const deviceType = String(req.query.deviceType ?? '').trim();
     const from = req.query.from ? new Date(String(req.query.from)) : null;
     const to = req.query.to ? new Date(String(req.query.to)) : null;
     const where = {};
@@ -102,15 +111,63 @@ router.get('/', async (req, res) => {
         where.severity = severity;
     if (q)
         where.name = { contains: q, mode: 'insensitive' };
-    // filter by alarmId from Huawei (stored in raw.alarmId)
+    // Build JSON filters for raw field (need AND for multiple path conditions)
+    const rawFilters = [];
+    // filter by alarmId from Huawei (stored in raw.alarmId — may be number or string)
     if (alarmId) {
-        where.raw = { path: ['alarmId'], equals: alarmId };
+        const numericId = Number(alarmId);
+        if (Number.isFinite(numericId)) {
+            rawFilters.push({ raw: { path: ['alarmId'], equals: numericId } });
+        }
+        else {
+            rawFilters.push({ raw: { path: ['alarmId'], equals: alarmId } });
+        }
     }
-    // filter by inverter serial number (sn)
+    if (rawFilters.length > 0) {
+        where.AND = [...(where.AND ?? []), ...rawFilters];
+    }
+    // filter by device type (matches devTypeId by number or name)
+    if (deviceType) {
+        const numericDevType = Number(deviceType);
+        if (Number.isFinite(numericDevType)) {
+            // numeric → match raw.devTypeId
+            where.AND = [...(where.AND ?? []), { raw: { path: ['devTypeId'], equals: numericDevType } }];
+        }
+        else {
+            // string → match DEV_TYPE_MAP name first, then fall back to inverter model
+            const matchedTypeIds = Object.entries(DEV_TYPE_MAP)
+                .filter(([, name]) => name.toLowerCase().includes(deviceType.toLowerCase()))
+                .map(([id]) => Number(id));
+            if (matchedTypeIds.length > 0) {
+                where.AND = [...(where.AND ?? []), { raw: { path: ['devTypeId'], in: matchedTypeIds } }];
+            }
+            else {
+                const matchingInvByModel = await prisma_1.default.inverter.findMany({
+                    where: { model: { contains: deviceType, mode: 'insensitive' } },
+                    select: { id: true },
+                });
+                if (matchingInvByModel.length > 0) {
+                    const devTypeInverterIds = matchingInvByModel.map((inv) => inv.id);
+                    where.AND = [...(where.AND ?? []), { inverterId: { in: devTypeInverterIds } }];
+                }
+                else {
+                    return res.json({
+                        success: true,
+                        data: { list: [], pagination: { page, pageSize, total: 0, totalPages: 0 } },
+                    });
+                }
+            }
+        }
+    }
+    // filter by inverter serial number (sn) — partial match
     if (sn) {
-        const inv = await prisma_1.default.inverter.findUnique({ where: { serialNumber: sn }, select: { id: true } });
-        if (inv?.id)
-            where.inverterId = inv.id;
+        const matchingInverters = await prisma_1.default.inverter.findMany({
+            where: { serialNumber: { contains: sn, mode: 'insensitive' } },
+            select: { id: true },
+        });
+        if (matchingInverters.length > 0) {
+            where.inverterId = { in: matchingInverters.map((inv) => inv.id) };
+        }
         else {
             return res.json({
                 success: true,
@@ -198,6 +255,7 @@ router.get('/export', async (req, res) => {
     const alarmId = String(req.query.alarmId ?? '').trim();
     const sn = String(req.query.sn ?? '').trim();
     const q = String(req.query.q ?? '').trim();
+    const deviceType = String(req.query.deviceType ?? '').trim();
     const from = req.query.from ? new Date(String(req.query.from)) : null;
     const to = req.query.to ? new Date(String(req.query.to)) : null;
     const where = {};
@@ -217,12 +275,56 @@ router.get('/export', async (req, res) => {
         where.severity = severity;
     if (q)
         where.name = { contains: q, mode: 'insensitive' };
-    if (alarmId)
-        where.raw = { path: ['alarmId'], equals: alarmId };
+    const exportRawFilters = [];
+    if (alarmId) {
+        const numericId = Number(alarmId);
+        if (Number.isFinite(numericId)) {
+            exportRawFilters.push({ raw: { path: ['alarmId'], equals: numericId } });
+        }
+        else {
+            exportRawFilters.push({ raw: { path: ['alarmId'], equals: alarmId } });
+        }
+    }
+    if (exportRawFilters.length > 0) {
+        where.AND = [...(where.AND ?? []), ...exportRawFilters];
+    }
+    // filter by device type (matches devTypeId by number or name)
+    if (deviceType) {
+        const numericDevType = Number(deviceType);
+        if (Number.isFinite(numericDevType)) {
+            where.AND = [...(where.AND ?? []), { raw: { path: ['devTypeId'], equals: numericDevType } }];
+        }
+        else {
+            const matchedTypeIds = Object.entries(DEV_TYPE_MAP)
+                .filter(([, name]) => name.toLowerCase().includes(deviceType.toLowerCase()))
+                .map(([id]) => Number(id));
+            if (matchedTypeIds.length > 0) {
+                where.AND = [...(where.AND ?? []), { raw: { path: ['devTypeId'], in: matchedTypeIds } }];
+            }
+            else {
+                const matchingInvByModel = await prisma_1.default.inverter.findMany({
+                    where: { model: { contains: deviceType, mode: 'insensitive' } },
+                    select: { id: true },
+                });
+                if (matchingInvByModel.length > 0) {
+                    where.AND = [...(where.AND ?? []), { inverterId: { in: matchingInvByModel.map((inv) => inv.id) } }];
+                }
+                else {
+                    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+                    res.setHeader('Content-Disposition', `attachment; filename="alarms.csv"`);
+                    return res.send('id,severity,plantName,deviceName,alarmName,alarmId,occurredAt,clearedAt,status\n');
+                }
+            }
+        }
+    }
     if (sn) {
-        const inv = await prisma_1.default.inverter.findUnique({ where: { serialNumber: sn }, select: { id: true } });
-        if (inv?.id)
-            where.inverterId = inv.id;
+        const matchingInverters = await prisma_1.default.inverter.findMany({
+            where: { serialNumber: { contains: sn, mode: 'insensitive' } },
+            select: { id: true },
+        });
+        if (matchingInverters.length > 0) {
+            where.inverterId = { in: matchingInverters.map((inv) => inv.id) };
+        }
         else {
             res.setHeader('Content-Type', 'text/csv; charset=utf-8');
             res.setHeader('Content-Disposition', `attachment; filename="alarms.csv"`);

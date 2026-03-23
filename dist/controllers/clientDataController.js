@@ -15,6 +15,7 @@ exports.deleteWarrantyCustomerItem = deleteWarrantyCustomerItem;
 exports.upsertLayout = upsertLayout;
 exports.upsertForecastMonthly = upsertForecastMonthly;
 exports.upsertForecastYearly = upsertForecastYearly;
+exports.generateForecastDefaults = generateForecastDefaults;
 exports.createOtherRow = createOtherRow;
 exports.updateOtherRow = updateOtherRow;
 exports.deleteOtherRow = deleteOtherRow;
@@ -43,6 +44,66 @@ function parseLayoutType(typeParam) {
     if (t === 'PV_STRING_LAYOUT')
         return client_1.LayoutType.PV_STRING_LAYOUT;
     return null;
+}
+function normalizeForecastMonthlyRows(body) {
+    const rows = body?.forecastRows ?? body?.forecastMonthlyRows ?? body?.forecast ?? body?.rows;
+    return Array.isArray(rows) ? rows : [];
+}
+async function upsertForecastMonthlyRowsInternal(siteId, rows) {
+    if (!rows.length)
+        return;
+    await prisma.$transaction(rows
+        .map((row) => ({
+        month: Number(row.month),
+        globalKwhM2: toNumber(row.globalKwhM2 ?? row.irradiationForecast),
+        eGridKwh: toNumber(row.eGridKwh ?? row.productionForecast),
+        prRatio: toNumber(row.prRatio ?? row.prForecast),
+    }))
+        .filter((row) => Number.isFinite(row.month) && row.month >= 1 && row.month <= 12)
+        .map((row) => prisma.siteForecastMonthly.upsert({
+        where: { siteId_month: { siteId, month: row.month } },
+        create: {
+            siteId,
+            month: row.month,
+            globalKwhM2: row.globalKwhM2 ?? null,
+            eGridKwh: row.eGridKwh ?? null,
+            prRatio: row.prRatio ?? null,
+        },
+        update: {
+            globalKwhM2: row.globalKwhM2 ?? null,
+            eGridKwh: row.eGridKwh ?? null,
+            prRatio: row.prRatio ?? null,
+        },
+    })));
+}
+function buildWarrantyDefaultForecastRows(warrantyStart) {
+    if (!warrantyStart)
+        return [];
+    const startMonth = warrantyStart.getMonth() + 1;
+    return Array.from({ length: 12 }, (_, index) => ({
+        month: ((startMonth - 1 + index) % 12) + 1,
+        globalKwhM2: null,
+        eGridKwh: null,
+        prRatio: null,
+    }));
+}
+async function ensureDefaultForecastRows(siteId, warrantyStart) {
+    const existing = await prisma.siteForecastMonthly.count({ where: { siteId } });
+    if (existing > 0)
+        return false;
+    const defaults = buildWarrantyDefaultForecastRows(warrantyStart);
+    if (!defaults.length)
+        return false;
+    await prisma.$transaction(defaults.map((row) => prisma.siteForecastMonthly.create({
+        data: {
+            siteId,
+            month: row.month,
+            globalKwhM2: row.globalKwhM2,
+            eGridKwh: row.eGridKwh,
+            prRatio: row.prRatio,
+        },
+    })));
+    return true;
 }
 // =====================================================
 // LIST: PowerVault (Thailand)
@@ -113,6 +174,32 @@ async function listProjectsThailand(req, res) {
     });
 }
 // =====================================================
+// Backfill: create ServiceEntry rows for Jobs that don't have one yet
+// =====================================================
+let backfillDone = false;
+async function backfillServiceEntries() {
+    if (backfillDone)
+        return;
+    backfillDone = true;
+    const jobs = await prisma.job.findMany({
+        select: { siteId: true, type: true, title: true },
+    });
+    for (const job of jobs) {
+        const exists = await prisma.serviceEntry.findFirst({
+            where: { siteId: job.siteId, job: job.type },
+        });
+        if (!exists) {
+            await prisma.serviceEntry.create({
+                data: {
+                    siteId: job.siteId,
+                    job: job.type,
+                    description: job.title ?? null,
+                },
+            });
+        }
+    }
+}
+// =====================================================
 // LIST: PowerVault Service (table with Job + Description)
 // =====================================================
 /**
@@ -123,6 +210,8 @@ async function listProjectsThailand(req, res) {
  *  - page, pageSize
  */
 async function listProjectsService(req, res) {
+    // Backfill: ensure every Job has a corresponding ServiceEntry
+    await backfillServiceEntries();
     const projectNo = String(req.query.projectNo ?? '').trim();
     const projectName = String(req.query.projectName ?? '').trim();
     const systemSizeKWp = toNumber(req.query.systemSizeKWp);
@@ -198,6 +287,7 @@ async function createProject(req, res) {
             .json({ success: false, message: 'capacityKWp (capacityKwp / systemSizeKWp) is required' });
     }
     const projectStatus = String(body.projectStatus ?? body.status ?? 'ACTIVE').toUpperCase();
+    const forecastRows = normalizeForecastMonthlyRows(body);
     const statusVal = Object.values(client_1.ProjectStatus).includes(projectStatus)
         ? projectStatus
         : client_1.ProjectStatus.ACTIVE;
@@ -242,6 +332,12 @@ async function createProject(req, res) {
                 projectStatus: true,
             },
         });
+        if (forecastRows.length) {
+            await upsertForecastMonthlyRowsInternal(created.id, forecastRows);
+        }
+        else {
+            await ensureDefaultForecastRows(created.id, toDate(body.warrantyStart ?? body.startWarranty));
+        }
         // Return the same shape as the table row so UI can append without an extra GET.
         res.json({
             success: true,
@@ -266,6 +362,7 @@ async function updateProject(req, res) {
     if (!siteId)
         return res.status(400).json({ success: false, message: 'siteId is required' });
     const projectStatus = body.projectStatus ?? body.status;
+    const forecastRows = normalizeForecastMonthlyRows(body);
     const statusVal = projectStatus && Object.values(client_1.ProjectStatus).includes(String(projectStatus).toUpperCase())
         ? String(projectStatus).toUpperCase()
         : undefined;
@@ -314,6 +411,12 @@ async function updateProject(req, res) {
                 projectStatus: true,
             },
         });
+        if (forecastRows.length) {
+            await upsertForecastMonthlyRowsInternal(updated.id, forecastRows);
+        }
+        else {
+            await ensureDefaultForecastRows(updated.id, toDate(body.warrantyStart ?? body.startWarranty));
+        }
         res.json({
             success: true,
             data: {
@@ -516,30 +619,14 @@ async function upsertLayout(req, res) {
  */
 async function upsertForecastMonthly(req, res) {
     const siteId = Number(req.params.siteId);
-    const rows = (req.body?.rows ?? req.body);
+    const rows = normalizeForecastMonthlyRows(req.body);
     if (!siteId)
         return res.status(400).json({ success: false, message: 'siteId is required' });
     if (!Array.isArray(rows))
         return res.status(400).json({ success: false, message: 'rows must be an array' });
-    await prisma.$transaction(rows.map((r) => {
-        const month = Number(r.month);
-        return prisma.siteForecastMonthly.upsert({
-            where: { siteId_month: { siteId, month } },
-            create: {
-                siteId,
-                month,
-                globalKwhM2: toNumber(r.globalKwhM2) ?? null,
-                eGridKwh: toNumber(r.eGridKwh) ?? null,
-                prRatio: toNumber(r.prRatio) ?? null,
-            },
-            update: {
-                globalKwhM2: toNumber(r.globalKwhM2) ?? null,
-                eGridKwh: toNumber(r.eGridKwh) ?? null,
-                prRatio: toNumber(r.prRatio) ?? null,
-            },
-        });
-    }));
-    res.json({ success: true });
+    await upsertForecastMonthlyRowsInternal(siteId, rows);
+    const data = await prisma.siteForecastMonthly.findMany({ where: { siteId }, orderBy: { month: 'asc' } });
+    res.json({ success: true, data });
 }
 /**
  * PUT /api/client-data/projects/:siteId/forecast/warranty-energy
@@ -571,6 +658,18 @@ async function upsertForecastYearly(req, res) {
         });
     }));
     res.json({ success: true });
+}
+async function generateForecastDefaults(req, res) {
+    const siteId = Number(req.params.siteId);
+    if (!siteId)
+        return res.status(400).json({ success: false, message: 'siteId is required' });
+    const site = await prisma.site.findUnique({ where: { id: siteId }, select: { warrantyStart: true } });
+    if (!site)
+        return res.status(404).json({ success: false, message: 'Project not found' });
+    await prisma.siteForecastMonthly.deleteMany({ where: { siteId } });
+    const created = await ensureDefaultForecastRows(siteId, site.warrantyStart);
+    const rows = await prisma.siteForecastMonthly.findMany({ where: { siteId }, orderBy: { month: 'asc' } });
+    return res.json({ success: true, data: { created, rows } });
 }
 // =====================================================
 // OTHER TAB

@@ -6,6 +6,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.HuaweiService = exports.huaweiService = exports.huaweiBackup = exports.huaweiOnDemand = exports.huaweiAlarm = exports.huaweiMain = void 0;
 exports.callWithFailover = callWithFailover;
 const axios_1 = __importDefault(require("axios"));
+const logger_1 = require("../config/logger");
+const huaweiBudget_1 = require("./huaweiBudget");
+const log = (0, logger_1.createLogger)('huawei');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const jitter = (ms) => ms + Math.floor(Math.random() * 350);
 class HuaweiService {
@@ -26,14 +29,21 @@ class HuaweiService {
         this.throttleChain = Promise.resolve();
         // เริ่มต้นสูงไว้ก่อน (tenant บางที่ limit ต่ำมาก)
         this.minIntervalMs = Number(process.env.HUAWEI_MIN_INTERVAL_MS ?? 6500);
+        this.baseMinIntervalMs = Number(process.env.HUAWEI_MIN_INTERVAL_MS ?? 6500);
         // ถ้าโดน 407/403/429 ให้พักทั้งระบบจนถึงเวลานี้
         this.cooldownUntil = 0;
         // login rate guard (เอกสาร: จำกัด 5 ครั้ง / 10 นาที)
         this.loginAttempts = []; // timestamps (ms)
-        /**
-         * โหมด log (เปิดด้วย HUAWEI_API_DEBUG=1)
-         */
-        this.debug = String(process.env.HUAWEI_API_DEBUG ?? '').trim() === '1';
+        this.lastRequestAt = null;
+        this.lastResponseAt = null;
+        this.lastErrorAt = null;
+        this.lastRateLimitAt = null;
+        this.lastDecayCheckAt = 0;
+        // -------- Circuit Breaker --------
+        this.circuitBreakerFailures = 0;
+        this.circuitBreakerOpenUntil = 0;
+        this.CIRCUIT_BREAKER_THRESHOLD = Math.max(3, Number(process.env.HUAWEI_CIRCUIT_BREAKER_THRESHOLD ?? 5));
+        this.CIRCUIT_BREAKER_RESET_MS = Math.max(30000, Number(process.env.HUAWEI_CIRCUIT_BREAKER_RESET_MS ?? 120000));
         const envUser = process.env.HUAWEI_USER;
         const envPass = process.env.HUAWEI_PASSWORD;
         this.userName = creds?.userName ?? envUser ?? '';
@@ -45,31 +55,58 @@ class HuaweiService {
             headers: { 'Content-Type': 'application/json' },
             timeout: 30000,
         });
-        // Global throttle + cooldown + แนบ token
+        // Global throttle + cooldown + circuit breaker + แนบ token
         this.client.interceptors.request.use(async (config) => {
+            // Circuit breaker: reject immediately if open
+            if (this.isCircuitOpen()) {
+                throw new Error(`[${this.label}] Circuit breaker is OPEN. Skipping request to ${config.url}`);
+            }
             const now = Date.now();
             if (now < this.cooldownUntil) {
                 const wait = this.cooldownUntil - now;
-                console.warn(`🧊 [${this.label}] Huawei cooldown active. Waiting ${wait}ms...`);
+                log.warn('Huawei cooldown active', { label: this.label, waitMs: wait });
                 await sleep(jitter(wait));
+            }
+            // Decay minIntervalMs back toward base when no 407 for 10+ minutes
+            const DECAY_QUIET_MS = 10 * 60000;
+            const DECAY_CHECK_INTERVAL_MS = 60000;
+            if (now - this.lastDecayCheckAt > DECAY_CHECK_INTERVAL_MS &&
+                this.minIntervalMs > this.baseMinIntervalMs &&
+                (this.lastRateLimitAt == null || now - this.lastRateLimitAt > DECAY_QUIET_MS)) {
+                this.lastDecayCheckAt = now;
+                const newMin = Math.max(this.baseMinIntervalMs, Math.floor(this.minIntervalMs * 0.85));
+                if (newMin !== this.minIntervalMs) {
+                    log.debug('Decaying minIntervalMs', { label: this.label, from: this.minIntervalMs, to: newMin });
+                    this.minIntervalMs = newMin;
+                }
+            }
+            // Global budget gate: wait if budget exhausted
+            while ((0, huaweiBudget_1.isBudgetExhausted)()) {
+                log.warn('Global request budget exhausted, waiting', { label: this.label, waitMs: 5000 });
+                await sleep(5000);
             }
             const waitMyTurn = this.throttleChain.then(async () => {
                 await sleep(jitter(this.minIntervalMs));
             });
             this.throttleChain = waitMyTurn.catch(() => undefined);
             await waitMyTurn;
+            (0, huaweiBudget_1.recordBudgetRequest)();
             if (this.token) {
                 config.headers = config.headers ?? {};
                 config.headers['xsrf-token'] = this.token;
             }
-            if (this.debug) {
-                const method = (config.method ?? 'GET').toUpperCase();
-                console.log(`➡️  [${this.label}] ${method} ${config.url ?? ''}`);
-            }
+            this.lastRequestAt = Date.now();
+            log.debug('API request', { label: this.label, method: (config.method ?? 'GET').toUpperCase(), url: config.url ?? '' });
             return config;
         });
         // Response error handler (HTTP error cases)
-        this.client.interceptors.response.use((r) => r, async (error) => {
+        this.client.interceptors.response.use((r) => {
+            this.lastResponseAt = Date.now();
+            this.recordCircuitSuccess();
+            return r;
+        }, async (error) => {
+            this.lastErrorAt = Date.now();
+            this.recordCircuitFailure();
             const originalRequest = error.config;
             if (!originalRequest)
                 return Promise.reject(error);
@@ -80,7 +117,7 @@ class HuaweiService {
             // ---- token หมดอายุ -> relogin แล้ว retry 1 ครั้ง ----
             if (isAuthError && !originalRequest._retry) {
                 originalRequest._retry = true;
-                console.log(`🔄 [${this.label}] Huawei token expired. Relogin and retry...`);
+                log.info('Huawei token expired, relogin and retry', { label: this.label });
                 await this.ensureLoggedIn({ force: true });
                 return this.client(originalRequest);
             }
@@ -92,13 +129,14 @@ class HuaweiService {
                 const baseDelay = Math.min(300000, 30000 * originalRequest._retryCount);
                 const delay = retryAfterMs != null ? Math.max(baseDelay, retryAfterMs) : baseDelay;
                 this.cooldownUntil = Date.now() + delay;
+                this.lastRateLimitAt = Date.now();
                 const newMin = Math.min(15000, Math.floor(this.minIntervalMs * 1.25));
                 if (newMin !== this.minIntervalMs) {
-                    console.warn(`🐢 [${this.label}] Increasing Huawei minIntervalMs: ${this.minIntervalMs} -> ${newMin}`);
+                    log.warn('Increasing minIntervalMs', { label: this.label, from: this.minIntervalMs, to: newMin });
                     this.minIntervalMs = newMin;
                 }
-                if (originalRequest._retryCount <= 8) {
-                    console.warn(`[${this.label}] Huawei rate limit (407). Cooling down ${delay}ms then retry...`);
+                if (originalRequest._retryCount <= 3) {
+                    log.warn('Huawei rate limit (407), cooling down then retry', { label: this.label, delayMs: delay, retryCount: originalRequest._retryCount });
                     await sleep(jitter(delay));
                     return this.client(originalRequest);
                 }
@@ -121,6 +159,49 @@ class HuaweiService {
     getStats() {
         return { ...this.stats };
     }
+    getCooldownRemainingMs() {
+        return Math.max(0, this.cooldownUntil - Date.now());
+    }
+    isCoolingDown() {
+        return this.getCooldownRemainingMs() > 0;
+    }
+    getRuntimeStatus() {
+        return {
+            accountKey: this.getAccountKey(),
+            labels: this.getLabels(),
+            hasToken: !!this.token,
+            minIntervalMs: this.minIntervalMs,
+            baseMinIntervalMs: this.baseMinIntervalMs,
+            cooldownRemainingMs: this.getCooldownRemainingMs(),
+            circuitBreakerOpen: this.isCircuitOpen(),
+            circuitBreakerFailures: this.circuitBreakerFailures,
+            lastRequestAt: this.lastRequestAt,
+            lastResponseAt: this.lastResponseAt,
+            lastErrorAt: this.lastErrorAt,
+            lastRateLimitAt: this.lastRateLimitAt,
+            stats: this.getStats(),
+        };
+    }
+    isCircuitOpen() {
+        if (this.circuitBreakerFailures < this.CIRCUIT_BREAKER_THRESHOLD)
+            return false;
+        if (Date.now() >= this.circuitBreakerOpenUntil) {
+            // Half-open: allow one attempt through
+            this.circuitBreakerFailures = this.CIRCUIT_BREAKER_THRESHOLD - 1;
+            return false;
+        }
+        return true;
+    }
+    recordCircuitSuccess() {
+        this.circuitBreakerFailures = 0;
+    }
+    recordCircuitFailure() {
+        this.circuitBreakerFailures += 1;
+        if (this.circuitBreakerFailures >= this.CIRCUIT_BREAKER_THRESHOLD) {
+            this.circuitBreakerOpenUntil = Date.now() + this.CIRCUIT_BREAKER_RESET_MS;
+            log.warn('Circuit breaker OPEN', { label: this.label, failures: this.circuitBreakerFailures, resetMs: this.CIRCUIT_BREAKER_RESET_MS });
+        }
+    }
     resetStats() {
         this.stats = {
             login: 0,
@@ -142,15 +223,14 @@ class HuaweiService {
                 ? Number(process.env.HUAWEI_PERSONAL_RATE_LIMIT_PAUSE_MS ?? 300000)
                 : Number(process.env.HUAWEI_SYSTEM_BUSY_PAUSE_MS ?? 60000));
         this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + delayMs);
+        this.lastRateLimitAt = Date.now();
         const factor = kind === 'personal' ? 1.25 : 1.15;
         const newMin = Math.min(20000, Math.floor(this.minIntervalMs * factor));
         if (newMin !== this.minIntervalMs) {
-            console.warn(`🐢 Increasing Huawei minIntervalMs: ${this.minIntervalMs} -> ${newMin}`);
+            log.warn('Increasing minIntervalMs', { label: this.label, from: this.minIntervalMs, to: newMin });
             this.minIntervalMs = newMin;
         }
-        if (this.debug) {
-            console.warn(`🧊 [${this.label}] notifyRateLimit kind=${kind} delayMs=${delayMs} reason=${opts?.reason ?? ''}`);
-        }
+        log.debug('notifyRateLimit', { label: this.label, kind, delayMs, reason: opts?.reason ?? '' });
     }
     handleFailCodeFromBody(endpoint, body) {
         const failCode = Number(body?.failCode);
@@ -166,10 +246,7 @@ class HuaweiService {
     bump(endpoint, meta) {
         this.stats.totalRequests += 1;
         this.stats[endpoint] += 1;
-        if (this.debug) {
-            const extra = meta ? ` ${JSON.stringify(meta)}` : '';
-            console.log(`📡 [${this.label}] Huawei API ${String(endpoint)} #${this.stats[endpoint]}${extra}`);
-        }
+        log.debug('Huawei API call', { label: this.label, endpoint: String(endpoint), count: this.stats[endpoint], ...meta });
     }
     async ensureLoggedIn(opts) {
         const force = opts?.force ?? false;
@@ -196,16 +273,15 @@ class HuaweiService {
         if (this.loginAttempts.length >= 5) {
             const oldest = this.loginAttempts[0];
             const wait = Math.max(0, 10 * 60000 - (now - oldest));
-            console.warn(`🧊 Login rate guard: waiting ${Math.ceil(wait / 1000)}s before next login attempt`);
+            log.warn('Login rate guard waiting', { label: this.label, waitSec: Math.ceil(wait / 1000) });
             await sleep(jitter(wait));
         }
         this.loginAttempts.push(Date.now());
         this.bump('login');
-        if (this.debug)
-            console.log('📡 POST /thirdData/login');
+        log.debug('POST /thirdData/login', { label: this.label });
         const response = await this.client.post('/thirdData/login', { userName, systemCode });
         if (!response.data?.success) {
-            console.error('❌ Huawei Login Failed:', response.data);
+            log.error('Huawei Login Failed', { label: this.label, data: response.data });
             throw new Error('Huawei Login Failed');
         }
         const token = response.headers['xsrf-token'];
@@ -213,8 +289,8 @@ class HuaweiService {
         if (!this.token)
             throw new Error('Huawei login succeeded but xsrf-token header missing');
         this.client.defaults.headers.common['xsrf-token'] = this.token;
-        console.log(`✅ [${this.label}] Huawei Login Success`);
-        console.log(`[${this.label}] xsrf-token:`, this.token);
+        log.info('Huawei Login Success', { label: this.label });
+        log.debug('xsrf-token acquired', { label: this.label, token: this.token });
     }
     // ---------- Endpoint: stations ----------
     async stations(params) {
@@ -222,8 +298,7 @@ class HuaweiService {
         const pageNo = params?.pageNo ?? 1;
         const pageSize = params?.pageSize ?? 100;
         this.bump('stations', { pageNo, pageSize });
-        if (this.debug)
-            console.log(`📡 POST /thirdData/stations`, { pageNo, pageSize });
+        log.debug('POST /thirdData/stations', { label: this.label, pageNo, pageSize });
         const res = await this.client.post('/thirdData/stations', { pageNo, pageSize });
         this.handleFailCodeFromBody('stations', res.data);
         return res.data;
@@ -244,8 +319,7 @@ class HuaweiService {
         await this.ensureLoggedIn();
         const stationCodesStr = Array.isArray(stationCodes) ? stationCodes.join(',') : stationCodes;
         this.bump('getStationRealKpi', { stationCodes: stationCodesStr });
-        if (this.debug)
-            console.log(`📡 POST /thirdData/getStationRealKpi`, { stationCodes: stationCodesStr });
+        log.debug('POST /thirdData/getStationRealKpi', { label: this.label, stationCodes: stationCodesStr });
         const res = await this.client.post('/thirdData/getStationRealKpi', { stationCodes: stationCodesStr });
         this.handleFailCodeFromBody('getStationRealKpi', res.data);
         return res.data;
@@ -255,8 +329,7 @@ class HuaweiService {
         await this.ensureLoggedIn();
         const stationCodesStr = Array.isArray(stationCodes) ? stationCodes.join(',') : stationCodes;
         this.bump('getDevList', { stationCodes: stationCodesStr });
-        if (this.debug)
-            console.log(`📡 POST /thirdData/getDevList`, { stationCodes: stationCodesStr });
+        log.debug('POST /thirdData/getDevList', { label: this.label, stationCodes: stationCodesStr });
         const res = await this.client.post('/thirdData/getDevList', { stationCodes: stationCodesStr });
         this.handleFailCodeFromBody('getDevList', res.data);
         return res.data;
@@ -273,11 +346,7 @@ class HuaweiService {
             devTypeId: params.devTypeId,
             devCount: Array.isArray(params.devIds) ? params.devIds.length : undefined,
         });
-        if (this.debug)
-            console.log(`📡 POST /thirdData/getDevRealKpi`, {
-                ...body,
-                devIds: body.devIds ? String(body.devIds).slice(0, 120) : undefined,
-            });
+        log.debug('POST /thirdData/getDevRealKpi', { label: this.label, devTypeId: body.devTypeId, devIds: body.devIds ? String(body.devIds).slice(0, 120) : undefined });
         const res = await this.client.post('/thirdData/getDevRealKpi', body);
         this.handleFailCodeFromBody('getDevRealKpi', res.data);
         return res.data;
@@ -290,8 +359,7 @@ class HuaweiService {
         await this.ensureLoggedIn();
         // keep stats consistent even if endpoint isn't listed in stats keys
         this.stats.totalRequests += 1;
-        if (this.debug)
-            console.log(`📡 [${this.label}] POST ${endpoint}`, body);
+        log.debug(`POST ${endpoint}`, { label: this.label, body });
         const res = await this.client.post(endpoint, body);
         this.handleFailCodeFromBody(endpoint, res.data);
         return res.data;
@@ -312,8 +380,7 @@ class HuaweiService {
             body.levels = params.levels;
         if (params.devTypes)
             body.devTypes = params.devTypes;
-        if (this.debug)
-            console.log(`📡 [${this.label}] POST /thirdData/getAlarmList`, body);
+        log.debug('POST /thirdData/getAlarmList', { label: this.label, body });
         const res = await this.client.post('/thirdData/getAlarmList', body);
         this.handleFailCodeFromBody('getAlarmList', res.data);
         return res.data;
@@ -341,7 +408,7 @@ function getOrCreateHuaweiService(creds) {
         existing.registerAlias(creds.label);
         if (!warnedSharedCredentialKeys.has(key)) {
             warnedSharedCredentialKeys.add(key);
-            console.warn(`⚠️ Huawei logical clients [${existing.getLabels().join(', ')}] share the same API account (${creds.userName}). Reusing one in-process session to avoid invalidating xsrf-token.`);
+            log.warn('Huawei logical clients share same API account, reusing session', { labels: existing.getLabels(), userName: creds.userName });
         }
         return existing;
     }
@@ -363,7 +430,7 @@ async function callWithFailover(primary, backup, fn, opts) {
         const shouldFailover = r?.success === false && (failCode === 407 || failCode === 403 || failCode === 429);
         if (!shouldFailover || !hasDistinctBackup)
             return r;
-        console.warn(`⚠️ [FAILOVER]${tag} primary returned failCode=${failCode}. Switching to BACKUP...`);
+        log.warn('FAILOVER: primary returned failCode, switching to backup', { tag, failCode });
         return (await fn(backup));
     }
     catch (err) {
@@ -372,7 +439,7 @@ async function callWithFailover(primary, backup, fn, opts) {
         const isRateLimit = status === 407 || status === 403 || status === 429 || failCode === 407 || failCode === 403 || failCode === 429;
         if (!isRateLimit || !hasDistinctBackup)
             throw err;
-        console.warn(`⚠️ [FAILOVER]${tag} primary error status=${status ?? '-'} failCode=${failCode ?? '-'} -> BACKUP`);
+        log.warn('FAILOVER: primary error, switching to backup', { tag, status: status ?? '-', failCode: failCode ?? '-' });
         return (await fn(backup));
     }
 }
