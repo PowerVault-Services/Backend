@@ -74,6 +74,38 @@ export async function getCachedPlantKpi<T = any>(params: {
       }
       return pending as Promise<T>;
     }
+
+    // Stale-while-revalidate: if we have expired cache, return it immediately
+    // and trigger a background refresh for next request
+    const staleForSwr = cache.get(key);
+    if (staleForSwr) {
+      stats.hits += 1;
+      if (DEBUG) {
+        console.log(`[KPI-CACHE] stale-while-revalidate ${endpoint} ${normalizeStationCodes(stationCodes)} @ ${collectTime}`);
+      }
+      // Fire background refresh (non-blocking)
+      const bgTask = (async () => {
+        try {
+          const client = pickOnDemandClient();
+          const value = await client.postRaw<T>(endpoint, {
+            stationCodes: normalizeStationCodes(stationCodes),
+            collectTime,
+          });
+          const failCode = Number((value as any)?.failCode);
+          const isSuccess = failCode === 0 || (value as any)?.success === true;
+          if (isSuccess) {
+            cache.set(key, { expiresAt: Date.now() + getTtl(endpoint), value });
+            stats.stores += 1;
+          }
+        } catch (err) {
+          console.warn(`[KPI-CACHE] background refresh error for ${endpoint}:`, (err as any)?.message ?? err);
+        } finally {
+          inflight.delete(key);
+        }
+      })();
+      inflight.set(key, bgTask as any);
+      return staleForSwr.value as T;
+    }
   }
 
   stats.misses += 1;

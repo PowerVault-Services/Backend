@@ -52,7 +52,8 @@
       "Bash(PGPASSWORD=password123 pg_dump -h localhost -p 5433 -U admin -d solar_db --data-only --disable-triggers)",
       "Bash(xargs -I {} basename {})",
       "Bash(ls -lah /d/Backend/prisma/seed*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(grep -n \"PERSONAL_RATE_LIMIT\\\\|SYSTEM_BUSY\\\\|ONDEMAND_SITE_STALE\\\\|AUX_DEVICE.*CACHE\" /d/Backend/src/services/*.ts)"
     ]
   }
 }

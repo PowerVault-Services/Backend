@@ -383,7 +383,24 @@ async function fetchAuxRealtime(site: SiteRecord, refreshMode: 'auto' | 'force')
     return cached.value;
   }
 
-  // Coalesce concurrent requests for the same site (use plantCode only to avoid duplicate fetches)
+  // Stale-while-revalidate: if we have stale cache and not forcing, return it immediately
+  // and trigger a background refresh so the next request gets fresh data.
+  if (refreshMode !== 'force' && cached) {
+    const inflightKey = site.plantCode;
+    if (!auxRealtimeInflight.has(inflightKey)) {
+      const bgTask = fetchAuxRealtimeInner(site, refreshMode)
+        .catch((err) => {
+          console.warn(`⚠️ [HomeRealtime] background refresh failed for plant=${site.plantCode}:`, err?.message ?? err);
+        })
+        .finally(() => {
+          auxRealtimeInflight.delete(inflightKey);
+        });
+      auxRealtimeInflight.set(inflightKey, bgTask as any);
+    }
+    return cached.value;
+  }
+
+  // No cache at all — must wait for the fetch (first-time load)
   const inflightKey = site.plantCode;
   const pending = auxRealtimeInflight.get(inflightKey);
   if (pending) return pending;
@@ -555,6 +572,10 @@ export async function getMonitoringHomeRealtime(siteId: number, opts?: { refresh
   const site = await getSiteOrThrow(siteId);
   const bundle = await fetchAuxRealtime(site, opts?.refresh ?? 'auto');
 
+  const fetchedAtMs = new Date(bundle.fetchedAt).getTime();
+  const dataAgeMs = Date.now() - fetchedAtMs;
+  const isStale = dataAgeMs > AUX_DEVICE_REALTIME_CACHE_TTL_MS;
+
   const meter = firstRealtime(bundle, DEV_TYPE_GRID_METER) ?? firstRealtime(bundle, DEV_TYPE_POWER_SENSOR);
   const emi = firstRealtime(bundle, DEV_TYPE_EMI);
   const battery = firstRealtime(bundle, DEV_TYPE_RESIDENTIAL_BATTERY) ?? firstRealtime(bundle, DEV_TYPE_ESS);
@@ -589,6 +610,8 @@ export async function getMonitoringHomeRealtime(siteId: number, opts?: { refresh
     plantCode: bundle.site.plantCode,
     plantName: bundle.site.name,
     fetchedAt: bundle.fetchedAt,
+    isStale,
+    dataAgeMs,
     siteRefresh: bundle.siteRefresh,
     energyFlow: {
       pv: {

@@ -1428,11 +1428,137 @@ const CLIENT_DATA_THAILAND = [
     contactPhone: '088-398-4545',
     remark: null,
   },
-  // 5 โปรเจกต์ที่ไม่มีใน DB (เอ็มซีซี ลาเบลส์, คอร์ติน่า, ดี.ที.เอส., เออาร์ พาราวูด, AIS Songkhla) — ข้ามไป
+  // --- 5 โปรเจกต์ที่ไม่มีใน Huawei DB — สร้างใหม่ ---
+  {
+    matchPlantCode: null,
+    newPlantCode: 'CLIENT-MCC-LABELS',
+    name: 'เอ็มซีซี ลาเบลส์ กรุงเทพ',
+    capacityKWp: 446.40,
+    projectStatus: 'INACTIVE' as const,
+    ecpPpa: 'PVS ขาย PM (PPA)',
+    codDate: new Date('2024-02-01'),
+    warrantyStart: new Date('2024-02-01'),
+    warrantyEnd: new Date('2026-01-31'),
+    freeOmText: '2time/Y, 2Y(SINO)',
+    warrantyOutputPct: null,
+    panelBrand: 'Jinko',
+    panelWatt: 620,
+    pvModuleCount: 720,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท เอ็มซีซี ลาเบลส์ กรุงเทพ จำกัด',
+    address: 'เลขที่ 700/247 หมู่ที่ 1 ต.บางเก่า อ.พานทอง จ.ชลบุรี 20160',
+    siteEngineer: 'Cherry',
+    responsiblePerson1: 'Lek',
+    responsiblePerson2: 'คุณกี๊ 088-013-3324',
+    contactPhone: '088-013-3324',
+    contactEmail: null,
+    remark: 'ส่งเอกสารายชื่อทีมงาน, ใบ Cer. ที่สูงและใบตรวจสุขภาพ, แจ้งรายชื่อและเบอร์หัวหน้าทีม',
+  },
+  {
+    matchPlantCode: null,
+    newPlantCode: 'CLIENT-CORTINA-SIAM',
+    name: 'คอร์ติน่า สยาม สปอร์ต',
+    capacityKWp: 854.36,
+    projectStatus: 'ACTIVE' as const,
+    ecpPpa: 'PPA',
+    codDate: new Date('2024-07-22'),
+    warrantyStart: new Date('2024-08-01'),
+    warrantyEnd: new Date('2026-07-31'),
+    freeOmText: '2time/Y, 2Y(SINO)',
+    warrantyOutputPct: null,
+    panelBrand: 'Jinko',
+    panelWatt: 620,
+    pvModuleCount: 1378,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท คอร์ติน่า สยาม สปอร์ต จำกัด',
+    address: 'เลขที่ 88 หมู่ที่ 2 ต.บ้านใหม่ อ.เมืองฉะเชิงเทรา จ.ฉะเชิงเทรา 24000',
+    siteEngineer: 'Yaya',
+    responsiblePerson1: 'คุณไปยดา 085-233-9779',
+    responsiblePerson2: 'คุณมิน คอร์ติน่า 091-006-0399',
+    contactPhone: '085-233-9779',
+    contactEmail: null,
+    remark: 'ขอให้ทำความสะอาดเซ็นเซอร์แสงให้สะอาด, ขอให้รีดน้ำออกให้แห้งเพื่อกันการเป็นคราบที่ขอบแผง',
+  },
+  {
+    matchPlantCode: null,
+    newPlantCode: 'CLIENT-DTS-INDUSTRY',
+    name: 'ดี.ที.เอส.อุตสาหกรรม',
+    capacityKWp: 262.48,
+    projectStatus: 'ACTIVE' as const,
+    ecpPpa: 'PPA',
+    codDate: new Date('2024-01-22'),
+    warrantyStart: new Date('2025-01-01'),
+    warrantyEnd: new Date('2026-12-31'),
+    freeOmText: '3time/Y, 2Y(SINO)',
+    warrantyOutputPct: null,
+    panelBrand: 'Trina',
+    panelWatt: 680,
+    pvModuleCount: 386,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท ดี.ที.เอส.อุตสาหกรรม จำกัด',
+    address: 'เลขที่ 67/1 หมู่ที่ 11 ถนนเทพารักษ์ ตำบลบางปลา อำเภอบางพลี จังหวัดสมุทรปราการ 10540',
+    siteEngineer: 'Yaya',
+    responsiblePerson1: 'คุณธนะวรรธน์ 082-360-5428',
+    responsiblePerson2: 'คุณพรเทพ 087-507-1886',
+    contactPhone: '082-360-5428',
+    contactEmail: null,
+    remark: 'ขอให้ใช้น้ำยาล้างแผงที่มีคราบฝังแน่น, ขอให้ทำความสะอาดเซ็นเซอร์แสงให้สะอาด',
+  },
+  {
+    matchPlantCode: null,
+    newPlantCode: 'CLIENT-AR-PARAWOOD',
+    name: 'เออาร์ พาราวูด',
+    capacityKWp: 200.16,
+    projectStatus: 'ACTIVE' as const,
+    ecpPpa: 'PPA',
+    codDate: new Date('2024-12-05'),
+    warrantyStart: new Date('2025-01-01'),
+    warrantyEnd: new Date('2026-12-31'),
+    freeOmText: '2time/Y, 2Y(SINO)',
+    warrantyOutputPct: null,
+    panelBrand: 'Trina',
+    panelWatt: 695,
+    pvModuleCount: 288,
+    projectTypeText: 'Rooftop',
+    companyName: 'บริษัท เออาร์ พาราวูด จำกัด',
+    address: 'เลขที่ 86/1 หมู่ที่ 4 ตำบลวังหว้า อำเภอแกลง จังหวัดระยอง 21110',
+    siteEngineer: null,
+    responsiblePerson1: 'เบอร์กลางหน้างาน 094-156-9151',
+    responsiblePerson2: 'คุณมีนารินทร์ 094-942-3659',
+    contactPhone: '094-156-9151',
+    contactEmail: null,
+    remark: 'ขอให้ทำความสะอาดเซ็นเซอร์แสงให้สะอาด, ขอให้รีดน้ำออกให้แห้งเพื่อกันการเป็นคราบที่ขอบแผง',
+  },
+  {
+    matchPlantCode: null,
+    newPlantCode: 'CLIENT-AIS-SONGKHLA',
+    name: 'AIS Songkhla',
+    capacityKWp: 300.15,
+    projectStatus: 'ACTIVE' as const,
+    ecpPpa: 'EPC',
+    codDate: new Date('2024-10-08'),
+    warrantyStart: new Date('2025-05-07'),
+    warrantyEnd: new Date('2027-05-06'),
+    freeOmText: '2time/Y, 2Y/75%',
+    warrantyOutputPct: 75,
+    panelBrand: null,
+    panelWatt: null,
+    pvModuleCount: 970,
+    projectTypeText: 'Farm',
+    companyName: 'บริษัท แอดวานซ์ อินโฟร์ เซอร์วิส จำกัด',
+    address: '2562 หมู่ 6 ถนนลพบุรี-ลพบุรีราเมศวร ตำบลควรลัง อำเภอเมืองหาดใหญ่ จังหวัดสงขลา 90110',
+    siteEngineer: 'Sam',
+    responsiblePerson1: 'AIS หาดใหญ่ พี่ณัฐพล 081-895-3339',
+    responsiblePerson2: null,
+    contactPhone: '081-895-3339',
+    contactEmail: null,
+    remark: 'อบรมออนไลน์ 20/10/2568 มีอายุ 3 ปี (อบรมออนไลน์ทั้งวัน มีทำข้อสอบก่อนและหลัง จำเป็นต้องเปิดกล้องตลอด)',
+  },
 ];
 
 async function seedClientDataThailand() {
   let updated = 0;
+  let created = 0;
   let notFound = 0;
 
   for (const project of CLIENT_DATA_THAILAND) {
@@ -1475,10 +1601,35 @@ async function seedClientDataThailand() {
         console.warn(`   ⚠️  Not found in DB: plantCode=${project.matchPlantCode} (PDF: ${project.name})`);
         notFound++;
       }
+    } else if ((project as any).newPlantCode) {
+      // Create new site (not from Huawei)
+      const newCode = (project as any).newPlantCode as string;
+      const existing = await prisma.site.findUnique({
+        where: { plantCode: newCode },
+      });
+      if (existing) {
+        await prisma.site.update({
+          where: { plantCode: newCode },
+          data: clientFields,
+        });
+        updated++;
+        console.log(`   📝 Updated (existing): ${existing.name} (${newCode})`);
+      } else {
+        await prisma.site.create({
+          data: {
+            plantCode: newCode,
+            name: project.name,
+            capacityKWp: project.capacityKWp,
+            ...clientFields,
+          },
+        });
+        created++;
+        console.log(`   🆕 Created: ${project.name} (${newCode})`);
+      }
     }
   }
 
-  console.log(`✅ Seed client data Thailand: ${updated} updated, ${notFound} not found (total ${CLIENT_DATA_THAILAND.length} projects)`);
+  console.log(`✅ Seed client data Thailand: ${updated} updated, ${created} created, ${notFound} not found (total ${CLIENT_DATA_THAILAND.length} projects)`);
 }
 
 async function seedServiceEntries() {
