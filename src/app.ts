@@ -93,7 +93,7 @@ app.get('/readyz', async (_req: Request, res: Response) => {
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, async () => {
+app.listen(Number(PORT), '0.0.0.0', async () => {
   console.log(`Server is running on port ${PORT}`);
   console.log('📁 Project root:', projectRoot);
   console.log('🧪 Loaded env file:', getLoadedEnvPath() ?? 'not found (using process env / defaults)');

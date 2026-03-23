@@ -49,7 +49,8 @@
       "Bash(where pg_dump)",
       "Bash(PGPASSWORD='password123' pg_dump -h localhost -p 5433 -U admin -d solar_db --data-only --disable-triggers)",
       "Bash(PGPASSWORD='SolarDB2026!' psql -h 10.240.68.192 -p 5432 -U solar_admin -d solar_db)",
-      "Bash(PGPASSWORD=password123 pg_dump -h localhost -p 5433 -U admin -d solar_db --data-only --disable-triggers)"
+      "Bash(PGPASSWORD=password123 pg_dump -h localhost -p 5433 -U admin -d solar_db --data-only --disable-triggers)",
+      "Bash(xargs -I {} basename {})"
     ]
   }
 }
