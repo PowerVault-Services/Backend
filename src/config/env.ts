@@ -15,9 +15,12 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(1, 'JWT_SECRET is required'),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
-  // ── Huawei API credentials ──
-  HUAWEI_USER: z.string().min(1, 'HUAWEI_USER is required'),
-  HUAWEI_PASSWORD: z.string().min(1, 'HUAWEI_PASSWORD is required'),
+  // ── Dev mode: skip Huawei sync & cron jobs ──
+  DISABLE_CRON: boolStr,
+
+  // ── Huawei API credentials (optional when DISABLE_CRON=1) ──
+  HUAWEI_USER: z.string().optional().default(''),
+  HUAWEI_PASSWORD: z.string().optional().default(''),
   HUAWEI_API_BASE_URL: z.string().url().optional().default('https://intl.fusionsolar.huawei.com'),
   HUAWEI_ALARM_USER: z.string().optional(),
   HUAWEI_ALARM_PASSWORD: z.string().optional(),

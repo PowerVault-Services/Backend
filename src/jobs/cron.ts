@@ -150,6 +150,12 @@ export const startCronJobs = async () => {
     return;
   }
   cronInitialized = true;
+
+  if (process.env.DISABLE_CRON === '1' || process.env.DISABLE_CRON === 'true') {
+    console.log('⏸️  DISABLE_CRON=1 — skipping all Huawei sync jobs (frontend-only mode)');
+    return;
+  }
+
   await ensureSyncStateHydrated();
   await restoreRetryQueue();
   console.log('startCronJobs() called');
