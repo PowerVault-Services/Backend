@@ -78,6 +78,7 @@ export function getReportCss(fontCss: string, fontFamily: string) {
       margin: 1mm 0 5mm;
       line-height: 1.25;
       text-align: center;
+      text-decoration: underline;
     }
     .line-fill::after {
       content: '................................................................';
@@ -107,9 +108,10 @@ export function getReportCss(fontCss: string, fontFamily: string) {
     .plan-title {
       font-size: 22pt;
       font-weight: 700;
-      line-height: 1.1;
+      line-height: 1.25;
       text-align: center;
       margin: 0 0 4mm;
+      text-decoration: underline;
     }
     .plan-intro-table {
       width: 100%;
@@ -122,15 +124,17 @@ export function getReportCss(fontCss: string, fontFamily: string) {
       border: 1px solid #2d2d2d;
       padding: 1.15mm 1.9mm;
       vertical-align: middle;
-      line-height: 1.12;
+      line-height: 1.35;
     }
     .plan-intro-header td {
       background: #8ea9db;
       font-weight: 700;
       text-align: center;
-      font-size: 11.2pt;
+      font-size: 9pt;
+      line-height: 1.4;
       padding-top: 1.45mm;
       padding-bottom: 1.45mm;
+      white-space: nowrap;
     }
     .plan-label {
       width: 32%;
@@ -150,7 +154,7 @@ export function getReportCss(fontCss: string, fontFamily: string) {
     .plan-check-table td {
       border: 1px solid #2d2d2d;
       padding: 1mm 1.55mm;
-      line-height: 1.18;
+      line-height: 1.35;
     }
     .plan-check-table th {
       background: #d0cece;

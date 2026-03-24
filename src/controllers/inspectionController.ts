@@ -312,7 +312,7 @@ export async function getInspectionJob(req: Request, res: Response) {
   const jobId = Number(req.params.jobId);
   const job = await prisma.job.findUnique({
     where: { id: jobId },
-    include: { site: true, attachments: true },
+    include: { site: { include: { layouts: true } }, attachments: true },
   });
   if (!job) return res.status(404).json({ success: false, message: 'Job not found' });
 

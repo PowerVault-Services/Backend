@@ -113,8 +113,7 @@ export function renderPlanPage(
       <table class="plan-intro-table">
         <tr class="plan-intro-header">
           <td colspan="2">
-            รายละเอียด และแผนการดูแล ควบคุม ตรวจสอบ และบำรุงรักษาเชิงป้องกัน อุปกรณ์ต่างๆ
-            <br/>(เบื้องต้น)
+            รายละเอียด และแผนการดูแล ควบคุม ตรวจสอบ และบำรุงรักษาเชิงป้องกัน อุปกรณ์ต่างๆ (เบื้องต้น)
           </td>
         </tr>
         <tr>
@@ -148,7 +147,7 @@ export function renderPlanPage(
           <tr>
             <th>ลำดับ</th>
             <th>อุปกรณ์/รายการ</th>
-            <th>การดำเนิน<br/>การ</th>
+            <th>การดำเนินการ</th>
             <th>หมายเหตุ</th>
           </tr>
         </thead>

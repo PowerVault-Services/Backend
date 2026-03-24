@@ -332,7 +332,7 @@ export async function getCleaningJob(req: Request, res: Response) {
   const job = await prisma.job.findUnique({
     where: { id: jobId },
     include: {
-      site: true,
+      site: { include: { layouts: true } },
       attachments: true,
     },
   });
@@ -555,25 +555,22 @@ export async function generateReport(req: Request, res: Response) {
 
   // 2) Evidence groups (Step3.1)
   // NOTE: ฝั่งหน้าเว็บ Step3.1 มีหัวข้อย่อยหลายแบบ (ก่อน/ขณะ/หลัง - ล้างแผง / ทำความสะอาดห้องอินเวอร์เตอร์ ฯลฯ)
-  // แต่ก่อนหน้านี้ report จัดกลุ่มแค่ BEFORE/AFTER ทำให้ "ข้อความใต้รูป" และ "หัวข้อในรายงาน" ไม่ตรงกับหน้าเว็บ
-  // แก้โดย map fileType -> หัวข้อรายงาน + label ใต้รูป ให้ตรงกับหัวข้อบนหน้าเว็บ
 
   const evidenceLabelMap: Record<string, { groupTitle: string; label: string }> = {
-    // === ตามหน้าเว็บ Step3.1 (Cleaning) ===
-    STEP3_BEFORE_PANEL: { groupTitle: 'ก่อน - ล้างแผง', label: 'ก่อน - ล้างแผง' },
-    STEP3_DURING_PANEL: { groupTitle: 'ขณะ - ล้างแผง', label: 'ขณะ - ล้างแผง' },
-    STEP3_AFTER_PANEL: { groupTitle: 'หลัง - ล้างแผง', label: 'หลัง - ล้างแผง' },
+    STEP3_BEFORE_PANEL: { groupTitle: 'ก่อนทำความสะอาดแผงโซลาร์เซลล์', label: '' },
+    STEP3_DURING_PANEL: { groupTitle: 'ขณะทำความสะอาดแผงโซลาร์เซลล์', label: '' },
+    STEP3_AFTER_PANEL: { groupTitle: 'หลังทำความสะอาดแผงโซลาร์เซลล์', label: '' },
 
-    STEP3_BEFORE_INVERTER: { groupTitle: 'ก่อน - ทำความสะอาดห้องอินเวอร์เตอร์', label: 'ก่อน - ทำความสะอาดห้องอินเวอร์เตอร์' },
-    STEP3_DURING_INVERTER: { groupTitle: 'ขณะ - ทำความสะอาดห้องอินเวอร์เตอร์', label: 'ขณะ - ทำความสะอาดห้องอินเวอร์เตอร์' },
-    STEP3_AFTER_INVERTER: { groupTitle: 'หลัง - ทำความสะอาดห้องอินเวอร์เตอร์', label: 'หลัง - ทำความสะอาดห้องอินเวอร์เตอร์' },
+    STEP3_BEFORE_INVERTER: { groupTitle: 'ก่อนทำความสะอาดห้องอินเวอร์เตอร์', label: '' },
+    STEP3_DURING_INVERTER: { groupTitle: 'ขณะทำความสะอาดห้องอินเวอร์เตอร์', label: '' },
+    STEP3_AFTER_INVERTER: { groupTitle: 'หลังทำความสะอาดห้องอินเวอร์เตอร์', label: '' },
 
-    STEP3_ZONE_WORK: { groupTitle: 'รูปโซนของการทำงาน', label: 'รูปโซนของการทำงาน' },
-    STEP3_ZONE_CHECKLIST: { groupTitle: 'รูปโซนของการทำ Check List', label: 'รูปโซนของการทำ Check List' },
+    STEP3_ZONE_WORK: { groupTitle: 'รูปโซนของการทำงาน', label: '' },
+    STEP3_ZONE_CHECKLIST: { groupTitle: 'รูปโซนของการทำ Check List', label: '' },
 
-    // === รองรับของเดิม (เก่า) ===
-    STEP3_BEFORE: { groupTitle: 'ก่อนทำความสะอาด', label: 'ก่อนทำความสะอาด' },
-    STEP3_AFTER: { groupTitle: 'หลังทำความสะอาด', label: 'หลังทำความสะอาด' },
+    // รองรับของเดิม
+    STEP3_BEFORE: { groupTitle: 'ก่อนทำความสะอาดแผงโซลาร์เซลล์', label: '' },
+    STEP3_AFTER: { groupTitle: 'หลังทำความสะอาดแผงโซลาร์เซลล์', label: '' },
   };
 
   type Img = { label?: string; filePath: string };
@@ -589,7 +586,6 @@ export async function generateReport(req: Request, res: Response) {
 
     const label =
       mapped?.label
-      // fallback: แสดงชื่อ type แบบอ่านง่ายขึ้นนิดหน่อย
       ?? ft.replace(/^STEP3_/, '').split('_').join(' ');
 
     if (!grouped.has(groupTitle)) grouped.set(groupTitle, []);
@@ -605,7 +601,25 @@ export async function generateReport(req: Request, res: Response) {
     });
   }
 
-  const evidenceGroups = Array.from(grouped.entries()).map(([title, images]) => ({ title, images }));
+  const evidenceOrder = [
+    'ก่อนทำความสะอาดแผงโซลาร์เซลล์',
+    'ขณะทำความสะอาดแผงโซลาร์เซลล์',
+    'หลังทำความสะอาดแผงโซลาร์เซลล์',
+    'ก่อนทำความสะอาดห้องอินเวอร์เตอร์',
+    'ขณะทำความสะอาดห้องอินเวอร์เตอร์',
+    'หลังทำความสะอาดห้องอินเวอร์เตอร์',
+    'รูปโซนของการทำงาน',
+    'รูปโซนของการทำ Check List',
+    'รูปภาพ/หลักฐานอื่นๆ',
+  ];
+
+  const evidenceGroups = Array.from(grouped.entries())
+    .map(([title, images]) => ({ title, images }))
+    .sort((a, b) => {
+      const ai = evidenceOrder.indexOf(a.title);
+      const bi = evidenceOrder.indexOf(b.title);
+      return (ai === -1 ? Number.MAX_SAFE_INTEGER : ai) - (bi === -1 ? Number.MAX_SAFE_INTEGER : bi);
+    });
 
   // 3) PV Layout จาก client data (SiteLayout)
   let siteLayoutPath: string | null = null;

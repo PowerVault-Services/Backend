@@ -335,7 +335,7 @@ export async function getServiceJob(req: Request, res: Response) {
   const job = await prisma.job.findUnique({
     where: { id: jobId },
     include: {
-      site: true,
+      site: { include: { layouts: true } },
       attachments: true,
       stockUsage: {
         include: {
