@@ -98,6 +98,7 @@ model Site {
   siteRealtimeRaw     Json?
 
   // -------- Client Data --------
+  isClientOnly  Boolean       @default(false)
   projectStatus ProjectStatus @default(ACTIVE)
   warrantyStart DateTime?
   warrantyEnd   DateTime?
@@ -108,6 +109,7 @@ model Site {
   freeOmText           String?
   warrantyOutputPct    Float?
   codDate              DateTime?
+  locationProvince     String?
 
   panelBrand           String?
   panelModel           String?
@@ -115,6 +117,9 @@ model Site {
   inverterCount        Int?
   inverterBrand        String?
   siteEngineer         String?
+  salePerson           String?
+  installationContractor String?
+  workEntryConditions  String?  @db.Text
   responsiblePerson1   String?
   responsiblePerson2   String?
   remark               String?

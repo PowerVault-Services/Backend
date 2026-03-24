@@ -622,10 +622,10 @@ function wrapHtml(bodyHtml: string) {
     .cover {
       display: flex;
       flex-direction: column;
-      min-height: 250mm;
+      min-height: 220mm;
       align-items: center;
       text-align: center;
-      padding-top: 12mm;
+      padding-top: 0;
     }
     .cover-top-address {
       width: 100%;
@@ -678,7 +678,8 @@ function wrapHtml(bodyHtml: string) {
       line-height: 1.35;
     }
     .clean-table th {
-      background: #f2f2f2;
+      background: #305496;
+      color: #fff;
       text-align: center;
       font-weight: 700;
     }
@@ -836,13 +837,8 @@ export async function generateCleaningReportPdf(data: {
 
   const coverPage = `
     <section class="page">
+      ${renderHeader(logoDataUri, 'cleaning')}
       <div class="cover">
-        ${logoDataUri ? `<img class="logo" src="${logoDataUri}" />` : '<div class="logo-fallback">POWER VAULT SERVICE</div>'}
-        <div class="cover-top-address">
-          <div><b>บริษัท พาวเวอร์วอลท์ เซอร์วิส จำกัด</b></div>
-          <div>407 หมู่ที่ 2 ต.สำโรงเหนือ อ.เมือง</div>
-          <div>จ.สมุทรปราการ 10270</div>
-        </div>
         <div class="cover-title">รายงานการบำรุงรักษาระบบเชิงป้องกัน</div>
         <div class="cover-issue">${escapeHtml(formatReportIssue(data.workDate))}</div>
         <div class="cover-project-line">โครงการ ${escapeHtml(data.projectName || '.....................................................')}</div>
@@ -891,14 +887,15 @@ export async function generateCleaningReportPdf(data: {
       <table class="service-meta-grid" style="font-size:12pt;">
         <tr>
           <td style="width:50%;"><b>ลูกค้า</b></td>
-          <td style="width:50%;"><b>โครงการ</b> ${escapeHtml(data.projectName || '............')}</td>
+          <td style="width:50%;"><b>โครงการ</b> ${escapeHtml(data.projectName || '..........................................')}</td>
         </tr>
         <tr>
-          <td><b>ขนาดระบบ Solar Rooftop</b> &nbsp; ${escapeHtml(data.systemSizeKWp ? `${data.systemSizeKWp} kWp` : '-')}</td>
-          <td></td>
+          <td><b>ขนาดระบบ Solar Rooftop</b></td>
+          <td>${escapeHtml(data.systemSizeKWp ? `${data.systemSizeKWp} kWp` : '-')}</td>
         </tr>
         <tr>
-          <td colspan="2"><b>วันที่เข้าทำการบำรุงรักษาระบบ</b> &nbsp; ${escapeHtml(formatThaiDate(data.workDate))}</td>
+          <td><b>วันที่เข้าทำการบำรุงรักษาระบบ</b></td>
+          <td>${escapeHtml(formatThaiDate(data.workDate))}</td>
         </tr>
       </table>
       <table class="clean-table">

@@ -53,7 +53,10 @@
       "Bash(xargs -I {} basename {})",
       "Bash(ls -lah /d/Backend/prisma/seed*)",
       "Bash(npm run:*)",
-      "Bash(grep -n \"PERSONAL_RATE_LIMIT\\\\|SYSTEM_BUSY\\\\|ONDEMAND_SITE_STALE\\\\|AUX_DEVICE.*CACHE\" /d/Backend/src/services/*.ts)"
+      "Bash(grep -n \"PERSONAL_RATE_LIMIT\\\\|SYSTEM_BUSY\\\\|ONDEMAND_SITE_STALE\\\\|AUX_DEVICE.*CACHE\" /d/Backend/src/services/*.ts)",
+      "Bash(find /d/Backend -name *.html -o -name *.htm -o -name *.ejs)",
+      "Bash(grep -rn \"export\\\\|interface\\\\|type\" /d/Backend/src/types/*.ts)",
+      "Bash(grep -rn \"Plant\\\\|plant\" /d/Backend/src/routes/*.ts)"
     ]
   }
 }

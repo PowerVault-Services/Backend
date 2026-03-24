@@ -398,7 +398,7 @@ async function refreshStationsIfNeeded(force = false): Promise<string[]> {
   }
 
   log.warn('Cannot refresh stations from Huawei, falling back to DB');
-  const sites = (await prisma.site.findMany({ select: { plantCode: true }, orderBy: [{ createdAt: 'asc' }], take: 5000 } as any)) as any[];
+  const sites = (await prisma.site.findMany({ where: { isClientOnly: false }, select: { plantCode: true }, orderBy: [{ createdAt: 'asc' }], take: 5000 } as any)) as any[];
   const codes = sites.map((s) => s.plantCode).filter(Boolean);
   stationCache = { expiresAt: now + 10 * 60_000, stationCodes: codes };
   log.info('Using DB fallback station codes', { count: codes.length, ttlMs: 600_000 });

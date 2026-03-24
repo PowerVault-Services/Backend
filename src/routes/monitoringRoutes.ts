@@ -50,6 +50,7 @@ import { getCachedPlantKpi } from '../services/huaweiKpiCache';
 			: [];
 
 		const siteWhere: any = {
+			isClientOnly: false,
 			...(siteIdList.length ? { id: { in: siteIdList } } : {}),
 			...(q
 				? {
@@ -390,6 +391,7 @@ import { getCachedPlantKpi } from '../services/huaweiKpiCache';
   // list sites
   router.get('/sites', async (_req, res) => {
     const sites = (await prisma.site.findMany({
+      where: { isClientOnly: false },
       select: {
         id: true,
         plantCode: true,
@@ -853,5 +855,54 @@ import { getCachedPlantKpi } from '../services/huaweiKpiCache';
 			},
 		});
 	});
+
+  // ── Reports per site (Monitoring > Report tab) ──
+  router.get('/sites/:siteId/reports', async (req, res) => {
+    const siteId = Number(req.params.siteId);
+    if (!Number.isFinite(siteId)) return res.status(400).json({ error: 'Invalid siteId' });
+
+    const jobs = await prisma.job.findMany({
+      where: { siteId },
+      include: {
+        site: { select: { id: true, name: true } },
+        cleaningJob: { select: { reportFileUrl: true, reportCreatedAt: true } },
+        serviceJob: { select: { reportFileUrl: true, reportCreatedAt: true } },
+        inspectionJob: { select: { reportFileUrl: true, reportCreatedAt: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
+
+    const list = jobs
+      .map((j) => {
+        const reportUrl =
+          j.reportUrl ??
+          j.cleaningJob?.reportFileUrl ??
+          j.serviceJob?.reportFileUrl ??
+          j.inspectionJob?.reportFileUrl ??
+          null;
+
+        const reportCreatedAt =
+          j.cleaningJob?.reportCreatedAt ??
+          j.serviceJob?.reportCreatedAt ??
+          j.inspectionJob?.reportCreatedAt ??
+          null;
+
+        return {
+          id: j.id,
+          jobNo: j.jobNo,
+          title: j.title,
+          type: j.type,
+          status: j.status,
+          createdAt: j.createdAt,
+          reportCreatedAt,
+          previewUrl: reportUrl,
+          downloadUrl: reportUrl,
+        };
+      })
+      .filter((d) => d.previewUrl);
+
+    res.json({ success: true, data: { list } });
+  });
 
   export default router;

@@ -25,6 +25,14 @@ import {
   deleteServiceEntry,
 } from '../controllers/clientDataController';
 
+import {
+  listPlants,
+  getPlantDetail,
+  createPlant,
+  updatePlant,
+  deletePlant,
+} from '../controllers/plantController';
+
 import { upload } from '../middlewares/upload';
 
 const router = Router();
@@ -75,5 +83,14 @@ router.put('/projects/:siteId/forecast/warranty-energy', upsertForecastYearly);
 router.post('/projects/:siteId/other', createOtherRow);
 router.put('/other/:rowId', updateOtherRow);
 router.delete('/other/:rowId', deleteOtherRow);
+
+// -------------------------
+// Plants (client-only, no sync/monitoring)
+// -------------------------
+router.get('/plants', listPlants);
+router.get('/plants/:siteId', getPlantDetail);
+router.post('/plants', createPlant);
+router.put('/plants/:siteId', updatePlant);
+router.delete('/plants/:siteId', deletePlant);
 
 export default router;
