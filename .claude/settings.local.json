@@ -56,7 +56,9 @@
       "Bash(grep -n \"PERSONAL_RATE_LIMIT\\\\|SYSTEM_BUSY\\\\|ONDEMAND_SITE_STALE\\\\|AUX_DEVICE.*CACHE\" /d/Backend/src/services/*.ts)",
       "Bash(find /d/Backend -name *.html -o -name *.htm -o -name *.ejs)",
       "Bash(grep -rn \"export\\\\|interface\\\\|type\" /d/Backend/src/types/*.ts)",
-      "Bash(grep -rn \"Plant\\\\|plant\" /d/Backend/src/routes/*.ts)"
+      "Bash(grep -rn \"Plant\\\\|plant\" /d/Backend/src/routes/*.ts)",
+      "Bash(ls d:/Backend/package.json d:/Backend/.env* d:/Backend/docker-compose* d:/Backend/Dockerfile*)",
+      "Bash(ls d:/Backend/.env*)"
     ]
   }
 }

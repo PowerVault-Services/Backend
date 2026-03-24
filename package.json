@@ -4,10 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "nodemon",
     "build": "tsc",
     "start": "node dist/app.js",
-    "test": "jest --forceExit --detectOpenHandles"
+    "test": "jest --forceExit --detectOpenHandles",
+    "setup": "cp -n .env.example .env 2>/dev/null; npm install; npx prisma migrate dev"
   },
   "keywords": [],
   "author": "",
