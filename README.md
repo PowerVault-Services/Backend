@@ -12,29 +12,8 @@ Backend นี้เป็น Express + Prisma + PostgreSQL และมี API 
 - Docker & Docker Compose (สำหรับ local DB)
 - เชื่อมต่อ VPN / อยู่ในเครือข่ายเดียวกับ cloud server ได้ (ถ้าใช้ cloud DB/MinIO)
 
-### Option A: Local development (แนะนำ — ไม่ต้องต่อ VPN)
 
-```bash
-# 1. สร้าง .env จาก template
-cp .env.example .env
-
-# 2. เปิด DB + MinIO ด้วย Docker
-docker compose up -d
-
-# 3. ติดตั้ง dependencies (prisma generate จะรันอัตโนมัติ)
-npm install
-
-# 4. สร้าง database schema
-npx prisma migrate dev
-
-# 5. seed (optional)
-npx prisma db seed
-
-# 6. run dev
-npm run dev
-```
-
-### Option B: ใช้ Cloud DB (ต้องต่อ VPN)
+### ใช้ Cloud DB (ต้องต่อ VPN)
 
 ```bash
 # 1. ขอ .env จากทีม (มี cloud DB IP และ credentials)
