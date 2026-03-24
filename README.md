@@ -887,6 +887,41 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 { "data": { "siteId": 1, "summaryCards": [], "supportingData": {} } }
 ```
 
+### GET `/api/monitoring/sites/:siteId/reports`
+
+**Description:** ดึงรายการ report ทั้งหมดของ site นั้น (ใช้ในหน้า Monitoring > Report tab)
+
+**Auth:** None
+
+**Path params:**
+
+- `siteId` (required): number — ID ของ site
+
+**Response 200:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "list": [
+      {
+        "id": 1,
+        "jobNo": "CLN-250301-001",
+        "title": "Cleaning Q1",
+        "type": "CLEANING",
+        "status": "COMPLETED",
+        "createdAt": "2026-03-01T10:00:00.000Z",
+        "reportCreatedAt": "2026-03-02T08:00:00.000Z",
+        "previewUrl": "https://storage.example.com/reports/cleaning-001.pdf",
+        "downloadUrl": "https://storage.example.com/reports/cleaning-001.pdf"
+      }
+    ]
+  }
+}
+```
+
+> หมายเหตุ: คืนเฉพาะ job ที่มี report URL แล้วเท่านั้น (`reportUrl`, `cleaningJob.reportFileUrl`, `serviceJob.reportFileUrl`, หรือ `inspectionJob.reportFileUrl`) — ถ้า site ไม่มี report จะได้ `"list": []`
+
 ---
 
 ## Alarm APIs (`/api/alarms`)
@@ -3211,3 +3246,184 @@ evidence: [file: photo1.jpg]
 ```json
 { "success": true }
 ```
+
+### Plants (Client-Only Projects)
+
+> โมดูลนี้ใช้สร้าง Project Plant ที่เป็นข้อมูลฝั่ง Client Data เท่านั้น — **ไม่ถูกรวมเข้าหน้า Monitoring** และ **ไม่เข้าระบบ Sync กับ Huawei**
+>
+> ข้อมูลจะถูกเก็บใน `Site` table เดียวกัน โดยมี flag `isClientOnly = true` แยกออกจาก site ปกติ
+
+#### GET `/api/client-data/plants`
+
+**Query params (optional):**
+
+| param | type | description |
+|---|---|---|
+| `projectNo` | string | ค้นหาด้วย plantCode (contains, case-insensitive) |
+| `projectName` | string | ค้นหาด้วยชื่อโครงการ |
+| `company` | string | ค้นหาด้วยชื่อบริษัท |
+| `status` | string | `ACTIVE` / `INACTIVE` / `MAINTENANCE` |
+| `page` | number | default 1 |
+| `pageSize` | number | default 10, max 100 |
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "page": 1,
+    "pageSize": 10,
+    "total": 1,
+    "items": [
+      {
+        "siteId": 300,
+        "projectNo": "PRJ-2024-001",
+        "projectName": "Solar Farm Bangkok",
+        "company": "PowerVault Thailand",
+        "type": "Solar Photovoltaic",
+        "systemSizeKWp": 500,
+        "locationProvince": "Bangkok",
+        "codDate": "2024-06-15T00:00:00.000Z",
+        "status": "ACTIVE",
+        "createdAt": "2026-03-24T13:06:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+#### GET `/api/client-data/plants/:siteId`
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "siteId": 300,
+    "projectNo": "PRJ-2024-001",
+    "projectName": "Solar Farm Bangkok",
+    "company": "PowerVault Thailand",
+    "ecpPpa": "CONTRACT-REF-001",
+    "type": "Solar Photovoltaic",
+    "address": "123 ถนนพระราม 9",
+    "locationProvince": "Bangkok",
+    "freeOmText": "2 Years / 4 Times",
+    "warrantyOutputPct": 98,
+    "codDate": "2024-06-15T00:00:00.000Z",
+    "systemSizeKWp": 500,
+    "solarPanel": "Jinko Tiger Neo",
+    "panelBrand": "Jinko Solar",
+    "panelSizeW": 580,
+    "salePerson": "สมชาย ใจดี",
+    "siteEngineer": "วิศวกร ทดสอบ",
+    "installationContractor": "บริษัท ติดตั้ง จำกัด",
+    "workEntryConditions": "สวมหมวกนิรภัย, รองเท้าเซฟตี้",
+    "contactEmail": "client@example.com",
+    "contactPhone": "+66-81-234-5678",
+    "status": "ACTIVE",
+    "createdAt": "2026-03-24T13:06:00.000Z"
+  }
+}
+```
+
+#### POST `/api/client-data/plants`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):**
+
+```json
+{
+  "projectNo": "PRJ-2024-001",
+  "projectName": "Solar Farm Bangkok",
+  "companyName": "PowerVault Thailand",
+  "ecpPpa": "CONTRACT-REF-001",
+  "type": "Solar Photovoltaic",
+  "address": "123 ถนนพระราม 9",
+  "locationProvince": "Bangkok",
+  "freeOmText": "2 Years / 4 Times",
+  "warrantyOutputPct": 98,
+  "codDate": "2024-06-15",
+  "systemSizeKWp": 500,
+  "solarPanel": "Jinko Tiger Neo",
+  "panelBrand": "Jinko Solar",
+  "panelSizeW": 580,
+  "salePerson": "สมชาย ใจดี",
+  "siteEngineer": "วิศวกร ทดสอบ",
+  "installationContractor": "บริษัท ติดตั้ง จำกัด",
+  "workEntryConditions": "สวมหมวกนิรภัย, รองเท้าเซฟตี้",
+  "contactEmail": "client@example.com",
+  "contactPhone": "+66-81-234-5678"
+}
+```
+
+> **Required fields:** `projectNo` (plantCode), `projectName` (name)
+>
+> `systemSizeKWp` จะ default เป็น 0 ถ้าไม่ส่ง — รองรับ alias: `capacityKWp`, `capacityKwp`
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "siteId": 300,
+    "projectNo": "PRJ-2024-001",
+    "projectName": "Solar Farm Bangkok",
+    "company": "PowerVault Thailand",
+    "type": "Solar Photovoltaic",
+    "systemSizeKWp": 500,
+    "locationProvince": "Bangkok",
+    "codDate": "2024-06-15T00:00:00.000Z",
+    "status": "ACTIVE",
+    "createdAt": "2026-03-24T13:06:00.000Z"
+  }
+}
+```
+
+**Error 409:** plantCode ซ้ำ
+
+```json
+{ "success": false, "message": "plantCode already exists" }
+```
+
+#### PUT `/api/client-data/plants/:siteId`
+
+**Headers:** `Content-Type: application/json`
+
+**Request body (example):** (ส่งเฉพาะ field ที่อยากแก้)
+
+```json
+{ "projectName": "Solar Farm Bangkok V2", "status": "MAINTENANCE" }
+```
+
+**Response 200 (example):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "siteId": 300,
+    "projectNo": "PRJ-2024-001",
+    "projectName": "Solar Farm Bangkok V2",
+    "company": "PowerVault Thailand",
+    "type": "Solar Photovoltaic",
+    "systemSizeKWp": 500,
+    "locationProvince": "Bangkok",
+    "codDate": "2024-06-15T00:00:00.000Z",
+    "status": "MAINTENANCE"
+  }
+}
+```
+
+#### DELETE `/api/client-data/plants/:siteId`
+
+**Response 200 (example):**
+
+```json
+{ "success": true }
+```
+
+> **หมายเหตุ:** ทุกเส้น GET/PUT/DELETE จะ return 404 ถ้า siteId ไม่ใช่ plant (`isClientOnly = false`) หรือไม่มีอยู่
