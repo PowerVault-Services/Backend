@@ -165,68 +165,38 @@ const DEVICE_SYNC_CONCURRENCY = Math.max(1,
 
 # ปัญหาที่ยังไม่ได้แก้ (ทั้งหมดที่ต้องทำ)
 
-## ปัญหา 1: Timezone mismatch บน Cloud (กราฟไม่ work)
+## ~~ปัญหา 1: Timezone mismatch บน Cloud (กราฟไม่ work)~~ ✅ แก้แล้ว
 
-ไฟล์: `src/services/monitoringHomeService.ts`
+แก้โดยเพิ่ม timezone-aware utilities (`tzParts`, `tzDate`) ใน `monitoringHomeService.ts` ที่ใช้ `Intl.DateTimeFormat` กับ `HUAWEI_SYNC_TIMEZONE` (default: Asia/Bangkok) แล้วแก้ทุก date function:
+- `startOfDay/Month/Year`, `addHours/Days/Months/Years` — ใช้ Bangkok timezone
+- `formatHourLabel/DayLabel/MonthLabel` — แสดง Bangkok hours/dates
+- `bucketKey` — ใช้ Bangkok parts ทำให้ skeleton key match กับ Huawei data key
+- `parseRequestedAnchor` — parse date strings เป็น Bangkok noon
+- `collectTime` calculations — ใช้ `tzDate()` สร้าง noon Bangkok
 
-สาเหตุ: ทุก date operation ใช้ JavaScript Date ซึ่งทำงานตาม server timezone
-- Local dev (Windows Thailand) เป็นเวลาไทย ตรงกับ Huawei
-- Cloud (UTC) เป็นเวลา UTC ไม่ตรง
-
-จุดที่มีปัญหา:
-- startOfDay(), addHours() — ใช้ local timezone
-- buildDaySkeleton() — สร้าง 24 slots ตาม UTC hours
-- bucketKey() — ใช้ value.getHours() ซึ่งเป็น UTC บน cloud
-- collectTime ที่ส่งไป Huawei — noon UTC ไม่ใช่ noon Bangkok
-- formatHourLabel() — แสดงชั่วโมง UTC แทน Bangkok
-
-ผลลัพธ์บน Cloud:
-- Skeleton key: 2026-2-24-0 (00:00 UTC)
-- Huawei data key: 2026-2-23-17 (00:00 Bangkok = 17:00 UTC วันก่อน)
-- ไม่ match ทำให้กราฟ null ทั้งหมด
-
-วิธีแก้: สร้าง timezone-aware utility ที่ทำ date operations ใน Bangkok timezone (process.env.HUAWEI_SYNC_TIMEZONE ?? 'Asia/Bangkok') แล้วแก้ buildDaySkeleton, bucketKey, formatHourLabel, collectTime calculations ให้ใช้ Bangkok timezone ทั้งหมด
-
-## ปัญหา 2: กราฟยิง Huawei ตรง ไม่อ่าน DB ก่อน (ปัญหาสำคัญที่สุดสำหรับ UX)
-
-Design intent: หน้า monitoring ควรอ่านจาก DB (ที่ cron sync ไว้แล้ว) เป็นหลัก แล้วยิง Huawei เฉพาะเมื่อ DB ไม่มีข้อมูล
-
-สิ่งที่เกิดจริง: ทุก graph request ยิง Huawei API ตรงผ่าน getCachedPlantKpi() ใช้แค่ in-memory cache ถ้า miss ก็ยิง Huawei ทันที ไม่เคยดู DB เลย
+## ปัญหา 2: กราฟยิง Huawei ตรง ไม่อ่าน DB ก่อน — แก้บางส่วนแล้ว
 
 ### 3 จุดที่ต้องแก้:
 
-#### 2a. Energy Management Graph (getEnergyManagementSeries)
-ปัจจุบัน:
-```
-User เปิดกราฟ -> getCachedPlantKpi -> in-memory -> ยิง Huawei
-```
-ควรเป็น:
-```
-User เปิดกราฟ -> อ่าน DB ก่อน -> ถ้าไม่มี -> ค่อยยิง Huawei
-```
+#### ~~2a. Energy Management Graph~~ ✅ แก้บางส่วนแล้ว
+- **Year/Lifetime views**: อ่าน `SiteMonthlyActual` จาก DB ก่อน ถ้ามีข้อมูลไม่ยิง Huawei เลย (lifetime aggregate by year)
+- **Day/Month views**: ยังยิง Huawei ผ่าน `getCachedPlantKpi` (ไม่มี DB table สำหรับ hourly KPI, `SiteDailyEnergy` มีแค่ `energyKWh` ไม่ครบ fields)
+- ถ้าต้องการ day/month DB-first ต้องสร้าง table ใหม่ (`SiteHourlyKpi`, `SiteDailyKpi`) เพื่อเก็บ full dataItemMap
 
-DB source ที่มีอยู่แล้วแต่ไม่ได้ใช้:
+#### 2b. Home Realtime — Aux Devices (ยังไม่ได้แก้)
+ปัจจุบัน: getAuxDevices() ยิง Huawei getDevList ทุกครั้ง (มี 6h in-memory cache)
+ควรเป็น: เก็บ aux device metadata ลง DB แล้วอ่านจาก DB ก่อน
+หมายเหตุ: ต้องสร้าง DB table ใหม่สำหรับ aux devices (EMI, meter, battery ไม่อยู่ใน Inverter table)
 
-| View | DB Table ที่ควรอ่าน | Fallback Huawei |
-|------|-------------------|-----------------|
-| Day (hourly) | InverterKpiSnapshot (aggregate by hour) หรือสร้าง SiteHourlyKpi ใหม่ | getKpiStationHour |
-| Month (daily) | SiteDailyEnergy | getKpiStationDay |
-| Year (monthly) | SiteMonthlyActual | getKpiStationMonth |
-| Lifetime (yearly) | SiteMonthlyActual (aggregate by year) | getKpiStationYear |
+#### ~~2c. PR Chart (/pr route)~~ ✅ แก้แล้ว
+- **Month granularity**: อ่าน `SiteMonthlyActual` จาก DB ก่อน fallback Huawei ถ้า DB ว่าง
+- **Year granularity**: aggregate `SiteMonthlyActual` by year จาก DB ก่อน fallback Huawei
+- **Day granularity**: ยังยิง Huawei (ไม่มี daily KPI table)
 
-#### 2b. Home Realtime — Aux Devices
-ปัจจุบัน: getAuxDevices() ยิง Huawei getDevList ทุกครั้ง
-ควรเป็น: อ่านจาก Inverter table (cron sync ทุก 5 นาที) แล้วยิง Huawei เฉพาะ device types ที่ไม่มีใน DB
-
-#### 2c. PR Chart (/pr route)
-ปัจจุบัน: ยิง Huawei getKpiStationMonth ตรง
-ควรเป็น: อ่านจาก SiteMonthlyActual ก่อน (มี function loadCachedMonthlyActuals ใน siteAnalyticsService.ts พร้อมใช้แล้ว)
-
-#### ผลกระทบของปัญหานี้:
-- ONDEMAND account โดน load จากทุก user ที่เปิดหน้า monitoring
-- กราฟช้า (รอ Huawei throttle 6.5s) แทนที่จะอ่าน DB ใน <50ms
-- กราฟ fail เวลา Huawei โดน 407 ทั้งที่ DB มีข้อมูลเดียวกัน
-- เพิ่ม account ช่วยปัญหานี้ไม่ได้เพราะ load มาจาก user request
+#### ผลกระทบที่เหลือ (ลดลงมากแล้ว):
+- Year/Lifetime Energy Management + PR month/year → อ่าน DB ใน <50ms ไม่ยิง Huawei
+- Day/Month Energy Management + PR day → ยังใช้ Huawei ผ่าน in-memory cache (getCachedPlantKpi)
+- Aux devices → ยังใช้ Huawei แต่มี 6h in-memory cache อยู่แล้ว
 
 ## ปัญหา 3: เพิ่ม Huawei Accounts จาก 4 เป็น 8
 
@@ -360,8 +330,8 @@ Single process + แก้ปัญหาข้างบน เพียงพ�
 |---|--------|---------|---------|-------|
 | 1 | Device sync batchIndex | ง่าย | สูง | แก้แล้ว |
 | 2 | PURPOSE_ORDER เอา ondemand ออก | ง่าย | สูง | แก้แล้ว |
-| 3 | Timezone mismatch (ปัญหา 1) | กลาง | สูง — กราฟ null บน cloud | ยังไม่ได้แก้ |
-| 4 | กราฟอ่าน DB ก่อน (ปัญหา 2) | กลาง-ยาก | สูงมาก — UX + ลด API load | ยังไม่ได้แก้ |
+| 3 | Timezone mismatch (ปัญหา 1) | กลาง | สูง — กราฟ null บน cloud | ✅ แก้แล้ว — tzParts/tzDate utilities |
+| 4 | กราฟอ่าน DB ก่อน (ปัญหา 2) | กลาง-ยาก | สูงมาก — UX + ลด API load | ✅ แก้บางส่วน — year/lifetime/PR month+year อ่าน DB, day/month ยัง Huawei |
 | 5 | Frontend DISABLE_CRON (ปัญหา 5) | ง่ายมาก | กลาง — ลด 407 ทันที | ยังไม่ได้แก้ |
 | 6 | เพิ่ม 8 accounts (ปัญหา 3) | กลาง | สูง — ถ้ามี credentials | รอ credentials |
 | 7 | cron.ts hardcode (ปัญหา 4) | ง่าย | ต่ำ — ทำพร้อมข้อ 6 | ยังไม่ได้แก้ |

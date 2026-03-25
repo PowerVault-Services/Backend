@@ -199,11 +199,7 @@ import { getCachedPlantKpi } from '../services/huaweiKpiCache';
 			orderBy: { month: 'asc' },
 		});
 
-		// ---- Actual from Huawei ----
-		// Huawei KPI fields for PR page (confirmed from sample responses):
-		//  - radiation_intensity (Irradiation)
-		//  - PVYield (Production)
-		//  - performance_ratio (PR)
+		// ---- Actual data: DB-first, Huawei fallback ----
 		const mapHuaweiItem = (r: any) => {
 			const ct = Number(r?.collectTime);
 			const map = r?.dataItemMap ?? {};
@@ -221,48 +217,54 @@ import { getCachedPlantKpi } from '../services/huaweiKpiCache';
 		let actualDaily: Array<{ date: string; irradiation: number | null; production: number | null; pr: number | null }> = [];
 		let actualByYear: Array<{ year: number; irradiation: number | null; production: number | null; pr: number | null }> = [];
 
-		// Huawei decides the window by collectTime.
-		// Fallback logic so FE can call with either collectTime or year/endDate.
 		const resolveCollectTime = (): number => {
 			if (collectTimeFromQuery != null && Number.isFinite(collectTimeFromQuery)) return collectTimeFromQuery;
-
 			if (granularity === 'day') {
 				const endDate = endDateIso ? new Date(endDateIso) : new Date();
 				if (!Number.isNaN(endDate.getTime())) return endDate.getTime();
 				return Date.now();
 			}
-
 			const y = Number.isFinite(year as any) ? (year as number) : new Date().getFullYear();
-			// noon helps avoid timezone boundary weirdness
 			return new Date(y, 11, 31, 12, 0, 0, 0).getTime();
 		};
 
 		try {
-			const collectTime = resolveCollectTime();
+			const y = Number.isFinite(year as any) ? (year as number) : new Date().getFullYear();
 
 			if (granularity === 'month') {
-				const raw: any = await getCachedPlantKpi({
-					endpoint: '/thirdData/getKpiStationMonth',
-					stationCodes: site.plantCode,
-					collectTime,
+				// DB-first: read SiteMonthlyActual
+				const dbRows = await prisma.siteMonthlyActual.findMany({
+					where: { siteId, year: y },
+					select: { month: true, irradiation: true, production: true, pr: true },
 				});
-
-				const rows: any[] = Array.isArray(raw?.data) ? raw.data : [];
-				for (const r of rows) {
-					const x = mapHuaweiItem(r);
-					if (!Number.isFinite(x.ct)) continue;
-					const m = new Date(x.ct).getMonth() + 1;
-					actualByMonth.set(m, { irradiation: x.irradiation, production: x.production, pr: x.pr });
+				if (dbRows.length > 0) {
+					for (const r of dbRows) {
+						actualByMonth.set(r.month, { irradiation: r.irradiation, production: r.production, pr: r.pr });
+					}
+				} else {
+					// Fallback to Huawei
+					const raw: any = await getCachedPlantKpi({
+						endpoint: '/thirdData/getKpiStationMonth',
+						stationCodes: site.plantCode,
+						collectTime: resolveCollectTime(),
+					});
+					const rows: any[] = Array.isArray(raw?.data) ? raw.data : [];
+					for (const r of rows) {
+						const x = mapHuaweiItem(r);
+						if (!Number.isFinite(x.ct)) continue;
+						const m = new Date(x.ct).getMonth() + 1;
+						actualByMonth.set(m, { irradiation: x.irradiation, production: x.production, pr: x.pr });
+					}
 				}
 			}
 
 			if (granularity === 'day') {
+				// No DB table for daily KPI — always Huawei
 				const raw: any = await getCachedPlantKpi({
 					endpoint: '/thirdData/getKpiStationDay',
 					stationCodes: site.plantCode,
-					collectTime,
+					collectTime: resolveCollectTime(),
 				});
-
 				const rows: any[] = Array.isArray(raw?.data) ? raw.data : [];
 				actualDaily = rows
 					.map((r) => {
@@ -275,28 +277,55 @@ import { getCachedPlantKpi } from '../services/huaweiKpiCache';
 			}
 
 			if (granularity === 'year') {
-				const raw: any = await getCachedPlantKpi({
-					endpoint: '/thirdData/getKpiStationYear',
-					stationCodes: site.plantCode,
-					collectTime,
+				// DB-first: aggregate SiteMonthlyActual by year
+				const dbRows = await prisma.siteMonthlyActual.findMany({
+					where: { siteId },
+					select: { year: true, irradiation: true, production: true, pr: true },
 				});
-
-				const rows: any[] = Array.isArray(raw?.data) ? raw.data : [];
-				actualByYear = rows
-					.map((r) => {
-						const x = mapHuaweiItem(r);
-						if (!Number.isFinite(x.ct)) return null;
-						return {
-							year: new Date(x.ct).getFullYear(),
-							irradiation: x.irradiation,
-							production: x.production,
-							pr: x.pr,
-						};
-					})
-					.filter(Boolean) as any;
+				if (dbRows.length > 0) {
+					const byYr = new Map<number, typeof dbRows>();
+					for (const r of dbRows) {
+						let arr = byYr.get(r.year);
+						if (!arr) { arr = []; byYr.set(r.year, arr); }
+						arr.push(r);
+					}
+					actualByYear = Array.from(byYr.entries())
+						.sort(([a], [b]) => a - b)
+						.map(([yr, rows]) => {
+							const sum = (vals: Array<number | null>) => {
+								const nums = vals.filter((v): v is number => v != null);
+								return nums.length ? nums.reduce((a, b) => a + b, 0) : null;
+							};
+							const wAvg = (pairs: Array<{ v: number | null; w: number | null }>) => {
+								let num = 0, den = 0;
+								for (const p of pairs) { if (p.v != null && p.w != null) { num += p.v * p.w; den += p.w; } }
+								return den === 0 ? null : num / den;
+							};
+							return {
+								year: yr,
+								irradiation: sum(rows.map((r) => r.irradiation)),
+								production: sum(rows.map((r) => r.production)),
+								pr: wAvg(rows.map((r) => ({ v: r.pr, w: r.production }))),
+							};
+						});
+				} else {
+					// Fallback to Huawei
+					const raw: any = await getCachedPlantKpi({
+						endpoint: '/thirdData/getKpiStationYear',
+						stationCodes: site.plantCode,
+						collectTime: resolveCollectTime(),
+					});
+					const rows: any[] = Array.isArray(raw?.data) ? raw.data : [];
+					actualByYear = rows
+						.map((r) => {
+							const x = mapHuaweiItem(r);
+							if (!Number.isFinite(x.ct)) return null;
+							return { year: new Date(x.ct).getFullYear(), irradiation: x.irradiation, production: x.production, pr: x.pr };
+						})
+						.filter(Boolean) as any;
+				}
 			}
 		} catch (e: any) {
-			// If Huawei is rate-limited/unavailable, still return forecast so UI works.
 			console.warn('⚠️ /monitoring/pr: Huawei fetch failed:', e?.message ?? e);
 		}
 

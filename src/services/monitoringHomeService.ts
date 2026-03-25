@@ -3,6 +3,35 @@ import { hasKnownHuaweiStationInventory, isKnownHuaweiStationCode, pickOnDemandC
 import { getCachedPlantKpi } from './huaweiKpiCache';
 import { syncPlantOnDemand } from './syncService';
 
+// ── Timezone-aware date utilities ──
+// All date operations use this timezone so graphs work correctly on UTC servers.
+const HUAWEI_TZ = process.env.HUAWEI_SYNC_TIMEZONE ?? 'Asia/Bangkok';
+
+const _tzFmt = new Intl.DateTimeFormat('en-US', {
+  timeZone: HUAWEI_TZ,
+  year: 'numeric', month: 'numeric', day: 'numeric',
+  hour: 'numeric', minute: 'numeric', second: 'numeric',
+  hour12: false,
+});
+
+/** Extract year/month(0-based)/day/hour in the configured timezone */
+function tzParts(date: Date): { year: number; month: number; day: number; hour: number } {
+  const p = Object.fromEntries(_tzFmt.formatToParts(date).map((x) => [x.type, x.value]));
+  const h = Number(p.hour);
+  return { year: Number(p.year), month: Number(p.month) - 1, day: Number(p.day), hour: h === 24 ? 0 : h };
+}
+
+/** Create a Date from local parts in the configured timezone */
+function tzDate(year: number, month: number, day: number, hour = 0, min = 0, sec = 0): Date {
+  // Build a UTC date with the given parts, then adjust by the TZ offset
+  const utcGuess = new Date(Date.UTC(year, month, day, hour, min, sec));
+  const guessParts = tzParts(utcGuess);
+  // How far off is the guess from desired local time?
+  const guessLocal = Date.UTC(guessParts.year, guessParts.month, guessParts.day, guessParts.hour, 0, 0);
+  const desired = Date.UTC(year, month, day, hour, min, sec);
+  return new Date(utcGuess.getTime() + (desired - guessLocal));
+}
+
 const AUX_DEVICE_META_CACHE_TTL_MS = Number(process.env.HUAWEI_AUX_DEVICE_META_CACHE_TTL_MS ?? 6 * 60 * 60 * 1000);
 const AUX_DEVICE_REALTIME_CACHE_TTL_MS = Number(process.env.HUAWEI_AUX_DEVICE_REALTIME_CACHE_TTL_MS ?? 5 * 60 * 1000);
 const SITE_STALE_MS = Number(process.env.HUAWEI_ONDEMAND_SITE_STALE_MS ?? 5 * 60 * 1000);
@@ -97,64 +126,68 @@ function isFresh(lastSyncAt: Date | null | undefined, ttlMs: number): boolean {
 }
 
 function startOfDay(value: Date): Date {
-  const out = new Date(value);
-  out.setHours(0, 0, 0, 0);
-  return out;
+  const p = tzParts(value);
+  return tzDate(p.year, p.month, p.day, 0, 0, 0);
 }
 
 function startOfMonth(value: Date): Date {
-  return new Date(value.getFullYear(), value.getMonth(), 1, 0, 0, 0, 0);
+  const p = tzParts(value);
+  return tzDate(p.year, p.month, 1, 0, 0, 0);
 }
 
 function startOfYear(value: Date): Date {
-  return new Date(value.getFullYear(), 0, 1, 0, 0, 0, 0);
+  const p = tzParts(value);
+  return tzDate(p.year, 0, 1, 0, 0, 0);
 }
 
 function addHours(value: Date, hours: number): Date {
-  const out = new Date(value);
-  out.setHours(out.getHours() + hours);
-  return out;
+  return new Date(value.getTime() + hours * 3600_000);
 }
 
 function addDays(value: Date, days: number): Date {
-  const out = new Date(value);
-  out.setDate(out.getDate() + days);
-  return out;
+  return new Date(value.getTime() + days * 86400_000);
 }
 
 function addMonths(value: Date, months: number): Date {
-  return new Date(value.getFullYear(), value.getMonth() + months, 1, 0, 0, 0, 0);
+  const p = tzParts(value);
+  return tzDate(p.year, p.month + months, 1, 0, 0, 0);
 }
 
 function addYears(value: Date, years: number): Date {
-  return new Date(value.getFullYear() + years, 0, 1, 0, 0, 0, 0);
+  const p = tzParts(value);
+  return tzDate(p.year + years, 0, 1, 0, 0, 0);
 }
 
 function formatHourLabel(value: Date): string {
-  return `${String(value.getHours()).padStart(2, '0')}:00`;
+  const p = tzParts(value);
+  return `${String(p.hour).padStart(2, '0')}:00`;
 }
 
 function formatDayLabel(value: Date): string {
-  return `${String(value.getDate()).padStart(2, '0')}/${String(value.getMonth() + 1).padStart(2, '0')}`;
+  const p = tzParts(value);
+  return `${String(p.day).padStart(2, '0')}/${String(p.month + 1).padStart(2, '0')}`;
 }
 
 function formatMonthLabel(value: Date): string {
-  return `${String(value.getMonth() + 1).padStart(2, '0')}/${value.getFullYear()}`;
+  const p = tzParts(value);
+  return `${String(p.month + 1).padStart(2, '0')}/${p.year}`;
 }
 
 function parseRequestedAnchor(view: MonitoringView, raw?: string | null): Date {
   if (!raw) return new Date();
 
   if (view === 'day' && /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    return new Date(`${raw}T12:00:00`);
+    const [y, m, d] = raw.split('-').map(Number);
+    return tzDate(y, m - 1, d, 12, 0, 0);
   }
 
   if (view === 'month' && /^\d{4}-\d{2}$/.test(raw)) {
-    return new Date(`${raw}-15T12:00:00`);
+    const [y, m] = raw.split('-').map(Number);
+    return tzDate(y, m - 1, 15, 12, 0, 0);
   }
 
   if (view === 'year' && /^\d{4}$/.test(raw)) {
-    return new Date(`${raw}-06-15T12:00:00`);
+    return tzDate(Number(raw), 5, 15, 12, 0, 0);
   }
 
   const parsed = new Date(raw);
@@ -193,7 +226,7 @@ function withLabel(point: GraphPoint, view: MonitoringView): GraphPoint {
         ? formatDayLabel(date)
         : view === 'year'
           ? formatMonthLabel(date)
-          : String(date.getFullYear());
+          : String(tzParts(date).year);
 
   return { ...point, label };
 }
@@ -218,10 +251,11 @@ function buildDaySkeleton(start: Date): GraphPoint[] {
 }
 
 function bucketKey(view: MonitoringView, value: Date): string {
-  if (view === 'day') return `${value.getFullYear()}-${value.getMonth()}-${value.getDate()}-${value.getHours()}`;
-  if (view === 'month') return `${value.getFullYear()}-${value.getMonth()}-${value.getDate()}`;
-  if (view === 'year') return `${value.getFullYear()}-${value.getMonth()}`;
-  return `${value.getFullYear()}`;
+  const p = tzParts(value);
+  if (view === 'day') return `${p.year}-${p.month}-${p.day}-${p.hour}`;
+  if (view === 'month') return `${p.year}-${p.month}-${p.day}`;
+  if (view === 'year') return `${p.year}-${p.month}`;
+  return `${p.year}`;
 }
 
 async function getSiteOrThrow(siteId: number): Promise<SiteRecord> {
@@ -485,24 +519,24 @@ export async function getEnergyManagementSeries(siteId: number, opts?: { view?: 
   const site = await getSiteOrThrow(siteId);
   const view: MonitoringView = opts?.view ?? 'day';
   const anchor = parseRequestedAnchor(view, opts?.date ?? null);
+  const anchorTz = tzParts(anchor);
   let endpoint = '/thirdData/getKpiStationHour';
   let start = startOfDay(anchor);
   let end = addDays(start, 1);
-  let collectTime = new Date(start);
-  collectTime.setHours(12, 0, 0, 0);
+  let collectTime = tzDate(anchorTz.year, anchorTz.month, anchorTz.day, 12, 0, 0);
 
   if (view === 'month') {
     start = startOfMonth(anchor);
     end = addMonths(start, 1);
     endpoint = '/thirdData/getKpiStationDay';
-    collectTime = new Date(anchor.getFullYear(), anchor.getMonth(), 15, 12, 0, 0, 0);
+    collectTime = tzDate(anchorTz.year, anchorTz.month, 15, 12, 0, 0);
   }
 
   if (view === 'year') {
     start = startOfYear(anchor);
     end = addYears(start, 1);
     endpoint = '/thirdData/getKpiStationMonth';
-    collectTime = new Date(anchor.getFullYear(), 5, 15, 12, 0, 0, 0);
+    collectTime = tzDate(anchorTz.year, 5, 15, 12, 0, 0);
   }
 
   if (view === 'lifetime') {
@@ -510,22 +544,101 @@ export async function getEnergyManagementSeries(siteId: number, opts?: { view?: 
     start = startOfYear(baseline);
     end = addYears(startOfYear(anchor), 1);
     endpoint = '/thirdData/getKpiStationYear';
-    collectTime = new Date(anchor.getFullYear(), 5, 15, 12, 0, 0, 0);
+    collectTime = tzDate(anchorTz.year, 5, 15, 12, 0, 0);
   }
 
-  const response: any = await getCachedPlantKpi({
-    endpoint,
-    stationCodes: site.plantCode,
-    collectTime: collectTime.getTime(),
-  });
+  // ── DB-first path for year/lifetime views (SiteMonthlyActual) ──
+  let mapped: GraphPoint[] = [];
+  let dataSource: 'db' | 'huawei' = 'huawei';
+  let huaweiFailCode: number | null = null;
+  let huaweiRowCount = 0;
 
-  const failCode = Number(response?.failCode);
-  if (Number.isFinite(failCode) && failCode !== 0) {
-    console.warn(`⚠️ [EnergyManagement] Huawei ${endpoint} failCode=${failCode} for station ${site.plantCode}`);
+  if (view === 'year' || view === 'lifetime') {
+    const startTz = tzParts(start);
+    const endTz = tzParts(end);
+    const years = Array.from(
+      { length: endTz.year - startTz.year + 1 },
+      (_, i) => startTz.year + i,
+    );
+    const dbRows = await prisma.siteMonthlyActual.findMany({
+      where: { siteId, year: { in: years } },
+      orderBy: [{ year: 'asc' }, { month: 'asc' }],
+    });
+
+    if (dbRows.length > 0) {
+      dataSource = 'db';
+      if (view === 'year') {
+        mapped = dbRows
+          .filter((r) => r.year === startTz.year)
+          .map((r): GraphPoint => {
+            const ts = tzDate(r.year, r.month - 1, 15, 12, 0, 0);
+            return {
+              timestamp: toIso(ts),
+              label: '',
+              pvOutput: r.production != null ? Number(r.production.toFixed(3)) : null,
+              powerOfGrid: null,
+              gridImport: r.gridImport != null ? Number(r.gridImport.toFixed(3)) : null,
+              gridExport: r.gridExport != null ? Number(r.gridExport.toFixed(3)) : null,
+              consumptionPower: r.consumption != null ? Number(r.consumption.toFixed(3)) : null,
+              consumedFromPv: r.selfProvide != null ? Number(r.selfProvide.toFixed(3)) : null,
+              batteryCharge: null,
+              batteryDischarge: null,
+              irradiance: r.irradiation != null ? Number(r.irradiation.toFixed(3)) : null,
+            };
+          });
+      } else {
+        // lifetime: aggregate by year
+        const byYear = new Map<number, typeof dbRows>();
+        for (const r of dbRows) {
+          let arr = byYear.get(r.year);
+          if (!arr) { arr = []; byYear.set(r.year, arr); }
+          arr.push(r);
+        }
+        mapped = Array.from(byYear.entries())
+          .sort(([a], [b]) => a - b)
+          .map(([yr, rows]): GraphPoint => {
+            const sum = (fn: (r: typeof rows[0]) => number | null) => {
+              const nums = rows.map(fn).filter((v): v is number => v != null);
+              return nums.length ? Number(nums.reduce((a, b) => a + b, 0).toFixed(3)) : null;
+            };
+            const ts = tzDate(yr, 5, 15, 12, 0, 0);
+            return {
+              timestamp: toIso(ts),
+              label: '',
+              pvOutput: sum((r) => r.production),
+              powerOfGrid: null,
+              gridImport: sum((r) => r.gridImport),
+              gridExport: sum((r) => r.gridExport),
+              consumptionPower: sum((r) => r.consumption),
+              consumedFromPv: sum((r) => r.selfProvide),
+              batteryCharge: null,
+              batteryDischarge: null,
+              irradiance: sum((r) => r.irradiation),
+            };
+          });
+      }
+    }
   }
 
-  const rawRows: any[] = Array.isArray(response?.data) ? response.data : [];
-  const mapped = rawRows.map(mapGraphPoint).filter(Boolean) as GraphPoint[];
+  // Fallback to Huawei API for day/month views or if DB had no data
+  if (mapped.length === 0) {
+    dataSource = 'huawei';
+    const response: any = await getCachedPlantKpi({
+      endpoint,
+      stationCodes: site.plantCode,
+      collectTime: collectTime.getTime(),
+    });
+
+    const failCode = Number(response?.failCode);
+    huaweiFailCode = Number.isFinite(failCode) ? failCode : null;
+    if (Number.isFinite(failCode) && failCode !== 0) {
+      console.warn(`⚠️ [EnergyManagement] Huawei ${endpoint} failCode=${failCode} for station ${site.plantCode}`);
+    }
+
+    const rawRows: any[] = Array.isArray(response?.data) ? response.data : [];
+    huaweiRowCount = rawRows.length;
+    mapped = rawRows.map(mapGraphPoint).filter(Boolean) as GraphPoint[];
+  }
 
   let points: GraphPoint[];
   if (view === 'day') {
@@ -561,8 +674,9 @@ export async function getEnergyManagementSeries(siteId: number, opts?: { view?: 
     },
     points,
     _debug: {
-      huaweiFailCode: Number.isFinite(Number(response?.failCode)) ? Number(response.failCode) : null,
-      huaweiRowCount: rawRows.length,
+      dataSource,
+      huaweiFailCode,
+      huaweiRowCount,
       mappedPointCount: mapped.length,
     },
   };
