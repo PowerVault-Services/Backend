@@ -9,3 +9,11 @@ node_modules
 dist
 
 /docs
+
+# macOS resource fork / metadata files
+._*
+.DS_Store
+**/.DS_Store
+
+# Windows thumbnails
+Thumbs.db

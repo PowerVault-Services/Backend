@@ -17,17 +17,28 @@ Backend นี้เป็น Express + Prisma + PostgreSQL และมี API 
 
 ```bash
 # 1. ขอ .env จากทีม (มี cloud DB IP และ credentials)
-# 2. ติดตั้ง dependencies
+# 2. ติดตั้ง dependencies + generate Prisma client
 npm install
 
-# 3. run dev
+# 3. run dev (จะ prisma generate อัตโนมัติก่อน start)
 npm run dev
 ```
 
 Default server: `http://localhost:3000`
 
-> **Troubleshooting**: ถ้า `npm install` แล้ว error เรื่อง Prisma ให้รัน `npx prisma generate` อีกครั้ง
-> ถ้าใช้ macOS แล้ว puppeteer error ให้รัน `npx puppeteer browsers install chrome`
+### อัพเดทโค้ดใหม่ (git pull)
+
+```bash
+git pull
+npm install      # จะรัน prisma generate อัตโนมัติ (postinstall)
+npm run dev      # จะรัน prisma generate อีกรอบก่อน start (predev)
+```
+
+> **หมายเหตุ**: ไม่จำเป็นต้องลบ `node_modules` แล้วลงใหม่ — Prisma จะ generate engine binary ให้ถูก platform (Windows/macOS/Linux) อัตโนมัติ
+
+> **Troubleshooting**:
+> - ถ้า Prisma error ให้รัน `npx prisma generate` อีกครั้ง
+> - ถ้าใช้ macOS แล้ว puppeteer error ให้รัน `npx puppeteer browsers install chrome`
 
 ---
 
