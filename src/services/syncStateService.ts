@@ -4,7 +4,7 @@ import path from 'path';
 import { projectRoot } from '../config/runtimePaths';
 import prisma from '../config/prisma';
 
-export type SyncJobName = 'siteRealtime' | 'device' | 'alarm';
+export type SyncJobName = 'siteRealtime' | 'device' | 'alarm' | 'dailyKpi';
 export type SyncStationKind = 'siteRealtime' | 'device' | 'alarm';
 
 type JobState = {
@@ -26,7 +26,8 @@ type SyncStateFile = {
 };
 
 const MAX_STATION_HISTORY = Math.max(5000, Number(process.env.HUAWEI_SYNC_STATE_MAX_STATIONS ?? 20000));
-const JOB_NAMES: SyncJobName[] = ['siteRealtime', 'device', 'alarm'];
+const JOB_NAMES: SyncJobName[] = ['siteRealtime', 'device', 'alarm', 'dailyKpi'];
+const STATION_KINDS: SyncStationKind[] = ['siteRealtime', 'device', 'alarm'];
 
 function createEmptyJobState(): JobState {
   return {
@@ -49,6 +50,7 @@ function createEmptyState(): SyncStateFile {
       siteRealtime: createEmptyJobState(),
       device: createEmptyJobState(),
       alarm: createEmptyJobState(),
+      dailyKpi: createEmptyJobState(),
     },
     stations: {
       siteRealtime: {},
@@ -107,17 +109,17 @@ async function hydrateFromDb() {
                 merged.jobs[jobName].running = false;
               }
 
-              for (const kind of JOB_NAMES) {
+              for (const kind of STATION_KINDS) {
                 const existing = ((parsed.stations ?? {})[kind] ?? {}) as Record<string, string>;
                 merged.stations[kind] = { ...existing };
               }
 
               state = merged;
-              for (const kind of JOB_NAMES) pruneStationHistory(kind);
+              for (const kind of STATION_KINDS) pruneStationHistory(kind);
 
               // Persist migrated state to DB immediately
               for (const jobName of JOB_NAMES) dirtyJobs.add(jobName);
-              for (const kind of JOB_NAMES) {
+              for (const kind of STATION_KINDS) {
                 for (const stationCode of Object.keys(state.stations[kind])) {
                   dirtyStations.add(`${kind}:${stationCode}`);
                 }
@@ -163,7 +165,7 @@ async function hydrateFromDb() {
     }
 
     state = merged;
-    for (const kind of JOB_NAMES) pruneStationHistory(kind);
+    for (const kind of STATION_KINDS) pruneStationHistory(kind);
   } catch (error: any) {
     console.warn('⚠️ Unable to hydrate Huawei sync state from DB:', error?.message ?? error);
   }

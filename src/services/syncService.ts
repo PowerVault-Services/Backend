@@ -506,6 +506,36 @@ async function ensurePlantDeviceMetadata(site: SiteLite, client: HuaweiService, 
     );
   }
 
+  // Persist aux devices (EMI, meter, battery, ESS, power sensor) to DB
+  const AUX_DEV_TYPE_IDS = new Set([10, 17, 39, 41, 47]);
+  const auxDevices = devices.filter((d) => AUX_DEV_TYPE_IDS.has(Number(d.devTypeId)));
+  if (auxDevices.length > 0) {
+    try {
+      await prisma.$transaction(
+        auxDevices.map((d) =>
+          (prisma as any).auxDevice.upsert({
+            where: { siteId_huaweiDevId: { siteId: site.id, huaweiDevId: String(d.id) } },
+            create: {
+              siteId: site.id,
+              plantCode: site.plantCode,
+              huaweiDevId: String(d.id),
+              huaweiDevTypeId: Number(d.devTypeId),
+              devName: (d as any).devName ?? null,
+              model: (d as any).invType ?? (d as any).model ?? null,
+            },
+            update: {
+              huaweiDevTypeId: Number(d.devTypeId),
+              devName: (d as any).devName ?? null,
+              model: (d as any).invType ?? (d as any).model ?? null,
+            },
+          }),
+        ),
+      );
+    } catch (err: any) {
+      log.warn('Failed to persist aux devices', { plantCode: site.plantCode, error: err?.message ?? err });
+    }
+  }
+
   await prisma.site.update({
     where: { id: site.id },
     data: { deviceMetaSyncedAt: new Date() },
@@ -513,7 +543,7 @@ async function ensurePlantDeviceMetadata(site: SiteLite, client: HuaweiService, 
 
   registerStationAccess(site.plantCode, client);
 
-  log.debug('Refreshed device metadata', { plantCode: site.plantCode, client: describeHuaweiClient(client), inverterCount: inverterTargets.length });
+  log.debug('Refreshed device metadata', { plantCode: site.plantCode, client: describeHuaweiClient(client), inverterCount: inverterTargets.length, auxDeviceCount: auxDevices.length });
 
   return inverterTargets.length > 0 ? inverterTargets : cached;
 }
@@ -1233,6 +1263,132 @@ export async function getFleetSyncCoverageSnapshot() {
     }),
     sample,
   };
+}
+
+// ── Daily KPI Sync (populates SiteDailyKpi for month view + PR day) ──
+
+const DAILY_KPI_BATCH_SIZE = Math.min(100, Math.max(1, Number(process.env.HUAWEI_DAILY_KPI_BATCH_SIZE ?? 100)));
+
+export async function syncDailyKpiTick() {
+  log.info('Starting Daily KPI Sync');
+  try {
+    const stationCodes = await refreshStationsIfNeeded();
+    const plantCodes = stationCodes.filter((code): code is string => !!code);
+    if (plantCodes.length === 0) {
+      log.warn('No sites for daily KPI sync');
+      return;
+    }
+
+    // Get siteId mapping
+    const sites = await prisma.site.findMany({
+      where: { plantCode: { in: plantCodes } },
+      select: { id: true, plantCode: true },
+    });
+    const siteIdByPlantCode = new Map(sites.map((s) => [s.plantCode, s.id]));
+
+    // Sync current month's daily KPI
+    const now = new Date();
+    const HUAWEI_TZ = process.env.HUAWEI_SYNC_TIMEZONE ?? 'Asia/Bangkok';
+    const tzFmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: HUAWEI_TZ,
+      year: 'numeric', month: 'numeric', day: 'numeric',
+      hour12: false,
+    });
+    const parts = Object.fromEntries(tzFmt.formatToParts(now).map((x) => [x.type, x.value]));
+    const year = Number(parts.year);
+    const month = Number(parts.month);
+    const collectTime = new Date(year, month - 1, 15, 12, 0, 0, 0).getTime();
+
+    let totalUpserted = 0;
+    const batches = chunk(plantCodes, DAILY_KPI_BATCH_SIZE);
+    const clients = getPreferredClientOrderForPurpose('siteRealtime', 0);
+
+    for (let bi = 0; bi < batches.length; bi++) {
+      const batch = batches[bi];
+      const stationCodesStr = batch.join(',');
+      const client = clients[bi % clients.length];
+
+      try {
+        const res: any = await client.postRaw('/thirdData/getKpiStationDay', {
+          stationCodes: stationCodesStr,
+          collectTime,
+        });
+
+        if (!res?.success && res?.failCode) {
+          handleFailCode(client, res.failCode, 'getKpiStationDay(dailySync)');
+          continue;
+        }
+
+        const rows: any[] = Array.isArray(res?.data) ? res.data : [];
+        const upserts: Promise<any>[] = [];
+
+        for (const row of rows) {
+          const plantCode = String(row?.stationCode ?? '').trim();
+          const siteId = siteIdByPlantCode.get(plantCode);
+          if (!siteId) continue;
+
+          const ct = parseNum(row?.collectTime);
+          if (ct == null) continue;
+
+          const map = (row?.dataItemMap ?? {}) as Record<string, unknown>;
+          const dateObj = new Date(ct);
+          // Normalize to midnight for unique key
+          const dateKey = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate(), 0, 0, 0, 0);
+
+          upserts.push(
+            (prisma as any).siteDailyKpi.upsert({
+              where: { siteId_date: { siteId, date: dateKey } },
+              create: {
+                siteId,
+                plantCode,
+                date: dateKey,
+                collectTime: ct,
+                production: parseNum(map.PVYield) ?? parseNum(map.inverterYield) ?? parseNum(map.inverter_power),
+                irradiation: parseNum(map.radiation_intensity),
+                gridImport: parseNum(map.buyPower),
+                gridExport: parseNum(map.ongrid_power),
+                consumption: parseNum(map.use_power),
+                revenue: parseNum(map.power_profit),
+                selfProvide: parseNum(map.selfProvide) ?? parseNum(map.selfUsePower),
+                batteryCharge: parseNum(map.chargeCap),
+                batteryDischarge: parseNum(map.dischargeCap),
+                moduleTempC: parseNum(map.module_temp) ?? parseNum(map.temperature),
+                downTimeClientHours: parseNum(map.down_time_client) ?? parseNum(map.downTimeClient),
+                pr: parseNum(map.performance_ratio),
+              },
+              update: {
+                collectTime: ct,
+                production: parseNum(map.PVYield) ?? parseNum(map.inverterYield) ?? parseNum(map.inverter_power),
+                irradiation: parseNum(map.radiation_intensity),
+                gridImport: parseNum(map.buyPower),
+                gridExport: parseNum(map.ongrid_power),
+                consumption: parseNum(map.use_power),
+                revenue: parseNum(map.power_profit),
+                selfProvide: parseNum(map.selfProvide) ?? parseNum(map.selfUsePower),
+                batteryCharge: parseNum(map.chargeCap),
+                batteryDischarge: parseNum(map.dischargeCap),
+                moduleTempC: parseNum(map.module_temp) ?? parseNum(map.temperature),
+                downTimeClientHours: parseNum(map.down_time_client) ?? parseNum(map.downTimeClient),
+                pr: parseNum(map.performance_ratio),
+              },
+            }),
+          );
+        }
+
+        if (upserts.length > 0) {
+          await Promise.all(upserts);
+          totalUpserted += upserts.length;
+        }
+      } catch (err: any) {
+        log.warn('Daily KPI batch failed', { batch: bi, error: err?.message ?? err });
+      }
+    }
+
+    log.info('Daily KPI Sync complete', { totalUpserted, batches: batches.length, sites: plantCodes.length });
+  } catch (err: any) {
+    log.error('Daily KPI Sync tick failed', { error: err?.message ?? err });
+    throw err;
+  }
 }
 
 // ── Exported for unit testing only ──

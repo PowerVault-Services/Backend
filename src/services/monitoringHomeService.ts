@@ -310,11 +310,36 @@ async function maybeRefreshSiteRealtime(site: SiteRecord, refreshMode: 'auto' | 
 }
 
 async function getAuxDevices(site: SiteRecord): Promise<HuaweiDeviceLite[]> {
+  // 1. In-memory cache (fastest)
   const cached = auxDeviceMetaCache.get(site.plantCode);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.value;
   }
 
+  // 2. DB-first: read from AuxDevice table
+  try {
+    const dbDevices = await (prisma as any).auxDevice.findMany({
+      where: { plantCode: site.plantCode },
+      select: { huaweiDevId: true, huaweiDevTypeId: true, devName: true, model: true },
+    });
+    if (dbDevices.length > 0) {
+      const devices: HuaweiDeviceLite[] = dbDevices.map((d: any) => ({
+        id: d.huaweiDevId,
+        devTypeId: d.huaweiDevTypeId,
+        devName: d.devName,
+        model: d.model,
+      }));
+      auxDeviceMetaCache.set(site.plantCode, {
+        expiresAt: Date.now() + AUX_DEVICE_META_CACHE_TTL_MS,
+        value: devices,
+      });
+      return devices;
+    }
+  } catch (err: any) {
+    console.warn(`⚠️ [HomeRealtime] DB read error for aux devices plant=${site.plantCode}:`, err?.message ?? err);
+  }
+
+  // 3. Fallback: Huawei API
   if (hasKnownHuaweiStationInventory() && !isKnownHuaweiStationCode(site.plantCode)) {
     return [];
   }
@@ -332,8 +357,12 @@ async function getAuxDevices(site: SiteRecord): Promise<HuaweiDeviceLite[]> {
         expiresAt: Date.now() + AUX_DEVICE_META_CACHE_TTL_MS,
         value: devices,
       });
+
+      // Persist to DB (fire-and-forget)
+      persistAuxDevicesToDb(site, devices).catch((e) =>
+        console.warn(`⚠️ [HomeRealtime] Failed to persist aux devices for plant=${site.plantCode}:`, e?.message ?? e),
+      );
     } else if (cached) {
-      // API returned empty/failed but we have stale cache — keep using it
       console.warn(`⚠️ [HomeRealtime] getDevList returned empty for plant=${site.plantCode}, using stale device cache`);
       return cached.value;
     }
@@ -341,10 +370,34 @@ async function getAuxDevices(site: SiteRecord): Promise<HuaweiDeviceLite[]> {
     return devices;
   } catch (err: any) {
     console.warn(`⚠️ [HomeRealtime] getDevList error for plant=${site.plantCode}:`, err?.message ?? err);
-    // Return stale cache on error
     if (cached) return cached.value;
     return [];
   }
+}
+
+async function persistAuxDevicesToDb(site: SiteRecord, devices: HuaweiDeviceLite[]): Promise<void> {
+  if (devices.length === 0) return;
+
+  await prisma.$transaction(
+    devices.map((d) =>
+      (prisma as any).auxDevice.upsert({
+        where: { siteId_huaweiDevId: { siteId: site.id, huaweiDevId: String(d.id) } },
+        create: {
+          siteId: site.id,
+          plantCode: site.plantCode,
+          huaweiDevId: String(d.id),
+          huaweiDevTypeId: Number(d.devTypeId),
+          devName: d.devName ?? null,
+          model: d.model ?? null,
+        },
+        update: {
+          huaweiDevTypeId: Number(d.devTypeId),
+          devName: d.devName ?? null,
+          model: d.model ?? null,
+        },
+      }),
+    ),
+  );
 }
 
 async function fetchAuxRealtimeInner(site: SiteRecord, refreshMode: 'auto' | 'force'): Promise<AuxRealtimeBundle> {
@@ -620,7 +673,38 @@ export async function getEnergyManagementSeries(siteId: number, opts?: { view?: 
     }
   }
 
-  // Fallback to Huawei API for day/month views or if DB had no data
+  // ── DB-first path for month view (SiteDailyKpi) ──
+  if (view === 'month' && mapped.length === 0) {
+    const dbRows: any[] = await (prisma as any).siteDailyKpi.findMany({
+      where: {
+        siteId,
+        date: { gte: start, lt: end },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    if (dbRows.length > 0) {
+      dataSource = 'db';
+      mapped = dbRows.map((r: any): GraphPoint => {
+        const ts = new Date(r.date);
+        return {
+          timestamp: toIso(ts),
+          label: '',
+          pvOutput: roundValue(r.production, 3),
+          powerOfGrid: null,
+          gridImport: roundValue(r.gridImport, 3),
+          gridExport: roundValue(r.gridExport, 3),
+          consumptionPower: roundValue(r.consumption, 3),
+          consumedFromPv: roundValue(r.selfProvide, 3),
+          batteryCharge: roundValue(r.batteryCharge, 3),
+          batteryDischarge: roundValue(r.batteryDischarge, 3),
+          irradiance: roundValue(r.irradiation, 3),
+        };
+      });
+    }
+  }
+
+  // Fallback to Huawei API for day views or if DB had no data
   if (mapped.length === 0) {
     dataSource = 'huawei';
     const response: any = await getCachedPlantKpi({

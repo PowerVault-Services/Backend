@@ -339,6 +339,46 @@ export async function fetchSiteDailyActualMap(siteId: number, month: MonthRangeI
   const site = await prisma.site.findUnique({ where: { id: siteId }, select: { plantCode: true } });
   if (!site?.plantCode) return new Map();
 
+  // DB-first: try SiteDailyKpi
+  try {
+    const startDate = new Date(month.year, month.month - 1, 1, 0, 0, 0, 0);
+    const endDate = new Date(month.year, month.month, 1, 0, 0, 0, 0);
+    const dbRows: any[] = await (prisma as any).siteDailyKpi.findMany({
+      where: { siteId, date: { gte: startDate, lt: endDate } },
+      orderBy: { date: 'asc' },
+    });
+
+    if (dbRows.length > 0) {
+      const map = new Map<number, DailyActualRow>();
+      for (const r of dbRows) {
+        const dateObj = new Date(r.date);
+        const day = dateObj.getDate();
+        map.set(day, {
+          year: month.year,
+          month: month.month,
+          key: month.key,
+          collectTime: r.collectTime ?? dateObj.getTime(),
+          irradiation: r.irradiation,
+          production: r.production,
+          pr: r.pr,
+          gridImport: r.gridImport,
+          gridExport: r.gridExport,
+          consumption: r.consumption,
+          revenue: r.revenue,
+          selfProvide: r.selfProvide,
+          day,
+          date: dateObj.toISOString().slice(0, 10),
+          moduleTempC: r.moduleTempC,
+          downTimeClientHours: r.downTimeClientHours,
+        });
+      }
+      return map;
+    }
+  } catch (err: any) {
+    console.warn(`⚠️ [PR] DB read error for daily KPI siteId=${siteId}:`, err?.message ?? err);
+  }
+
+  // Fallback: Huawei API
   try {
     const raw = await huaweiOnDemand.postRaw<any>('/thirdData/getKpiStationDay', {
       stationCodes: site.plantCode,

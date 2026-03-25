@@ -144,6 +144,8 @@ model Site {
   forecastMonthly       SiteForecastMonthly[]
   forecastYearly        SiteForecastYearly[]
   monthlyActuals        SiteMonthlyActual[]
+  dailyKpis             SiteDailyKpi[]
+  auxDevices            AuxDevice[]
   otherRows             SiteOtherRow[]
   serviceEntries        ServiceEntry[]
 
@@ -682,6 +684,61 @@ model ServiceEntry {
   updatedAt DateTime @updatedAt
 
   @@index([siteId, job])
+}
+
+// =======================
+// SITE DAILY KPI (DB-first for day/month graph + PR day)
+// =======================
+
+model SiteDailyKpi {
+  id        Int  @id @default(autoincrement())
+  siteId    Int
+  site      Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  plantCode String
+
+  date        DateTime // midnight of the day (UTC-normalized)
+  collectTime Float?   // original Huawei collectTime ms
+
+  production     Float? // PVYield / inverterYield / inverter_power
+  irradiation    Float? // radiation_intensity
+  gridImport     Float? // buyPower
+  gridExport     Float? // ongrid_power
+  consumption    Float? // use_power
+  revenue        Float? // power_profit
+  selfProvide    Float? // selfProvide / selfUsePower
+  batteryCharge  Float? // chargeCap
+  batteryDischarge Float? // dischargeCap
+  moduleTempC    Float? // module_temp / temperature
+  downTimeClientHours Float? // down_time_client / downTimeClient
+  pr             Float? // performance_ratio
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, date])
+  @@index([plantCode, date])
+}
+
+// =======================
+// AUX DEVICE (EMI, meter, battery — DB-first for home realtime)
+// =======================
+
+model AuxDevice {
+  id        Int    @id @default(autoincrement())
+  siteId    Int
+  site      Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  plantCode String
+
+  huaweiDevId     String
+  huaweiDevTypeId Int
+  devName         String?
+  model           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, huaweiDevId])
+  @@index([plantCode, huaweiDevTypeId])
 }
 
 // =======================
