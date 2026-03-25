@@ -9,6 +9,8 @@
     "dev": "nodemon",
     "build": "tsc",
     "start": "node dist/app.js",
+    "start:api": "DISABLE_CRON=1 node dist/app.js",
+    "start:worker": "node dist/worker.js",
     "test": "jest --forceExit --detectOpenHandles",
     "setup": "cp -n .env.example .env 2>/dev/null; npm install; npx prisma migrate dev"
   },

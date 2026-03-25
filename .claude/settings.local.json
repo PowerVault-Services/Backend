@@ -58,7 +58,11 @@
       "Bash(grep -rn \"export\\\\|interface\\\\|type\" /d/Backend/src/types/*.ts)",
       "Bash(grep -rn \"Plant\\\\|plant\" /d/Backend/src/routes/*.ts)",
       "Bash(ls d:/Backend/package.json d:/Backend/.env* d:/Backend/docker-compose* d:/Backend/Dockerfile*)",
-      "Bash(ls d:/Backend/.env*)"
+      "Bash(ls d:/Backend/.env*)",
+      "Read(//d /**)",
+      "Bash(grep -r \"type.*4\\\\|job.*4\\\\|INSPECTION.*4\" --include=*.ts --include=*.prisma)",
+      "Bash(grep -l \"SiteLayout\\\\|layouts\" /d/Backend/prisma/migrations/*/migration.sql)",
+      "Bash(find /d/Backend -type f \\\\\\(-name *.test.ts -o -name *.spec.ts -o -name *test* \\\\\\))"
     ]
   }
 }

@@ -160,7 +160,7 @@ export async function generateServiceReportPdf(data: {
     .map((img) => renderFullPageImage('', img.filePath, 'service', false))
     .join('');
 
-  const evidencePages = renderImageGridSection('รูปภาพประกอบการปฏิบัติงาน', data.evidencePhotos ?? [], 4, 'photo-grid-2', 'service');
+  const evidencePages = renderImageGridSection('PowerVault Service Center', data.evidencePhotos ?? [], 4, 'photo-grid-2', 'service');
 
   const html = wrapHtml([serviceReportPages || formPage, evidencePages].join(''));
   await renderPdfToFile(html, absPath);

@@ -346,3 +346,282 @@ Single process + แก้ปัญหาข้างบน เพียงพ�
 - Device sync เป็น bottleneck เพราะยิง per-site (getDevList + getDevRealKpi) ต่างจาก site realtime ที่ยิง batch ได้
 - getStationClientCandidates มี batchIndex parameter พร้อมใช้แล้ว — ระบบ rotation ทำงานด้วย rotate() function ใน huaweiPool.ts
 - Alarm sync ใช้ batchIndex กระจาย account อยู่แล้ว (alarmSyncService.ts) — เป็นตัวอย่างที่ดี
+
+---
+
+# Deployment Architecture & Service Split (มี.ค. 2025)
+
+## CE Cloud Infrastructure
+
+Deploy บน CE Cloud (console.cloud.ce.kmitl.ac.th) — university cloud ของภาค CE, KMITL
+- VPN ต้องเปิดก่อนถึง SSH ได้ (OpenVPN, ce-cloud-vpn.ovpn)
+- Instance flavor: small (RAM/CPU จำกัด)
+- OS: Ubuntu 22.04, bare metal Node.js + pm2 (ไม่ใช้ Docker บน production)
+
+### Instances ที่มีอยู่
+
+| Instance | Internal IP | หน้าที่ | สถานะ |
+|----------|-------------|---------|--------|
+| `postgres-db` | 10.240.68.192 | PostgreSQL database | มีแล้ว |
+| `minio-backend` | 10.240.68.52 | MinIO file storage | มีแล้ว |
+| `solar-admin-dev` | 10.240.68.20 | Frontend (NOT backend) | มีแล้ว |
+| `solar-api` | TBD | Express API server (DISABLE_CRON=1) | สร้างใหม่ |
+| `solar-worker` | TBD | Cron sync + Puppeteer + Email Worker | สร้างใหม่ |
+
+### Target Architecture
+
+```
+                                 ┌─────────────────┐
+  solar-admin-dev (Frontend) ───▶│    solar-api     │
+                                 │  Express API     │
+                                 │  (port 3000)     │
+                                 │  DISABLE_CRON=1  │
+                                 └──────┬───────────┘
+                                        │
+                    ┌───────────────┬────┴────────────┐
+                    ▼               ▼                  ▼
+             ┌────────────┐  ┌──────────┐  ┌───────────────┐
+             │ postgres-db │  │  minio-  │  │ solar-worker  │
+             │ PostgreSQL  │  │ backend  │  │               │
+             │ + Redis     │  │  MinIO   │  │ Huawei Sync   │
+             │             │  │          │  │ Puppeteer PDF  │
+             │             │  │          │  │ Email Worker   │
+             └────────────┘  └──────────┘  └───────────────┘
+```
+
+---
+
+## สิ่งที่ทำไปแล้ว (Phase 1: Basic Split)
+
+### 1. สร้าง `src/worker.ts` — Worker entrypoint
+- Standalone process สำหรับ cron sync jobs
+- มี `/healthz`, `/readyz` endpoint สำหรับ monitoring
+- ไม่มี API routes — เบากว่า app.ts
+- Default port 3001 (ผ่าน `WORKER_PORT`)
+
+### 2. เพิ่ม npm scripts ใน `package.json`
+```bash
+npm run start          # รันทุกอย่างรวมกัน (เดิม)
+npm run start:api      # DISABLE_CRON=1 node dist/app.js (API only)
+npm run start:worker   # node dist/worker.js (cron only)
+```
+
+### 3. อัพเดท `docker-compose.yml`
+- เพิ่ม `api` service (port 3000, DISABLE_CRON=1)
+- เพิ่ม `worker` service (port 3001, worker.js)
+- ทั้งคู่ชี้ไปที่ postgres + minio เดิม
+
+### 4. อัพเดท `.env.example`
+- เพิ่ม comment อธิบาย deployment mode (DISABLE_CRON, WORKER_PORT)
+
+### สิ่งที่ยังไม่ได้ทำ (Phase 1)
+- `DISABLE_CRON=1` ใน app.ts ทำงานได้อยู่แล้ว (มีมาก่อน) แต่ API ยังเรียก `huaweiService.ensureLoggedIn()` ตอน startup + `/readyz` — ไม่จำเป็นสำหรับ API-only mode
+- Puppeteer + Email ยังถูกเรียกจาก API routes ตรง ๆ ยังไม่ได้ย้ายไป Worker
+
+---
+
+## แผนที่จะทำต่อ (Phase B: Redis + BullMQ Queue System)
+
+### เป้าหมาย
+ย้าย Puppeteer PDF generation + Email sending จาก API → Worker ผ่าน BullMQ job queue
+ให้ API เบา (รับ request → enqueue → return taskId ทันที) และ Worker ทำงานหนักแทน
+
+### สถานะปัจจุบันที่ต้องรู้ก่อน refactor
+
+Puppeteer ถูกเรียกจาก:
+- `cleaningController.generateReport` → `generateCleaningReportPdf()` จาก `reportService.ts`
+- `serviceController.generateReport` → `generateServiceReportPdf()` จาก `reportService.ts`
+
+Email (sendEmailNow) ถูกเรียกจาก:
+- `cleaningController.ts` → `sendStep2Email`, `sendStep5Email`
+- `serviceController.ts` → `sendStep2Email`, `sendStep5Email`
+- `inspectionController.ts` → `sendStep2Email`, `sendStep3Email`
+
+### Step-by-Step Implementation Plan
+
+#### Step 1: Dependencies + Redis Config
+- เพิ่ม `bullmq` + `ioredis` ใน `package.json`
+- สร้าง `src/config/redis.ts` — Redis connection factory
+- เพิ่มใน `src/config/env.ts`: `REDIS_HOST` (default localhost), `REDIS_PORT` (default 6379), `REDIS_PASSWORD`
+- อัพเดท `.env.example` เพิ่ม Redis section
+
+#### Step 2: Queue Definitions + Job Types
+- สร้าง `src/jobs/queues.ts` — 2 queues: `report-generation`, `email-sending`
+- สร้าง `src/jobs/types.ts` — TypeScript interfaces: `ReportJobData`, `EmailJobData`
+
+Queue config:
+- Report: attempts 2, exponential backoff 5s, keep completed 24h
+- Email: attempts 3, exponential backoff 3s, keep completed 24h
+
+#### Step 3: Worker Processors
+- สร้าง `src/jobs/processors/reportProcessor.ts`
+  - รับ `ReportJobData` → อ่าน DB → เรียก Puppeteer → save report → update DB
+  - ย้าย logic จาก `cleaningController.generateReport` + `serviceController.generateReport`
+- สร้าง `src/jobs/processors/emailProcessor.ts`
+  - รับ `EmailJobData` → resolve attachments → เรียก `sendEmailNow()` → update DB
+  - ย้าย logic จาก controllers ทั้ง 3 ตัว
+
+#### Step 4: Wire Processors เข้า Worker
+- แก้ `src/worker.ts` เพิ่ม BullMQ Worker instances:
+  - report-generation worker (concurrency: 1 — Puppeteer หนัก)
+  - email-sending worker (concurrency: 3)
+
+#### Step 5: Task Status Endpoint
+- สร้าง `src/routes/taskRoutes.ts` — `GET /api/tasks/:taskId?queue=report-generation`
+  - Return: `{ state, progress, result, failedReason }`
+  - state: waiting | active | completed | failed | delayed
+- Register ใน `src/app.ts`
+
+Frontend polling: หลังได้ taskId → poll ทุก 2-3 วินาที จนกว่า state === completed/failed
+
+#### Step 6: Refactor Controllers (งานหนักสุด — 8 functions)
+
+| Controller | Function | เปลี่ยนจาก | เป็น |
+|---|---|---|---|
+| cleaningController | `generateReport` | call Puppeteer ตรง | enqueue to report queue |
+| cleaningController | `sendStep2Email` | call sendEmailNow ตรง | enqueue to email queue |
+| cleaningController | `sendStep5Email` | call sendEmailNow ตรง | enqueue to email queue |
+| serviceController | `generateReport` | call Puppeteer ตรง | enqueue to report queue |
+| serviceController | `sendStep2Email` | call sendEmailNow ตรง | enqueue to email queue |
+| serviceController | `sendStep5Email` | call sendEmailNow ตรง | enqueue to email queue |
+| inspectionController | `sendStep2Email` | call sendEmailNow ตรง | enqueue to email queue |
+| inspectionController | `sendStep3Email` | call sendEmailNow ตรง | enqueue to email queue |
+
+Pattern การเปลี่ยน:
+```ts
+// Before (synchronous)
+const result = await generateCleaningReportPdf(data);
+res.json({ success: true, reportUrl: result.url });
+
+// After (async via queue)
+const task = await getReportQueue().add('generate', { jobId: id, jobType: 'cleaning' });
+res.json({ success: true, data: { taskId: task.id, status: 'queued' } });
+```
+
+#### Step 7: Fallback Flag
+- เพิ่ม env `USE_QUEUE` (default true)
+- ถ้า `USE_QUEUE=false` → run synchronous แบบเดิม (สำหรับ dev / Redis ล่ม)
+
+#### สิ่งที่ต้องระวัง
+- **Frontend ต้องเปลี่ยนด้วย** — ตอนนี้ frontend คาดว่าจะได้ reportUrl กลับทันที แต่แบบใหม่ได้ taskId แล้วต้อง poll
+- **Puppeteer บน worker instance** ต้องติดตั้ง `chromium-browser` (`sudo apt install -y chromium-browser`)
+- **Shared files** — ทั้ง API + Worker เข้าถึง MinIO ด้วย internal IP เดียวกัน (OK)
+- **Redis memory** — 128MB เพียงพอสำหรับ BullMQ metadata (job payloads เป็นแค่ IDs + text)
+
+---
+
+## CI/CD Pipeline Plan
+
+### สถานะปัจจุบัน
+- CI มีอยู่แล้ว: `.github/workflows/ci.yml` (build + test + type-check)
+- CD ยังไม่มี — push ไป GitHub ไม่มี auto deploy
+- CE Cloud ต้อง VPN → GitHub Actions runner ปกติ SSH เข้าไม่ได้
+
+### แผน: Self-hosted GitHub Actions Runner บน CE Cloud
+
+```
+push to main
+    │
+    ▼
+┌──────────────────────────────────┐
+│  GitHub Actions (cloud runner)    │
+│  1. npm ci                        │
+│  2. tsc --noEmit                  │
+│  3. npm test                      │
+│  4. npm run build                 │
+│  5. upload dist/ as artifact      │
+└───────────────┬──────────────────┘
+                │ artifact download
+     ┌──────────┼──────────┐
+     ▼                     ▼
+┌──────────┐       ┌─────────────┐
+│solar-api │       │solar-worker │
+│(runner:  │       │(runner:     │
+│ce-cloud) │       │ce-cloud-    │
+│          │       │worker)      │
+│npm ci    │       │npm ci       │
+│prisma    │       │pm2 restart  │
+│migrate   │       │solar-worker │
+│pm2 restart│      │             │
+│solar-api │       │             │
+└──────────┘       └─────────────┘
+```
+
+### ไฟล์ที่ต้องสร้าง
+- `.github/workflows/deploy.yml`
+  - Job 1 `build` (runs-on: ubuntu-latest): build + test + upload artifact
+  - Job 2 `deploy-api` (runs-on: [self-hosted, ce-cloud]): download artifact → npm ci --omit=dev → prisma migrate deploy → pm2 restart solar-api
+  - Job 3 `deploy-worker` (runs-on: [self-hosted, ce-cloud-worker]): download artifact → npm ci --omit=dev → pm2 restart solar-worker
+
+### Manual Setup ที่ต้องทำบน CE Cloud (ครั้งเดียว)
+
+1. **postgres-db instance** — ติดตั้ง Redis: ✅ ทำแล้ว (2026-03-25)
+   - Redis 6.x running on 10.240.68.192:6379
+   - bind 0.0.0.0, requirepass ตั้งแล้ว, maxmemory 128mb, appendonly yes
+   - Password: ตั้งไว้แล้ว (อยู่ใน .env ของแต่ละ instance)
+   - ยังไม่ได้ทดสอบ connect ข้าม instance (ต้องเช็คจาก solar-api/solar-worker)
+
+2. **solar-api instance** — ติดตั้ง self-hosted runner:
+   ```bash
+   # GitHub → Settings → Actions → Runners → New self-hosted runner
+   # Label: ce-cloud
+   # ติดตั้งเป็น systemd service: sudo ./svc.sh install && sudo ./svc.sh start
+   ```
+
+3. **solar-worker instance** — ติดตั้ง self-hosted runner + Chromium:
+   ```bash
+   # Label: ce-cloud-worker
+   sudo apt install -y chromium-browser
+   ```
+
+### Environment Variables บน CE Cloud
+
+solar-api:
+```
+PORT=3000
+DISABLE_CRON=1
+USE_QUEUE=true
+DATABASE_URL=postgresql://admin:xxx@10.240.68.192:5432/solar_db
+MINIO_ENDPOINT=http://10.240.68.52:9000
+REDIS_HOST=10.240.68.192
+REDIS_PORT=6379
+REDIS_PASSWORD=xxx
+```
+
+solar-worker:
+```
+WORKER_PORT=3001
+USE_QUEUE=true
+DATABASE_URL=postgresql://admin:xxx@10.240.68.192:5432/solar_db
+MINIO_ENDPOINT=http://10.240.68.52:9000
+REDIS_HOST=10.240.68.192
+REDIS_PORT=6379
+REDIS_PASSWORD=xxx
+HUAWEI_USER=xxx
+HUAWEI_PASSWORD=xxx
+# ... (all Huawei credentials)
+```
+
+---
+
+## Implementation Sequence (ลำดับทำงาน)
+
+| ลำดับ | งาน | ไฟล์ | ความเสี่ยง | สถานะ |
+|---|---|---|---|---|
+| 1 | worker.ts entrypoint | `src/worker.ts` | ต่ำ | ✅ ทำแล้ว |
+| 2 | npm scripts (start:api, start:worker) | `package.json` | ต่ำ | ✅ ทำแล้ว |
+| 3 | docker-compose update | `docker-compose.yml` | ต่ำ | ✅ ทำแล้ว |
+| 4 | Install bullmq + ioredis | `package.json` | ต่ำ | ยังไม่ได้ทำ |
+| 5 | Redis config module | `src/config/redis.ts`, `src/config/env.ts` | ต่ำ | ยังไม่ได้ทำ |
+| 6 | Queue definitions + types | `src/jobs/queues.ts`, `src/jobs/types.ts` | ต่ำ | ยังไม่ได้ทำ |
+| 7 | Report processor | `src/jobs/processors/reportProcessor.ts` | กลาง | ยังไม่ได้ทำ |
+| 8 | Email processor | `src/jobs/processors/emailProcessor.ts` | กลาง | ยังไม่ได้ทำ |
+| 9 | Wire processors เข้า worker.ts | `src/worker.ts` | ต่ำ | ยังไม่ได้ทำ |
+| 10 | Task status endpoint | `src/routes/taskRoutes.ts`, `src/app.ts` | ต่ำ | ยังไม่ได้ทำ |
+| 11 | Refactor cleaning controller | `src/controllers/cleaningController.ts` | กลาง | ยังไม่ได้ทำ |
+| 12 | Refactor service controller | `src/controllers/serviceController.ts` | กลาง | ยังไม่ได้ทำ |
+| 13 | Refactor inspection controller | `src/controllers/inspectionController.ts` | ต่ำ | ยังไม่ได้ทำ |
+| 14 | Docker compose + Redis service | `docker-compose.yml` | ต่ำ | ยังไม่ได้ทำ |
+| 15 | Deploy workflow | `.github/workflows/deploy.yml` | กลาง | ยังไม่ได้ทำ |
+| 16 | Install Redis on postgres-db | Manual SSH | ต่ำ | ✅ ทำแล้ว |
+| 17 | Setup self-hosted runners | Manual SSH | กลาง | ยังไม่ได้ทำ |

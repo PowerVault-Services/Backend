@@ -25,6 +25,35 @@ services:
     volumes:
       - minio_data:/data
 
+  api:
+    build: .
+    container_name: solar_api
+    command: ["node", "dist/app.js"]
+    environment:
+      DISABLE_CRON: "1"
+      PORT: "3000"
+      DATABASE_URL: "postgresql://admin:password123@postgres:5432/solar_db?schema=public"
+      MINIO_ENDPOINT: "http://minio:9000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - minio
+
+  worker:
+    build: .
+    container_name: solar_worker
+    command: ["node", "dist/worker.js"]
+    environment:
+      WORKER_PORT: "3001"
+      DATABASE_URL: "postgresql://admin:password123@postgres:5432/solar_db?schema=public"
+      MINIO_ENDPOINT: "http://minio:9000"
+    ports:
+      - "3001:3001"
+    depends_on:
+      - postgres
+      - minio
+
 volumes:
   postgres_data:
   minio_data:
