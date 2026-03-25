@@ -119,7 +119,7 @@ export async function listProjectsThailand(req: Request, res: Response) {
   const status = String(req.query.status ?? '').trim().toUpperCase();
 
   const page = Math.max(1, Number(req.query.page ?? 1));
-  const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize ?? 10)));
+  const pageSize = Math.min(9999, Math.max(1, Number(req.query.pageSize ?? 9999)));
   const skip = (page - 1) * pageSize;
 
   const where: any = {};
@@ -218,7 +218,7 @@ export async function listProjectsService(req: Request, res: Response) {
   const job = String(req.query.job ?? '').trim().toUpperCase();
 
   const page = Math.max(1, Number(req.query.page ?? 1));
-  const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize ?? 10)));
+  const pageSize = Math.min(9999, Math.max(1, Number(req.query.pageSize ?? 9999)));
   const skip = (page - 1) * pageSize;
 
   const where: any = {
