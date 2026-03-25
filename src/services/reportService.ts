@@ -41,7 +41,7 @@ async function renderPdfToFile(html: string, absPath: string) {
 
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'domcontentloaded' });
+    await page.setContent(html, { waitUntil: 'networkidle0' });
     await page.pdf({
       path: absPath,
       format: 'A4',

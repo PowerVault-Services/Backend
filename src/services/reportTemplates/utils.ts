@@ -19,11 +19,20 @@ export function fileToDataUri(filePath: string): string | null {
       (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' :
       ext === 'webp' ? 'image/webp' :
       ext === 'gif' ? 'image/gif' :
+      ext === 'svg' ? 'image/svg+xml' :
       null;
-    if (!mime) return null;
+    if (!mime) {
+      console.warn(`[report] fileToDataUri: unsupported ext "${ext}" for ${filePath}`);
+      return null;
+    }
+    if (!fs.existsSync(filePath)) {
+      console.warn(`[report] fileToDataUri: file not found at ${filePath}`);
+      return null;
+    }
     const buf = fs.readFileSync(filePath);
     return `data:${mime};base64,${buf.toString('base64')}`;
-  } catch {
+  } catch (err) {
+    console.warn(`[report] fileToDataUri: error reading ${filePath}:`, err);
     return null;
   }
 }

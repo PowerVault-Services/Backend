@@ -556,70 +556,80 @@ export async function generateReport(req: Request, res: Response) {
   // 2) Evidence groups (Step3.1)
   // NOTE: ฝั่งหน้าเว็บ Step3.1 มีหัวข้อย่อยหลายแบบ (ก่อน/ขณะ/หลัง - ล้างแผง / ทำความสะอาดห้องอินเวอร์เตอร์ ฯลฯ)
 
-  const evidenceLabelMap: Record<string, { groupTitle: string; label: string }> = {
-    STEP3_BEFORE_PANEL: { groupTitle: 'ก่อนทำความสะอาดแผงโซลาร์เซลล์', label: '' },
-    STEP3_DURING_PANEL: { groupTitle: 'ขณะทำความสะอาดแผงโซลาร์เซลล์', label: '' },
-    STEP3_AFTER_PANEL: { groupTitle: 'หลังทำความสะอาดแผงโซลาร์เซลล์', label: '' },
+  // แต่ละ entry มี groupTitle, label, order (ใช้ตัวเลขเรียงลำดับแทน indexOf กับ string ภาษาไทย)
+  const evidenceLabelMap: Record<string, { groupTitle: string; label: string; order: number }> = {
+    // ชุดหลัก: BEFORE/DURING/AFTER + PANEL/INVERTER
+    STEP3_BEFORE_PANEL:  { groupTitle: 'ก่อนทำความสะอาดแผงโซลาร์เซลล์', label: '', order: 0 },
+    STEP3_DURING_PANEL:  { groupTitle: 'ขณะทำความสะอาดแผงโซลาร์เซลล์', label: '', order: 1 },
+    STEP3_AFTER_PANEL:   { groupTitle: 'หลังทำความสะอาดแผงโซลาร์เซลล์', label: '', order: 2 },
 
-    STEP3_BEFORE_INVERTER: { groupTitle: 'ก่อนทำความสะอาดห้องอินเวอร์เตอร์', label: '' },
-    STEP3_DURING_INVERTER: { groupTitle: 'ขณะทำความสะอาดห้องอินเวอร์เตอร์', label: '' },
-    STEP3_AFTER_INVERTER: { groupTitle: 'หลังทำความสะอาดห้องอินเวอร์เตอร์', label: '' },
+    STEP3_BEFORE_INVERTER: { groupTitle: 'ก่อนทำความสะอาดห้องอินเวอร์เตอร์', label: '', order: 3 },
+    STEP3_DURING_INVERTER: { groupTitle: 'ขณะทำความสะอาดห้องอินเวอร์เตอร์', label: '', order: 4 },
+    STEP3_AFTER_INVERTER:  { groupTitle: 'หลังทำความสะอาดห้องอินเวอร์เตอร์', label: '', order: 5 },
 
-    STEP3_ZONE_WORK: { groupTitle: 'รูปโซนของการทำงาน', label: '' },
-    STEP3_ZONE_CHECKLIST: { groupTitle: 'รูปโซนของการทำ Check List', label: '' },
+    STEP3_ZONE_WORK:      { groupTitle: 'รูปโซนของการทำงาน', label: '', order: 6 },
+    STEP3_ZONE_CHECKLIST: { groupTitle: 'รูปโซนของการทำ Check List', label: '', order: 7 },
 
-    // รองรับของเดิม
-    STEP3_BEFORE: { groupTitle: 'ก่อนทำความสะอาดแผงโซลาร์เซลล์', label: '' },
-    STEP3_AFTER: { groupTitle: 'หลังทำความสะอาดแผงโซลาร์เซลล์', label: '' },
+    // รองรับของเดิม (labelType สั้น)
+    STEP3_BEFORE: { groupTitle: 'ก่อนทำความสะอาดแผงโซลาร์เซลล์', label: '', order: 0 },
+    STEP3_AFTER:  { groupTitle: 'หลังทำความสะอาดแผงโซลาร์เซลล์', label: '', order: 2 },
+
+    // รองรับ labelType จาก frontend (ตัวอย่าง: beforePanel, duringPanel, afterPanel, ...)
+    STEP3_BEFOREPANEL:  { groupTitle: 'ก่อนทำความสะอาดแผงโซลาร์เซลล์', label: '', order: 0 },
+    STEP3_DURINGPANEL:  { groupTitle: 'ขณะทำความสะอาดแผงโซลาร์เซลล์', label: '', order: 1 },
+    STEP3_AFTERPANEL:   { groupTitle: 'หลังทำความสะอาดแผงโซลาร์เซลล์', label: '', order: 2 },
+    STEP3_BEFOREINVERTER: { groupTitle: 'ก่อนทำความสะอาดห้องอินเวอร์เตอร์', label: '', order: 3 },
+    STEP3_DURINGINVERTER: { groupTitle: 'ขณะทำความสะอาดห้องอินเวอร์เตอร์', label: '', order: 4 },
+    STEP3_AFTERINVERTER:  { groupTitle: 'หลังทำความสะอาดห้องอินเวอร์เตอร์', label: '', order: 5 },
+    STEP3_ZONEWORK:       { groupTitle: 'รูปโซนของการทำงาน', label: '', order: 6 },
+    STEP3_ZONECHECKLIST:  { groupTitle: 'รูปโซนของการทำ Check List', label: '', order: 7 },
   };
 
+  // normalise fileType -> lookup key (uppercase, strip dashes/underscores ไม่เกี่ยวกับ STEP3_ prefix)
+  function lookupEvidence(ft: string) {
+    // exact match first
+    if (evidenceLabelMap[ft]) return evidenceLabelMap[ft];
+    // try uppercased without extra separators: e.g. STEP3_before-panel -> STEP3_BEFOREPANEL
+    const norm = ft.toUpperCase().replace(/[^A-Z0-9_]/g, '');
+    if (evidenceLabelMap[norm]) return evidenceLabelMap[norm];
+    return null;
+  }
+
   type Img = { label?: string; filePath: string };
-  const grouped = new Map<string, Img[]>();
+  const grouped = new Map<string, { images: Img[]; order: number }>();
 
   for (const a of attachments) {
     const ft = String(a.fileType ?? '');
     if (!ft.startsWith('STEP3_')) continue;
     if (['STEP3_CERTIFICATE', 'STEP3_LAYOUT'].includes(ft)) continue;
 
-    const mapped = evidenceLabelMap[ft];
+    const mapped = lookupEvidence(ft);
     const groupTitle = mapped?.groupTitle ?? 'รูปภาพ/หลักฐานอื่นๆ';
+    const order = mapped?.order ?? 999;
 
     const label =
       mapped?.label
       ?? ft.replace(/^STEP3_/, '').split('_').join(' ');
 
-    if (!grouped.has(groupTitle)) grouped.set(groupTitle, []);
+    if (!grouped.has(groupTitle)) grouped.set(groupTitle, { images: [], order });
     const filePath = await tryEnsureLocalFilePath(a.fileUrl);
     if (!filePath) {
       missingAttachments.push(String(a.fileUrl ?? ''));
+      console.warn(`[report] ⚠ image not found: fileType=${ft}, fileUrl=${a.fileUrl}`);
       continue;
     }
 
-    grouped.get(groupTitle)!.push({
+    console.log(`[report] image resolved: fileType=${ft} -> group="${groupTitle}" (order=${order}), path=${filePath}`);
+    grouped.get(groupTitle)!.images.push({
       label,
       filePath,
     });
   }
 
-  const evidenceOrder = [
-    'ก่อนทำความสะอาดแผงโซลาร์เซลล์',
-    'ขณะทำความสะอาดแผงโซลาร์เซลล์',
-    'หลังทำความสะอาดแผงโซลาร์เซลล์',
-    'ก่อนทำความสะอาดห้องอินเวอร์เตอร์',
-    'ขณะทำความสะอาดห้องอินเวอร์เตอร์',
-    'หลังทำความสะอาดห้องอินเวอร์เตอร์',
-    'รูปโซนของการทำงาน',
-    'รูปโซนของการทำ Check List',
-    'รูปภาพ/หลักฐานอื่นๆ',
-  ];
-
   const evidenceGroups = Array.from(grouped.entries())
-    .map(([title, images]) => ({ title, images }))
-    .sort((a, b) => {
-      const ai = evidenceOrder.indexOf(a.title);
-      const bi = evidenceOrder.indexOf(b.title);
-      return (ai === -1 ? Number.MAX_SAFE_INTEGER : ai) - (bi === -1 ? Number.MAX_SAFE_INTEGER : bi);
-    });
+    .map(([title, { images, order }]) => ({ title, images, order }))
+    .sort((a, b) => a.order - b.order)
+    .map(({ title, images }) => ({ title, images }));
 
   // 3) PV Layout จาก client data (SiteLayout)
   let siteLayoutPath: string | null = null;
