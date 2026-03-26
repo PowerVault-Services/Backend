@@ -1,6 +1,28 @@
-# Solar Backend (Frontend API)
+# Solar Backend
 
-Backend นี้เป็น Express + Prisma + PostgreSQL และมี API สำหรับหน้า FE หลายโมดูล (homepage, monitoring, alarms/admin alarms, stock, jobs, report center, client data)
+Backend สำหรับระบบ Solar Monitoring — Express + Prisma + PostgreSQL + BullMQ (Redis)
+
+รองรับ API สำหรับหน้า FE หลายโมดูล (homepage, monitoring, alarms/admin alarms, stock, jobs, report center, client data) และมี **Worker process** แยกสำหรับ cron sync jobs + background job processing
+
+---
+
+## Architecture Overview
+
+ระบบแบ่งเป็น 2 process หลัก:
+
+| Process | Command | Port | หน้าที่ |
+|---------|---------|------|---------|
+| **API** | `npm run start:api` | 3000 | REST API สำหรับ Frontend (ไม่รัน cron jobs) |
+| **Worker** | `npm run start:worker` | 3001 | Cron sync jobs (Huawei) + BullMQ job processors (report/email) |
+
+- **Dev mode** (`npm run dev`): รัน API + cron ใน process เดียว (monolith) ถ้าไม่ได้ set `DISABLE_CRON=1`
+- **Production**: แยก API กับ Worker คนละ container — API set `DISABLE_CRON=1`, Worker รัน `start:worker`
+- **Redis** (optional): ใช้สำหรับ BullMQ job queue (report generation, email sending) — เปิดด้วย `USE_QUEUE=true`
+
+### New DB Tables (Migration: `20260326064743`)
+
+- **`SiteHourlyKpi`** — เก็บ hourly KPI ของแต่ละ site (production, irradiation, grid import/export, consumption, battery)
+- **`AuxDeviceSnapshot`** — เก็บ snapshot ข้อมูล auxiliary devices (EMI, Grid Meter, Battery, ESS, Power Sensor)
 
 ---
 
@@ -10,6 +32,7 @@ Backend นี้เป็น Express + Prisma + PostgreSQL และมี API 
 
 - Node.js >= 20
 - Docker & Docker Compose (สำหรับ local DB)
+- Redis (optional — ใช้เมื่อเปิด `USE_QUEUE=true` สำหรับ BullMQ)
 - เชื่อมต่อ VPN / อยู่ในเครือข่ายเดียวกับ cloud server ได้ (ถ้าใช้ cloud DB/MinIO)
 
 
@@ -25,6 +48,16 @@ npm run dev
 ```
 
 Default server: `http://localhost:3000`
+
+### รัน Worker แยก (production-style)
+
+```bash
+# Terminal 1 — API only (no cron)
+DISABLE_CRON=1 npm run start:api    # port 3000
+
+# Terminal 2 — Worker (cron + BullMQ)
+npm run start:worker                 # port 3001
+```
 
 ### อัพเดทโค้ดใหม่ (git pull)
 
@@ -113,9 +146,13 @@ MINIO_KEEP_LOCAL_COPY=true
 
 ```env
 # cron expressions (ปรับเวลา sync ได้)
-HUAWEI_SITE_REALTIME_CRON="*/5 * * * *"
-HUAWEI_DEVICE_CRON="2-59/5 * * * *"
-HUAWEI_ALARM_CRON="1-59/5 * * * *"
+HUAWEI_SITE_REALTIME_CRON="*/5 * * * *"          # site realtime ทุก 5 นาที
+HUAWEI_DEVICE_CRON="2-59/5 * * * *"              # device sync ทุก 5 นาที (offset :02)
+HUAWEI_ALARM_CRON="1-59/5 * * * *"               # alarm sync ทุก 5 นาที (offset :01)
+HUAWEI_DAILY_KPI_CRON="15 * * * *"               # daily KPI ทุกชั่วโมงที่ :15
+HUAWEI_HOURLY_KPI_CRON="10-59/15 * * * *"        # hourly KPI ทุก 15 นาที (:10,:25,:40,:55)
+HUAWEI_AUX_REALTIME_CRON="3-59/5 * * * *"        # aux device sync ทุก 5 นาที (offset :03)
+HUAWEI_MONTHLY_KPI_CRON="20 */4 * * *"           # monthly KPI ทุก 4 ชั่วโมงที่ :20
 
 # watchdog: ตรวจจับ sync job ค้าง
 HUAWEI_SYNC_WATCHDOG_INTERVAL_MS=60000      # ตรวจทุก 60 วินาที
@@ -127,6 +164,24 @@ HUAWEI_SYNC_HEALTH_MAX_LAG_MS=1200000       # lag เกิน 20 นาที =
 # alarm auto-refresh cooldown (ใช้ใน /api/alarms?refresh=1)
 HUAWEI_ALARM_AUTO_REFRESH_MIN_INTERVAL_MS=60000
 ```
+
+### Redis (BullMQ Job Queue)
+
+```env
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_PASSWORD=""
+USE_QUEUE=false          # เปิดเป็น true เพื่อใช้ BullMQ (ต้องมี Redis)
+```
+
+เมื่อเปิด `USE_QUEUE=true` จะมี 2 queue:
+
+| Queue | หน้าที่ | Concurrency | Retry |
+|-------|---------|-------------|-------|
+| `report-generation` | สร้าง PDF report (Puppeteer) | 1 | 2 attempts, exponential backoff 5s |
+| `email-sending` | ส่ง email (SMTP) | 3 | 3 attempts, exponential backoff 3s |
+
+> ถ้า `USE_QUEUE=false` (default) report generation และ email จะทำงานแบบ synchronous ใน API process แทน
 
 ---
 
@@ -204,11 +259,11 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 ---
 
-## Health Check Endpoints
+## Health Check Endpoints (Worker — port 3001)
 
 ### GET `/healthz`
 
-**Description:** Cron job health check — ตรวจว่า sync jobs ยังทำงานปกติ (ถ้า lag เกิน `HUAWEI_SYNC_HEALTH_MAX_LAG_MS` จะตอบ 503)
+**Description:** Cron job health check — ตรวจว่า sync jobs ทั้ง 7 ตัว (siteRealtime, device, alarm, dailyKpi, hourlyKpi, auxRealtime, monthlyKpi) ยังทำงานปกติ (ถ้า lag เกิน `HUAWEI_SYNC_HEALTH_MAX_LAG_MS` จะตอบ 503)
 
 **Response 200 (healthy):**
 
@@ -367,7 +422,7 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 
 ### GET `/api/monitoring/sync/status`
 
-**Description:** สถานะ Cron jobs ทั้งหมด (site realtime, device, alarm sync)
+**Description:** สถานะ Cron jobs ทั้งหมด (siteRealtime, device, alarm, dailyKpi, hourlyKpi, auxRealtime, monthlyKpi)
 
 **Auth:** None
 
