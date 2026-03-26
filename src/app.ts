@@ -21,6 +21,7 @@ import clientDataRoutes from './routes/clientDataRoutes';
 import reportRoutes from './routes/reportRoutes';
 import draftRoutes from './routes/draftRoutes';
 import adminRoutes from './routes/adminRoutes';
+import taskRoutes from './routes/taskRoutes';
 import { getLoadedEnvPath } from './config/loadEnv';
 import { projectRoot } from './config/runtimePaths';
 import { serveFileUrlViaGateway, storageFlagsSummary, verifyObjectStorageAccess } from './services/storageService';
@@ -52,6 +53,7 @@ app.use('/api/client-data', clientDataRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/drafts', draftRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/tasks', taskRoutes);
 
 app.get('/', (req: Request, res: Response) => {
   res.send('Hello! Solar Energy Backend is Running 🚀');

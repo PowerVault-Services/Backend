@@ -25,6 +25,15 @@ services:
     volumes:
       - minio_data:/data
 
+  redis:
+    image: redis:7-alpine
+    container_name: solar_redis
+    command: redis-server --requirepass redis_password --maxmemory 128mb --maxmemory-policy allkeys-lru --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
   api:
     build: .
     container_name: solar_api
@@ -32,13 +41,18 @@ services:
     environment:
       DISABLE_CRON: "1"
       PORT: "3000"
+      USE_QUEUE: "true"
       DATABASE_URL: "postgresql://admin:password123@postgres:5432/solar_db?schema=public"
       MINIO_ENDPOINT: "http://minio:9000"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: redis_password
     ports:
       - "3000:3000"
     depends_on:
       - postgres
       - minio
+      - redis
 
   worker:
     build: .
@@ -46,14 +60,20 @@ services:
     command: ["node", "dist/worker.js"]
     environment:
       WORKER_PORT: "3001"
+      USE_QUEUE: "true"
       DATABASE_URL: "postgresql://admin:password123@postgres:5432/solar_db?schema=public"
       MINIO_ENDPOINT: "http://minio:9000"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: redis_password
     ports:
       - "3001:3001"
     depends_on:
       - postgres
       - minio
+      - redis
 
 volumes:
   postgres_data:
   minio_data:
+  redis_data:

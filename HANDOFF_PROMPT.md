@@ -571,6 +571,20 @@ npm run start:worker   # node dist/worker.js (cron only)
 - Both log completed/failed events
 - Each worker uses its own dedicated Redis connection via `createRedisConnection()`
 
+**Step 10: Task status endpoint** (2026-03-26)
+- `src/routes/taskRoutes.ts` — `GET /api/tasks/:taskId?queue=report-generation|email-sending`
+- Returns: `{ state, progress, result, failedReason }`
+- Registered ใน `src/app.ts` → `/api/tasks`
+
+**Step 11-13: Controller refactor** (2026-03-26)
+- ทุก controller ใช้ pattern เดียวกัน: `if (getEnv().USE_QUEUE)` → enqueue + return taskId, else → direct call (fallback)
+- **cleaningController**: `generateReport` (report queue), `sendStep2Email` + `sendStep5Email` (email queue)
+- **serviceController**: `generateReport` (report queue), `sendStep2Email` + `sendStep5Email` (email queue)
+- **inspectionController**: `sendStep2Email` + `sendStep3Email` (email queue, ไม่มี report — inspection ใช้ upload)
+- `USE_QUEUE=false` (default) → ทำงานเหมือนเดิมทุกอย่าง ไม่ต้อง Redis
+- `USE_QUEUE=true` → enqueue เข้า BullMQ, return `{ taskId, status: 'queued' }`, frontend poll `/api/tasks/:taskId`
+- Email: optimistic DB update (mark as sent ทันทีหลัง enqueue — ไม่รอ worker ส่งเสร็จ)
+
 ---
 
 ## แผนที่จะทำต่อ (Phase B: Redis + BullMQ Queue System)
@@ -770,11 +784,11 @@ HUAWEI_PASSWORD=xxx
 | 7 | Report processor | `src/jobs/processors/reportProcessor.ts` | กลาง | ✅ ทำแล้ว (2026-03-26) |
 | 8 | Email processor | `src/jobs/processors/emailProcessor.ts` | กลาง | ✅ ทำแล้ว (2026-03-26) |
 | 9 | Wire processors เข้า worker.ts | `src/worker.ts` | ต่ำ | ✅ ทำแล้ว (2026-03-26) |
-| 10 | Task status endpoint | `src/routes/taskRoutes.ts`, `src/app.ts` | ต่ำ | ยังไม่ได้ทำ |
-| 11 | Refactor cleaning controller | `src/controllers/cleaningController.ts` | กลาง | ยังไม่ได้ทำ |
-| 12 | Refactor service controller | `src/controllers/serviceController.ts` | กลาง | ยังไม่ได้ทำ |
-| 13 | Refactor inspection controller | `src/controllers/inspectionController.ts` | ต่ำ | ยังไม่ได้ทำ |
-| 14 | Docker compose + Redis service | `docker-compose.yml` | ต่ำ | ยังไม่ได้ทำ |
-| 15 | Deploy workflow | `.github/workflows/deploy.yml` | กลาง | ยังไม่ได้ทำ |
+| 10 | Task status endpoint | `src/routes/taskRoutes.ts`, `src/app.ts` | ต่ำ | ✅ ทำแล้ว (2026-03-26) |
+| 11 | Refactor cleaning controller | `src/controllers/cleaningController.ts` | กลาง | ✅ ทำแล้ว (2026-03-26) |
+| 12 | Refactor service controller | `src/controllers/serviceController.ts` | กลาง | ✅ ทำแล้ว (2026-03-26) |
+| 13 | Refactor inspection controller | `src/controllers/inspectionController.ts` | ต่ำ | ✅ ทำแล้ว (2026-03-26) |
+| 14 | Docker compose + Redis service | `docker-compose.yml` | ต่ำ | ✅ ทำแล้ว (2026-03-26) |
+| 15 | Deploy workflow | `.github/workflows/deploy.yml` | กลาง | ✅ ทำแล้ว (2026-03-26) |
 | 16 | Install Redis on postgres-db | Manual SSH | ต่ำ | ✅ ทำแล้ว |
 | 17 | Setup self-hosted runners | Manual SSH | กลาง | ยังไม่ได้ทำ |

@@ -6,6 +6,8 @@ import { applyEmailSignature, extractEmailSignatureInput } from '../services/ema
 import fs from 'fs';
 import { ensureLocalFilePath, resolveEmailAttachment, storeIncomingReportUpload, storeIncomingUserUpload, tryEnsureLocalFilePath } from '../services/storageService';
 import { collectJobReportFiles, createReportsZip, deleteJobCascade, parseJobIds } from '../utils/jobManagement';
+import { getEnv } from '../config/env';
+import { getEmailQueue } from '../jobs/queues';
 
 const prisma = new PrismaClient();
 
@@ -407,6 +409,25 @@ export async function sendStep2Email(req: Request, res: Response) {
 
   // ถ้าอยาก “บังคับว่าต้องมีไฟล์แนบ” ให้ return error ตรงนี้แทนการส่ง
   // ตอนนี้ผมทำแบบ "ส่งได้ แม้บางไฟล์หาย" แต่แจ้งรายการไฟล์ที่หายกลับไป
+  // ── Queue mode ──
+  if (getEnv().USE_QUEUE) {
+    const task = await getEmailQueue().add('send', {
+      jobId: id, step: 2, source: 'inspection',
+      to: inspection.step2EmailTo, subject: inspection.step2EmailSubject, html: inspection.step2EmailBody,
+      attachments: att,
+    });
+
+    await prisma.inspectionJob.update({ where: { jobId: id }, data: { step2SentAt: new Date(), step2SentByUserId: 1 } });
+    await prisma.job.update({ where: { id }, data: { status: JobStatus.ASSIGNED } });
+
+    return res.json({
+      success: true,
+      data: { taskId: task.id, status: 'queued' },
+      warning: missing.length ? { message: 'บางไฟล์แนบไม่พบในโฟลเดอร์ uploads จึงไม่ถูกแนบ', missing } : undefined,
+    });
+  }
+
+  // ── Fallback: direct call ──
   const send = await sendEmailNow({
     jobId: id,
     step: 2,
@@ -519,6 +540,21 @@ export async function sendStep3Email(req: Request, res: Response) {
   const reportAbs = await tryEnsureLocalFilePath(inspection.reportFileUrl);
   if (!reportAbs) return res.status(400).json({ success: false, message: 'Report file not found' });
 
+  // ── Queue mode ──
+  if (getEnv().USE_QUEUE) {
+    const task = await getEmailQueue().add('send', {
+      jobId: id, step: 3, source: 'inspection',
+      to: inspection.step3EmailTo, subject: inspection.step3EmailSubject, html: inspection.step3EmailBody,
+      attachments: [{ filename: path.basename(reportAbs), path: reportAbs }],
+    });
+
+    await prisma.inspectionJob.update({ where: { jobId: id }, data: { step3SentAt: new Date(), step3SentByUserId: 1 } });
+    await prisma.job.update({ where: { id }, data: { status: JobStatus.COMPLETED } });
+
+    return res.json({ success: true, data: { taskId: task.id, status: 'queued' } });
+  }
+
+  // ── Fallback: direct call ──
   const send = await sendEmailNow({
     jobId: id,
     step: 3,

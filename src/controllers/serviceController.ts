@@ -6,6 +6,8 @@ import { applyEmailSignature, extractEmailSignatureInput } from '../services/ema
 import { ensureLocalFilePath, resolveEmailAttachment, storeIncomingUserUpload, tryEnsureLocalFilePath, tryResolveEmailAttachment } from '../services/storageService';
 import { generateServiceReportPdf } from '../services/reportService';
 import { collectJobReportFiles, createReportsZip, deleteJobCascade, parseJobIds } from '../utils/jobManagement';
+import { getEnv } from '../config/env';
+import { getReportQueue, getEmailQueue } from '../jobs/queues';
 
 const prisma = new PrismaClient();
 
@@ -429,6 +431,25 @@ export async function sendStep2Email(req: Request, res: Response) {
   );
   const att = attResolved.filter(Boolean) as { filename: string; path: string }[];
 
+  // ── Queue mode ──
+  if (getEnv().USE_QUEUE) {
+    const task = await getEmailQueue().add('send', {
+      jobId: id, step: 2, source: 'service',
+      to: service.step2EmailTo, subject: service.step2EmailSubject, html: service.step2EmailBody,
+      attachments: att,
+    });
+
+    await prisma.serviceJob.update({ where: { jobId: id }, data: { step2SentAt: new Date(), step2SentByUserId: 1 } });
+    await prisma.job.update({ where: { id }, data: { status: JobStatus.ASSIGNED } });
+
+    return res.json({
+      success: true,
+      data: { taskId: task.id, status: 'queued' },
+      warning: missing.length ? { message: 'บางไฟล์แนบไม่พบ จึงไม่ถูกแนบในอีเมล', missing } : undefined,
+    });
+  }
+
+  // ── Fallback: direct call ──
   const send = await sendEmailNow({
     jobId: id,
     step: 2,
@@ -647,6 +668,13 @@ export async function generateReport(req: Request, res: Response) {
   );
   const evidence = evidenceResolved.filter(Boolean) as { label: string; filePath: string }[];
 
+  // ── Queue mode ──
+  if (getEnv().USE_QUEUE) {
+    const task = await getReportQueue().add('generate', { jobId: id, jobType: 'service' });
+    return res.json({ success: true, data: { taskId: task.id, status: 'queued' } });
+  }
+
+  // ── Fallback: direct call ──
   const report = await generateServiceReportPdf({
     jobNo: job.jobNo,
     projectName: service.projectName ?? job.site.name,
@@ -732,12 +760,32 @@ export async function sendStep5Email(req: Request, res: Response) {
   const reportAbs = await tryEnsureLocalFilePath(service.reportFileUrl);
   if (!reportAbs) return res.status(400).json({ success: false, message: 'Report file not found' });
 
+  const finalHtml = applyEmailSignature(String(body), signature);
+
+  // ── Queue mode ──
+  if (getEnv().USE_QUEUE) {
+    const task = await getEmailQueue().add('send', {
+      jobId: id, step: 5, source: 'service',
+      to: String(to), subject: String(subject), html: finalHtml,
+      attachments: [{ filename: `Service-Report-${job.jobNo}.pdf`, path: reportAbs }],
+    });
+
+    await prisma.serviceJob.update({
+      where: { jobId: id },
+      data: { step5EmailTo: String(to), step5EmailSubject: String(subject), step5EmailBody: finalHtml, step5SentAt: new Date(), step5SentByUserId: 1 },
+    });
+    await prisma.job.update({ where: { id }, data: { status: JobStatus.COMPLETED } });
+
+    return res.json({ success: true, data: { taskId: task.id, status: 'queued' } });
+  }
+
+  // ── Fallback: direct call ──
   const send = await sendEmailNow({
     jobId: id,
     step: 5,
     to: String(to),
     subject: String(subject),
-    html: applyEmailSignature(String(body), signature),
+    html: finalHtml,
     attachments: [{ filename: `Service-Report-${job.jobNo}.pdf`, path: reportAbs }],
   });
 
@@ -748,7 +796,7 @@ export async function sendStep5Email(req: Request, res: Response) {
     data: {
       step5EmailTo: String(to),
       step5EmailSubject: String(subject),
-      step5EmailBody: applyEmailSignature(String(body), signature),
+      step5EmailBody: finalHtml,
       step5SentAt: new Date(),
       step5SentByUserId: 1,
     },

@@ -1,0 +1,128 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: 'Deploy target'
+        required: true
+        default: 'worker'
+        type: choice
+        options:
+          - worker
+          - api
+          - both
+
+jobs:
+  # ── Job 1: Build & Test on GitHub cloud runner ──
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: |
+            dist/
+            prisma/
+            package.json
+            package-lock.json
+          retention-days: 1
+
+  # ── Job 2: Deploy Worker to CE Cloud ──
+  deploy-worker:
+    needs: build
+    if: >-
+      github.event_name == 'push' ||
+      github.event.inputs.deploy_target == 'worker' ||
+      github.event.inputs.deploy_target == 'both'
+    runs-on: [self-hosted, ce-cloud-worker]
+    env:
+      APP_DIR: /home/solar/solar-worker
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: ${{ env.APP_DIR }}
+
+      - name: Install production dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci --omit=dev
+
+      - name: Generate Prisma client
+        working-directory: ${{ env.APP_DIR }}
+        run: npx prisma generate
+
+      - name: Restart worker via PM2
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          if pm2 describe solar-worker > /dev/null 2>&1; then
+            pm2 restart solar-worker
+          else
+            pm2 start dist/worker.js --name solar-worker
+          fi
+          pm2 save
+
+  # ── Job 3: Deploy API to CE Cloud (manual only for now) ──
+  deploy-api:
+    needs: build
+    if: >-
+      github.event.inputs.deploy_target == 'api' ||
+      github.event.inputs.deploy_target == 'both'
+    runs-on: [self-hosted, ce-cloud]
+    env:
+      APP_DIR: /home/solar/solar-api
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: ${{ env.APP_DIR }}
+
+      - name: Install production dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci --omit=dev
+
+      - name: Generate Prisma client
+        working-directory: ${{ env.APP_DIR }}
+        run: npx prisma generate
+
+      - name: Run database migrations
+        working-directory: ${{ env.APP_DIR }}
+        run: npx prisma migrate deploy
+
+      - name: Restart API via PM2
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          if pm2 describe solar-api > /dev/null 2>&1; then
+            pm2 restart solar-api
+          else
+            pm2 start dist/app.js --name solar-api --env DISABLE_CRON=1
+          fi
+          pm2 save

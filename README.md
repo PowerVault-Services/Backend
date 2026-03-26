@@ -183,6 +183,135 @@ USE_QUEUE=false          # เปิดเป็น true เพื่อใช�
 
 > ถ้า `USE_QUEUE=false` (default) report generation และ email จะทำงานแบบ synchronous ใน API process แทน
 
+### Frontend Integration Guide (USE_QUEUE=true)
+
+เมื่อเปิด `USE_QUEUE=true` endpoint ที่เกี่ยวกับ **report generation** และ **email sending** จะเปลี่ยน response — แทนที่จะได้ผลลัพธ์ทันที จะได้ `taskId` กลับมาแทน แล้ว frontend ต้อง **poll** เช็คสถานะ
+
+#### Endpoint ที่ได้รับผลกระทบ (8 endpoints):
+
+| Module | Endpoint | เดิมทำอะไร | เปลี่ยนเป็นอะไร |
+|--------|----------|-----------|-----------------|
+| Cleaning | `POST /api/cleaning/step4/generate` | สร้าง PDF ทันที | enqueue → return taskId |
+| Cleaning | `POST /api/cleaning/step2/send` | ส่ง email ทันที | enqueue → return taskId |
+| Cleaning | `POST /api/cleaning/step5/send` | ส่ง email + report ทันที | enqueue → return taskId |
+| Service | `POST /api/service/step4/generate` | สร้าง PDF ทันที | enqueue → return taskId |
+| Service | `POST /api/service/step2/send` | ส่ง email ทันที | enqueue → return taskId |
+| Service | `POST /api/service/step5/send` | ส่ง email + report ทันที | enqueue → return taskId |
+| Inspection | `POST /api/inspection/step2/send` | ส่ง email ทันที | enqueue → return taskId |
+| Inspection | `POST /api/inspection/step3/send` | ส่ง email + report ทันที | enqueue → return taskId |
+
+#### Response เปรียบเทียบ:
+
+**USE_QUEUE=false (เดิม/default):** ไม่มีอะไรเปลี่ยน response เหมือนเดิมทุกอย่าง
+
+**USE_QUEUE=true — Report Generation (step4/generate):**
+
+```json
+// POST /api/cleaning/step4/generate  { "jobId": 123 }
+// Response 200:
+{
+  "success": true,
+  "data": { "taskId": "abc-123", "status": "queued" }
+}
+```
+
+**USE_QUEUE=true — Email Sending (step2/send, step5/send, step3/send):**
+
+```json
+// POST /api/cleaning/step2/send  { "jobId": 123 }
+// Response 200:
+{
+  "success": true,
+  "data": { "taskId": "def-456", "status": "queued" }
+}
+```
+
+#### Task Polling Endpoint:
+
+```
+GET /api/tasks/:taskId?queue=report-generation|email-sending
+```
+
+**Query params:**
+- `queue` (optional, default: `report-generation`) — ชื่อ queue ที่ task อยู่
+
+**Response 200:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "taskId": "abc-123",
+    "queue": "report-generation",
+    "state": "completed",
+    "progress": 100,
+    "result": { "fileUrl": "/uploads/reports/cleaning/Cleaning-Report-CL-001.pdf" },
+    "failedReason": null
+  }
+}
+```
+
+**state values:**
+
+| State | ความหมาย | Frontend ควรทำ |
+|-------|----------|---------------|
+| `waiting` | รออยู่ใน queue | แสดง loading, poll ต่อ |
+| `active` | กำลังประมวลผล | แสดง loading + progress %, poll ต่อ |
+| `completed` | เสร็จแล้ว | อ่าน `result` แล้วหยุด poll |
+| `failed` | ล้มเหลว | แสดง `failedReason` แล้วหยุด poll |
+| `delayed` | รอ retry (backoff) | แสดง loading, poll ต่อ |
+
+**Response 404:** (taskId ไม่เจอ)
+
+```json
+{ "success": false, "message": "Task not found" }
+```
+
+#### Frontend Flow ตัวอย่าง (Report Generation):
+
+```
+1. User กด "สร้างรายงาน"
+2. Frontend POST /api/cleaning/step4/generate { jobId: 123 }
+3. ได้ { taskId: "abc-123", status: "queued" }
+4. Frontend เริ่ม poll ทุก 2-3 วินาที:
+   GET /api/tasks/abc-123?queue=report-generation
+5. state = "waiting" → แสดง "กำลังรอคิว..."
+6. state = "active", progress = 40 → แสดง "กำลังสร้างรายงาน 40%"
+7. state = "completed" → อ่าน result.fileUrl → แสดงปุ่มดาวน์โหลด / redirect
+8. หยุด poll
+```
+
+#### Frontend Flow ตัวอย่าง (Email Sending):
+
+```
+1. User กด "ส่งอีเมล"
+2. Frontend POST /api/cleaning/step2/send { jobId: 123 }
+3. ได้ { taskId: "def-456", status: "queued" }
+4. Frontend อาจ poll หรือไม่ poll ก็ได้ (email เป็น fire-and-forget)
+   - ถ้าอยากรู้ผล: poll GET /api/tasks/def-456?queue=email-sending
+   - ถ้าไม่สน: แสดง "ส่งอีเมลแล้ว" ทันที (DB ถูก update เรียบร้อยแล้ว)
+```
+
+#### วิธี detect ว่า USE_QUEUE เปิดอยู่ไหม:
+
+Frontend ไม่ต้อง detect — แค่เช็ค response:
+- ถ้าได้ `data.taskId` → อยู่ใน queue mode → ต้อง poll
+- ถ้าได้ `data.reportUrl` หรือ `success: true` แบบปกติ → mode เดิม ไม่ต้องทำอะไรเพิ่ม
+
+```typescript
+// ตัวอย่าง Frontend logic:
+const res = await fetch('/api/cleaning/step4/generate', { method: 'POST', body: JSON.stringify({ jobId }) });
+const json = await res.json();
+
+if (json.data?.taskId) {
+  // Queue mode — start polling
+  pollTask(json.data.taskId, 'report-generation');
+} else if (json.data?.reportUrl) {
+  // Sync mode — use result directly
+  showReport(json.data.reportUrl);
+}
+```
+
 ---
 
 ## Uploads (ไฟล์แนบ)
@@ -1848,11 +1977,19 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 { "jobId": 123 }
 ```
 
-**Response 200 (example):**
+**Response 200 — USE_QUEUE=false (default):**
 
 ```json
 { "success": true }
 ```
+
+**Response 200 — USE_QUEUE=true (queue mode):**
+
+```json
+{ "success": true, "data": { "taskId": "def-456", "status": "queued" } }
+```
+
+> ดู [Frontend Integration Guide](#frontend-integration-guide-use_queuetrue) สำหรับวิธี poll task status
 
 > NOTE: ถ้าบางไฟล์แนบหายใน storage อาจมี `warning` กลับมา เช่น
 
@@ -2028,7 +2165,7 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 { "jobId": 123 }
 ```
 
-**Response 200 (example):**
+**Response 200 — USE_QUEUE=false (default):**
 
 ```json
 {
@@ -2036,6 +2173,17 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
   "data": { "reportUrl": "/uploads/report.pdf", "download": "/api/cleaning/step4/download/123" }
 }
 ```
+
+**Response 200 — USE_QUEUE=true (queue mode):**
+
+```json
+{
+  "success": true,
+  "data": { "taskId": "abc-123", "status": "queued" }
+}
+```
+
+> ดู [Frontend Integration Guide](#frontend-integration-guide-use_queuetrue) สำหรับวิธี poll task status
 
 > NOTE: ถ้ารูป/ไฟล์บางส่วนหาไม่เจอระหว่าง generate report ระบบจะข้ามไฟล์นั้นและอาจส่ง `warning.missing` กลับมา
 
@@ -2089,11 +2237,19 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 { "jobId": 123, "to": "customer@example.com", "subject": "Report", "body": "<p>See attached</p>" }
 ```
 
-**Response 200 (example):**
+**Response 200 — USE_QUEUE=false (default):**
 
 ```json
 { "success": true }
 ```
+
+**Response 200 — USE_QUEUE=true (queue mode):**
+
+```json
+{ "success": true, "data": { "taskId": "ghi-789", "status": "queued" } }
+```
+
+> ดู [Frontend Integration Guide](#frontend-integration-guide-use_queuetrue) สำหรับวิธี poll task status
 
 **Errors:**
 
@@ -2297,11 +2453,19 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 { "jobId": 555 }
 ```
 
-**Response 200 (example):**
+**Response 200 — USE_QUEUE=false (default):**
 
 ```json
 { "success": true }
 ```
+
+**Response 200 — USE_QUEUE=true (queue mode):**
+
+```json
+{ "success": true, "data": { "taskId": "xxx-123", "status": "queued" } }
+```
+
+> ดู [Frontend Integration Guide](#frontend-integration-guide-use_queuetrue) สำหรับวิธี poll task status
 
 > NOTE: ถ้าบางไฟล์แนบหายใน `uploads/` อาจมี `warning` กลับมา เช่น
 
@@ -2342,11 +2506,19 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 { "jobId": 555 }
 ```
 
-**Response 200 (example):**
+**Response 200 — USE_QUEUE=false (default):**
 
 ```json
 { "success": true }
 ```
+
+**Response 200 — USE_QUEUE=true (queue mode):**
+
+```json
+{ "success": true, "data": { "taskId": "xxx-456", "status": "queued" } }
+```
+
+> ดู [Frontend Integration Guide](#frontend-integration-guide-use_queuetrue) สำหรับวิธี poll task status
 
 **Errors:**
 
@@ -2565,11 +2737,19 @@ Backend นี้มีการรับค่า “วัน/เวลา” 
 { "jobId": 777 }
 ```
 
-**Response 200 (example):**
+**Response 200 — USE_QUEUE=false (default):**
 
 ```json
 { "success": true }
 ```
+
+**Response 200 — USE_QUEUE=true (queue mode):**
+
+```json
+{ "success": true, "data": { "taskId": "xxx-789", "status": "queued" } }
+```
+
+> ดู [Frontend Integration Guide](#frontend-integration-guide-use_queuetrue) สำหรับวิธี poll task status
 
 > NOTE: ถ้าบางไฟล์แนบหายใน storage อาจมี `warning` กลับมา เช่น
 
@@ -2742,11 +2922,19 @@ evidence: [file: photo1.jpg]
 { "jobId": 777 }
 ```
 
-**Response 200 (example):**
+**Response 200 — USE_QUEUE=false (default):**
 
 ```json
 { "success": true, "data": { "reportUrl": "/uploads/report.pdf", "download": "/api/service/step4/download/777" } }
 ```
+
+**Response 200 — USE_QUEUE=true (queue mode):**
+
+```json
+{ "success": true, "data": { "taskId": "xxx-321", "status": "queued" } }
+```
+
+> ดู [Frontend Integration Guide](#frontend-integration-guide-use_queuetrue) สำหรับวิธี poll task status
 
 > NOTE: ถ้ารูป/ไฟล์บางส่วนหาไม่เจอระหว่าง generate report ระบบจะข้ามไฟล์นั้น
 
@@ -2791,11 +2979,19 @@ evidence: [file: photo1.jpg]
 { "jobId": 777, "to": "customer@example.com", "subject": "Service report", "body": "<p>See attached</p>" }
 ```
 
-**Response 200 (example):**
+**Response 200 — USE_QUEUE=false (default):**
 
 ```json
 { "success": true }
 ```
+
+**Response 200 — USE_QUEUE=true (queue mode):**
+
+```json
+{ "success": true, "data": { "taskId": "xxx-654", "status": "queued" } }
+```
+
+> ดู [Frontend Integration Guide](#frontend-integration-guide-use_queuetrue) สำหรับวิธี poll task status
 
 **Errors:**
 
