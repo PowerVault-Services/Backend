@@ -49,10 +49,105 @@ npm run dev
 
 Default server: `http://localhost:3000`
 
-> **สำหรับ Frontend Dev:** แค่ `npm install` แล้ว `npm run dev` ก็ใช้ได้เลย
-> ไม่ต้องลง Redis, ไม่ต้องรัน Worker แยก — ทุกอย่างทำงานแบบ sync เหมือนเดิม
-> (ระบบ queue จะทำงานเฉพาะตอนตั้ง `USE_QUEUE=true` ใน production เท่านั้น)
-> ดูรายละเอียดเพิ่มที่ [Frontend Integration Guide](#frontend-integration-guide-use_queuetrue)
+---
+
+### สำหรับ Frontend Dev: วิธีรัน Backend
+
+มี 2 แบบ เลือกตามสถานการณ์:
+
+#### แบบ A: รันแบบเดิม (ง่ายสุด ไม่ต้องแก้โค้ด frontend)
+
+ใช้แบบนี้ถ้ายังไม่ต้องการเทส queue mode (สร้าง PDF / ส่ง email ทำงานทันทีไม่ต้องรอ)
+
+1. ตั้งค่า `.env`:
+```env
+USE_QUEUE=false          # ← สำคัญ! ต้องเป็น false
+```
+
+2. รัน:
+```bash
+npm install
+npm run dev              # แค่นี้พอ ไม่ต้องเปิด terminal อื่น
+```
+
+3. เชื่อม frontend ไปที่ `http://localhost:3000` — ทุกอย่างทำงานเหมือนเดิม
+
+#### แบบ B: รันแบบ Queue Mode (เหมือน production — ต้องแก้โค้ด frontend)
+
+ใช้แบบนี้เมื่อจะ deploy ขึ้น cloud จริง เพราะ production ใช้ queue mode
+
+> **สำคัญ:** ต้องแก้โค้ด frontend รองรับ queue mode ก่อน ดูวิธีที่ [Frontend Integration Guide](#frontend-integration-guide-use_queuetrue)
+
+1. ตั้งค่า `.env`:
+```env
+USE_QUEUE=true           # ← เปิด queue mode
+REDIS_HOST=10.240.68.192 # ← Redis บน cloud (ขอ IP จากทีม)
+REDIS_PORT=6379
+REDIS_PASSWORD=xxx       # ← ขอ password จากทีม
+```
+
+2. Build worker ก่อน (ครั้งแรก / หลัง pull โค้ดใหม่):
+```bash
+npm install
+npm run build
+```
+
+3. เปิด **2 terminal**:
+```bash
+# Terminal 1 — API server
+npm run dev
+
+# Terminal 2 — Worker (สร้าง PDF + ส่ง email)
+node dist/worker.js
+```
+
+4. เชื่อม frontend ไปที่ `http://localhost:3000`
+
+> **ถ้าเปิด USE_QUEUE=true แต่ไม่รัน Worker** → กดสร้างรายงาน/ส่งอีเมลจะค้างไม่เสร็จ!
+>
+> **ถ้าเปิด USE_QUEUE=true แต่ frontend ยังไม่แก้โค้ด** → กดแล้วจะไม่เห็นผลลัพธ์!
+
+#### เทส Queue Mode ผ่าน Postman
+
+ถ้าอยากเทส queue mode ด้วยมือก่อนแก้ frontend:
+
+```
+1. POST {{baseUrl}}/api/cleaning/step4/generate   body: { "jobId": 4 }
+   → ได้ { "success": true, "data": { "taskId": "1", "status": "queued" } }
+
+2. GET {{baseUrl}}/api/tasks/1?queue=report-generation
+   → ได้ { "state": "completed", "progress": 100, "result": { "fileUrl": "..." } }
+```
+
+#### Frontend โค้ดตัวอย่าง (รองรับทั้ง 2 mode):
+
+```typescript
+const res = await api.post('/api/cleaning/step4/generate', { jobId });
+
+if (res.data.data.taskId) {
+  // Queue mode (production) → poll จนเสร็จ
+  const result = await pollTask(res.data.data.taskId, 'report-generation');
+  openPdf(result.fileUrl);
+} else {
+  // Sync mode (local) → ใช้ผลลัพธ์เลย
+  openPdf(res.data.data.reportUrl);
+}
+
+// ฟังก์ชัน poll (ใส่ใน utils)
+async function pollTask(taskId: string, queue: string): Promise<any> {
+  while (true) {
+    const { data } = await api.get(`/api/tasks/${taskId}?queue=${queue}`);
+    const state = data.data.state;
+    if (state === 'completed') return data.data.result;
+    if (state === 'failed') throw new Error(data.data.failedReason);
+    await new Promise(r => setTimeout(r, 2000)); // รอ 2 วินาทีแล้ว poll ใหม่
+  }
+}
+```
+
+> เขียนแบบนี้ **ทำงานได้ทั้ง 2 mode** — ไม่ว่า USE_QUEUE จะ true หรือ false
+
+---
 
 ### รัน Worker แยก (production-style)
 
