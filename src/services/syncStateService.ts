@@ -4,7 +4,7 @@ import path from 'path';
 import { projectRoot } from '../config/runtimePaths';
 import prisma from '../config/prisma';
 
-export type SyncJobName = 'siteRealtime' | 'device' | 'alarm' | 'dailyKpi';
+export type SyncJobName = 'siteRealtime' | 'device' | 'alarm' | 'dailyKpi' | 'hourlyKpi' | 'auxRealtime' | 'monthlyKpi';
 export type SyncStationKind = 'siteRealtime' | 'device' | 'alarm';
 
 type JobState = {
@@ -26,7 +26,7 @@ type SyncStateFile = {
 };
 
 const MAX_STATION_HISTORY = Math.max(5000, Number(process.env.HUAWEI_SYNC_STATE_MAX_STATIONS ?? 20000));
-const JOB_NAMES: SyncJobName[] = ['siteRealtime', 'device', 'alarm', 'dailyKpi'];
+const JOB_NAMES: SyncJobName[] = ['siteRealtime', 'device', 'alarm', 'dailyKpi', 'hourlyKpi', 'auxRealtime', 'monthlyKpi'];
 const STATION_KINDS: SyncStationKind[] = ['siteRealtime', 'device', 'alarm'];
 
 function createEmptyJobState(): JobState {
@@ -51,6 +51,9 @@ function createEmptyState(): SyncStateFile {
       device: createEmptyJobState(),
       alarm: createEmptyJobState(),
       dailyKpi: createEmptyJobState(),
+      hourlyKpi: createEmptyJobState(),
+      auxRealtime: createEmptyJobState(),
+      monthlyKpi: createEmptyJobState(),
     },
     stations: {
       siteRealtime: {},

@@ -146,7 +146,9 @@ model Site {
   forecastYearly        SiteForecastYearly[]
   monthlyActuals        SiteMonthlyActual[]
   dailyKpis             SiteDailyKpi[]
+  hourlyKpis            SiteHourlyKpi[]
   auxDevices            AuxDevice[]
+  auxDeviceSnapshots    AuxDeviceSnapshot[]
   otherRows             SiteOtherRow[]
   serviceEntries        ServiceEntry[]
 
@@ -740,6 +742,58 @@ model AuxDevice {
 
   @@unique([siteId, huaweiDevId])
   @@index([plantCode, huaweiDevTypeId])
+}
+
+// =======================
+// AUX DEVICE REALTIME SNAPSHOT (cron-synced for DB-first home realtime)
+// =======================
+
+model AuxDeviceSnapshot {
+  id        Int    @id @default(autoincrement())
+  siteId    Int
+  site      Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  plantCode String
+
+  huaweiDevId     String
+  huaweiDevTypeId Int
+
+  dataItemMap Json? // raw dataItemMap from getDevRealKpi
+
+  fetchedAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, huaweiDevId])
+  @@index([plantCode, huaweiDevTypeId])
+}
+
+// =======================
+// SITE HOURLY KPI (cron-synced for DB-first day view)
+// =======================
+
+model SiteHourlyKpi {
+  id        Int  @id @default(autoincrement())
+  siteId    Int
+  site      Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  plantCode String
+
+  ts          DateTime // hour timestamp (e.g. 2025-10-18T08:00:00)
+  collectTime Float?   // original Huawei collectTime ms
+
+  production       Float? // PVYield / inverterYield / inverter_power
+  irradiation      Float? // radiation_intensity
+  gridImport       Float? // buyPower
+  gridExport       Float? // ongrid_power
+  consumption      Float? // use_power
+  consumedFromPv   Float? // selfProvide / selfUsePower
+  batteryCharge    Float? // chargeCap
+  batteryDischarge Float? // dischargeCap
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, ts])
+  @@index([plantCode, ts])
 }
 
 // =======================

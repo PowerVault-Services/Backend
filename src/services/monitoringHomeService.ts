@@ -403,30 +403,60 @@ async function persistAuxDevicesToDb(site: SiteRecord, devices: HuaweiDeviceLite
 async function fetchAuxRealtimeInner(site: SiteRecord, refreshMode: 'auto' | 'force'): Promise<AuxRealtimeBundle> {
   const refreshed = await maybeRefreshSiteRealtime(site, refreshMode);
   const devices = await getAuxDevices(refreshed.site);
-  const client = pickOnDemandClient();
   const realtimeByType: Partial<Record<AuxDeviceType, HuaweiRealtimeRow[]>> = {};
-  let fetchFailed = false;
 
-  for (const devTypeId of AUX_DEVICE_TYPES) {
-    const ids = devices
-      .filter((device) => Number(device.devTypeId) === devTypeId)
-      .map((device) => String(device.id))
-      .filter(Boolean);
+  // ── DB-first: read AuxDeviceSnapshot from cron sync ──
+  const snapshots = await (prisma as any).auxDeviceSnapshot.findMany({
+    where: { siteId: site.id },
+    select: { huaweiDevId: true, huaweiDevTypeId: true, dataItemMap: true },
+  }) as { huaweiDevId: string; huaweiDevTypeId: number; dataItemMap: any }[];
 
-    if (ids.length === 0) continue;
+  if (snapshots.length > 0) {
+    for (const snap of snapshots) {
+      const devTypeId = snap.huaweiDevTypeId as AuxDeviceType;
+      if (!AUX_DEVICE_TYPES.includes(devTypeId)) continue;
+      if (!realtimeByType[devTypeId]) realtimeByType[devTypeId] = [];
+      realtimeByType[devTypeId]!.push({
+        devId: snap.huaweiDevId,
+        dataItemMap: snap.dataItemMap ?? {},
+      });
+    }
+  }
 
-    try {
-      const response: any = await client.getDevRealKpi({ devTypeId, devIds: ids });
-      if (response?.success && Array.isArray(response?.data)) {
-        realtimeByType[devTypeId] = response.data as HuaweiRealtimeRow[];
-      } else {
-        const failCode = response?.failCode ?? 'unknown';
-        console.warn(`⚠️ [HomeRealtime] getDevRealKpi failed for devType=${devTypeId} plant=${site.plantCode} failCode=${failCode}`);
+  // ── Fallback to Huawei API if DB had no snapshots (first run or force refresh) ──
+  if (snapshots.length === 0 || refreshMode === 'force') {
+    const client = pickOnDemandClient();
+    let fetchFailed = false;
+    const apiRealtimeByType: Partial<Record<AuxDeviceType, HuaweiRealtimeRow[]>> = {};
+
+    for (const devTypeId of AUX_DEVICE_TYPES) {
+      const ids = devices
+        .filter((device) => Number(device.devTypeId) === devTypeId)
+        .map((device) => String(device.id))
+        .filter(Boolean);
+
+      if (ids.length === 0) continue;
+
+      try {
+        const response: any = await client.getDevRealKpi({ devTypeId, devIds: ids });
+        if (response?.success && Array.isArray(response?.data)) {
+          apiRealtimeByType[devTypeId] = response.data as HuaweiRealtimeRow[];
+        } else {
+          const failCode = response?.failCode ?? 'unknown';
+          console.warn(`⚠️ [HomeRealtime] getDevRealKpi failed for devType=${devTypeId} plant=${site.plantCode} failCode=${failCode}`);
+          fetchFailed = true;
+        }
+      } catch (err: any) {
+        console.warn(`⚠️ [HomeRealtime] getDevRealKpi error for devType=${devTypeId} plant=${site.plantCode}:`, err?.message ?? err);
         fetchFailed = true;
       }
-    } catch (err: any) {
-      console.warn(`⚠️ [HomeRealtime] getDevRealKpi error for devType=${devTypeId} plant=${site.plantCode}:`, err?.message ?? err);
-      fetchFailed = true;
+    }
+
+    // Use API data if we got any (overrides DB for force refresh, fills in for first run)
+    if (!fetchFailed || Object.keys(apiRealtimeByType).length > 0) {
+      for (const [key, val] of Object.entries(apiRealtimeByType)) {
+        realtimeByType[Number(key) as AuxDeviceType] = val;
+      }
     }
   }
 
@@ -437,24 +467,6 @@ async function fetchAuxRealtimeInner(site: SiteRecord, refreshMode: 'auto' | 'fo
     realtimeByType,
     fetchedAt: new Date().toISOString(),
   };
-
-  // If some device fetches failed, check if we have a richer stale cache to prefer
-  if (fetchFailed) {
-    const stale = auxRealtimeCache.get(site.plantCode);
-    if (stale) {
-      const staleTypeCount = Object.keys(stale.value.realtimeByType).length;
-      const freshTypeCount = Object.keys(realtimeByType).length;
-      if (staleTypeCount > freshTypeCount) {
-        // Merge: keep stale data for device types that failed, use fresh for those that succeeded
-        const merged: Partial<Record<AuxDeviceType, HuaweiRealtimeRow[]>> = { ...stale.value.realtimeByType };
-        for (const [key, val] of Object.entries(realtimeByType)) {
-          merged[Number(key) as AuxDeviceType] = val;
-        }
-        bundle.realtimeByType = merged;
-        console.log(`[HomeRealtime] Merged stale cache (${staleTypeCount} types) with fresh data (${freshTypeCount} types) for plant=${site.plantCode}`);
-      }
-    }
-  }
 
   auxRealtimeCache.set(site.plantCode, {
     expiresAt: Date.now() + AUX_DEVICE_REALTIME_CACHE_TTL_MS,
@@ -704,7 +716,38 @@ export async function getEnergyManagementSeries(siteId: number, opts?: { view?: 
     }
   }
 
-  // Fallback to Huawei API for day views or if DB had no data
+  // ── DB-first path for day view (SiteHourlyKpi) ──
+  if (view === 'day' && mapped.length === 0) {
+    const dbRows: any[] = await (prisma as any).siteHourlyKpi.findMany({
+      where: {
+        siteId,
+        ts: { gte: start, lt: end },
+      },
+      orderBy: { ts: 'asc' },
+    });
+
+    if (dbRows.length > 0) {
+      dataSource = 'db';
+      mapped = dbRows.map((r: any): GraphPoint => {
+        const ts = new Date(r.ts);
+        return {
+          timestamp: toIso(ts),
+          label: '',
+          pvOutput: roundValue(r.production, 3),
+          powerOfGrid: null,
+          gridImport: roundValue(r.gridImport, 3),
+          gridExport: roundValue(r.gridExport, 3),
+          consumptionPower: roundValue(r.consumption, 3),
+          consumedFromPv: roundValue(r.consumedFromPv, 3),
+          batteryCharge: roundValue(r.batteryCharge, 3),
+          batteryDischarge: roundValue(r.batteryDischarge, 3),
+          irradiance: roundValue(r.irradiation, 3),
+        };
+      });
+    }
+  }
+
+  // Fallback to Huawei API if DB had no data
   if (mapped.length === 0) {
     dataSource = 'huawei';
     const response: any = await getCachedPlantKpi({

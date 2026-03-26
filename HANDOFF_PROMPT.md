@@ -44,11 +44,73 @@
 
 ## Huawei Rate Limiting
 
-- **failCode 407** = per-account rate limit → cooldown 300s (5 min) + minInterval x 1.25
-- **failCode 403/429** = org-wide rate limit → cooldown 60s
+รายละเอียดเต็มอยู่ใน `docs/smartpvms_rate_limiting_compact_for_ai.md` และ `docs/smartpvms_nbi_25_4_compact_for_ai.md`
+
+### Error codes & ระบบ backend ตอบสนอง
+
+| failCode | ความหมาย | Backend response |
+|----------|----------|------------------|
+| **407** | per-account/per-user exceeded limit | cooldown 300s (5 min) + minInterval ×1.25 |
+| **403/429** | system-wide API traffic too high | cooldown 60s → exponential backoff with jitter |
+
+### Backend safeguards (ที่ implement แล้ว)
+
 - **Throttle chain**: per-account, min 6.5s between requests (ปรับขึ้นถึง 15-20s เมื่อโดน 407, decay กลับหลัง 10 นาทีไม่โดน)
 - **Circuit breaker**: 5 failures → open 120s
 - **Login guard**: max 5 login / 10 min per account
+
+### Authentication & Session (สำคัญมาก)
+
+- `XSRF-TOKEN` อายุ **30 นาที** — reuse ได้ถ้ายังไม่หมดอายุ, ถ้า login ใหม่ token เก่า invalid ทันที
+- **1 online session / account** — login ซ้ำจะ kill session เดิม
+- Login API limit: **5 calls / 10 min / account** — ถ้า password ผิด 5 ครั้งใน 10 นาที lock account 30 นาที
+- **ห้าม login ทุก request** — cache token + expiry, refresh เมื่อจำเป็นเท่านั้น
+- ถ้ามีหลาย worker ใช้ account เดียวกัน ต้อง centralize token ownership (shared lock / leader refresh)
+
+### New Policy — Rate Limit Formulas (default สำหรับ API account ใหม่)
+
+`Roundup(x)` = ปัดขึ้นเป็นจำนวนเต็ม เช่น Roundup(20/100) = 1, Roundup(120/100) = 2
+
+#### สำหรับ 253 plants, ~500 inverters, ~250 meters (ประมาณการ):
+
+| API | สูตร | Window | Limit/account | หมายเหตุ |
+|-----|------|--------|---------------|----------|
+| **Plant List** | `Roundup(plants/100)*10+24` | /day | **54/day** | cache aggressively |
+| **Device List** | `Roundup(plants/100)+24` | /day | **27/day** | ⚠️ daily limit ต่ำมาก — ต้อง cache |
+| **Realtime Plant** | `Roundup(plants/100)` | /5 min | **3/5min** | poll ทุก 5 นาที |
+| **Realtime Device** | `sum(Roundup(devices_by_type/100))` | /5 min | **~7/5min** | group by devTypeId |
+| **Historical Device** | `sum(devices/60/10)` | /sec | **~0.13 req/s** | serialize heavily, 1 device/24h/request |
+| **Active Alarms** | `max(Roundup(plants/100), sum(Roundup(devices_by_type/100)))` | /30 min | **~7/30min** | |
+| **Plant Reports** (hour/day/month/year) | `Roundup(plants/100)+24` | /day each | **27/day** | |
+| **Device Reports** (day/month/year) | `sum(Roundup(devices_by_type/100))+24` | /day each | **~32/day** | |
+| **Control APIs** | 1 call/min/account | /min | **1/min** | submit once, poll sparingly |
+
+#### OAuth Connect mode (ถ้าใช้):
+- Basic APIs: **1000/day/owner**
+- Control APIs: **100/day/owner**
+
+### Old Policy (legacy, static — สำหรับ account เก่า)
+
+| API | Limit |
+|-----|-------|
+| Plant list / Device list | 10/min |
+| Real-time plant data | 30/min |
+| Real-time device data | 10/min |
+| Historical device data | 1/min |
+| Active alarms | 10/min |
+| Reports (hour/day/month/year) | 10/min each |
+
+หมายเหตุ: FAQ ระบุว่า API account ใหม่ใช้ **new policy** เป็น default — อย่า assume old policy ถ้าไม่ได้พิสูจน์จาก behavior จริง
+
+### กฎ Caching & Scheduling ที่ต้องปฏิบัติ
+
+1. **Cache plant list + device list** — อย่าเรียกซ้ำทุก tick (daily quota ไม่พอ)
+2. **Poll realtime ตาม 5-min cadence** — ไม่ต้องเร็วกว่านี้ (data refresh ทุก ~5 นาทีอยู่แล้ว)
+3. **Report APIs เป็น delayed summaries** — ไม่ใช่ realtime, ใช้สำหรับ dashboard/export
+4. **Historical Device API ถูกจำกัดมากที่สุด** — max 1 device/24h/request, serialize + queue + deduplicate
+5. **Control APIs เป็น task workflow** — submit ครั้งเดียว แล้ว poll status ห่างๆ
+6. **เพิ่ม jitter** ให้ทุก scheduled polling เพื่อลด synchronized bursts
+7. **Report values อาจ lag** — day_income update ทุก 5 นาที แต่ total_income update ทุก 1 ชม. (current > total ได้ชั่วคราว)
 
 ## 4 Huawei Accounts (ปัจจุบัน — 4 credentials แยกกันจริง)
 
@@ -75,18 +137,26 @@ ondemand:     ['ondemand', 'alarm', 'backup', 'main'],
 ## Cron Jobs and Startup Warmup
 
 ```
-Cron schedules (ทุก 5 นาที stagger กัน):
-  - Site Realtime: */5 * * * *
-  - Alarm:         1-59/5 * * * *
-  - Device:        2-59/5 * * * *
+Cron schedules:
+  - Site Realtime:  */5 * * * *          (ทุก 5 นาที)
+  - Alarm:          1-59/5 * * * *       (ทุก 5 นาที offset :01)
+  - Device:         2-59/5 * * * *       (ทุก 5 นาที offset :02)
+  - Aux Realtime:   3-59/5 * * * *       (ทุก 5 นาที offset :03)
+  - Hourly KPI:     10-59/15 * * * *     (ทุก 15 นาที)
+  - Daily KPI:      15 * * * *           (ทุก 1 ชม. at :15)
+  - Monthly KPI:    20 */4 * * *         (ทุก 4 ชม. at :20)
 
-Startup warmup (src/jobs/cron.ts:169-171):
-  - Site Realtime: +5s หลัง start
-  - Alarm:         +20s หลัง start
-  - Device:        +40s หลัง start
+Startup warmup (stagger 30s ระหว่าง job):
+  - Site Realtime: +5s
+  - Alarm:         +30s
+  - Device:        +60s
+  - Hourly KPI:    +90s
+  - Aux Realtime:  +120s
+  - Daily KPI:     +180s
+  - Monthly KPI:   +240s
 ```
 
-ปัญหา startup warmup: ทุก task ยิงพร้อมกันในช่วง 40 วินาทีแรก ทำให้ accounts โดน 407 พุ่งเพราะ login + API calls ชนกันข้าม tasks ถ้ามี frontend team รัน code ชุดเดียวกันด้วย credentials เดียวกัน จะโดน 407 เร็ว 2 เท่า
+✅ Startup warmup แก้แล้ว — stagger เพิ่มจาก 20s เป็น 30s ระหว่าง job เพื่อลด 407 burst ช่วง startup
 
 ## DB Schema ที่เกี่ยวข้อง (Prisma)
 
@@ -96,9 +166,19 @@ Site: id, plantCode, currentPowerKW, dayEnergyKWh, monthEnergyKWh, totalEnergyKW
 
 SiteDailyEnergy: siteId, date, energyKWh, raw (Json)
 
+SiteHourlyKpi: siteId, plantCode, ts, collectTime, production, irradiation,
+              gridImport, gridExport, consumption, consumedFromPv,
+              batteryCharge, batteryDischarge
+
+SiteDailyKpi: siteId, plantCode, date, collectTime, production, irradiation,
+             gridImport, gridExport, consumption, revenue, selfProvide,
+             batteryCharge, batteryDischarge, moduleTempC, downTimeClientHours, pr
+
 SiteMonthlyActual: siteId, plantCode, year, month, key ("YYYY-MM"),
                    collectTime, irradiation, production, pr, gridImport, gridExport,
-                   consumption, revenue
+                   consumption, revenue, selfProvide
+
+AuxDeviceSnapshot: siteId, plantCode, huaweiDevId, huaweiDevTypeId, dataItemMap (Json), fetchedAt
 
 Inverter: id, serialNumber, siteId, huaweiDevId, huaweiDevTypeId, stationCode, activePower
 
@@ -124,6 +204,12 @@ HuaweiSyncStation: stationCode, lastSeenAt, ... (ใช้โดย syncStateSer
 9. Inflight request coalescing สำหรับ fetchAuxRealtime
 10. PURPOSE_ORDER แก้แล้ว — เอา ondemand ออกจาก device และ alarm purpose เพื่อ reserve ไว้สำหรับ on-demand เท่านั้น
 11. Device sync batchIndex แก้แล้ว — syncPlantDevicesWithFailover รับ batchIndex parameter และ worker loop ส่ง site index เข้าไป ทำให้กระจาย 3 accounts (main/backup/alarm) แบบ rotate
+12. **getDevList inventory budget** — device sync ไม่เรียก getDevList ทุก site ทุก tick อีกแล้ว ใช้ `needsInventorySet` (cap `HUAWEI_INVENTORY_PER_TICK` default 2) + TTL 24h (`HUAWEI_DEVICE_META_TTL_MS`) เรียก getDevList เฉพาะ site ที่ deviceMetaSyncedAt เป็น null หรือหมดอายุ ที่เหลือใช้ cached inventory จาก Inverter table → getDevList ลดจาก 253/cycle เหลือ ~2/tick
+13. **Aux realtime DB-first** — cron sync `syncAuxRealtimeTick` ทุก 5 นาที ดึง getDevRealKpi สำหรับ aux devices (meter, battery, EMI, weather) ทั้ง 253 sites → เก็บ `AuxDeviceSnapshot` table → `fetchAuxRealtimeInner` อ่าน DB ก่อน fallback Huawei เฉพาะ force refresh → ONDEMAND ไม่ต้องยิง API อีก
+14. **Day view hourly KPI DB-first** — cron sync `syncHourlyKpiTick` ทุก 15 นาที ดึง getKpiStationHour → เก็บ `SiteHourlyKpi` table → `getEnergyManagementSeries` day view อ่าน DB ก่อน fallback Huawei → ONDEMAND daily quota ไม่หมด
+15. **Monthly KPI cron sync** — cron sync `syncMonthlyKpiTick` ทุก 4 ชม. ดึง getKpiStationMonth → upsert `SiteMonthlyActual` table → year/lifetime view อ่าน DB ก่อน (DB-first มีอยู่แล้ว แต่ table ไม่ถูก populate จาก cron มาก่อน) → ONDEMAND ไม่ต้องยิง API สำหรับ year view อีก
+16. **cron.ts dynamic clients** — `resetStats()` และ `getCronStatus()` ใช้ `Object.values(huaweiClients)` / `Object.entries(huaweiClients)` แทน hardcode 4 ตัว → เพิ่ม account ใหม่ไม่ต้องแก้ cron.ts
+17. **Startup warmup stagger** — เพิ่ม interval จาก 20s เป็น 30s ระหว่าง job, กระจาย 7 jobs ใน 4 นาที แทน 6 jobs ใน 100 วินาที → ลด 407 burst ช่วง startup
 
 ### รายละเอียด Device Sync batchIndex (แก้ไปแล้ว สำหรับอ้างอิง)
 
@@ -174,91 +260,102 @@ const DEVICE_SYNC_CONCURRENCY = Math.max(1,
 - `parseRequestedAnchor` — parse date strings เป็น Bangkok noon
 - `collectTime` calculations — ใช้ `tzDate()` สร้าง noon Bangkok
 
-## ปัญหา 2: กราฟยิง Huawei ตรง ไม่อ่าน DB ก่อน — แก้บางส่วนแล้ว
+## ~~ปัญหา 2: กราฟยิง Huawei ตรง ไม่อ่าน DB ก่อน~~ ✅ แก้หมดแล้ว
 
-### 3 จุดที่ต้องแก้:
+### สถานะจริงในโค้ด (ตรวจสอบแล้ว):
 
-#### ~~2a. Energy Management Graph~~ ✅ แก้บางส่วนแล้ว
-- **Year/Lifetime views**: อ่าน `SiteMonthlyActual` จาก DB ก่อน ถ้ามีข้อมูลไม่ยิง Huawei เลย (lifetime aggregate by year)
-- **Day/Month views**: ยังยิง Huawei ผ่าน `getCachedPlantKpi` (ไม่มี DB table สำหรับ hourly KPI, `SiteDailyEnergy` มีแค่ `energyKWh` ไม่ครบ fields)
-- ถ้าต้องการ day/month DB-first ต้องสร้าง table ใหม่ (`SiteHourlyKpi`, `SiteDailyKpi`) เพื่อเก็บ full dataItemMap
+#### ~~2a. Energy Management Graph~~ ✅ แก้หมดแล้ว
+- **Year/Lifetime views**: อ่าน `SiteMonthlyActual` จาก DB ก่อน ✅
+- **Month view**: อ่าน `SiteDailyKpi` จาก DB ก่อน ✅ (cron `syncDailyKpiTick` ทุกชั่วโมง)
+- **Day view**: อ่าน `SiteHourlyKpi` จาก DB ก่อน ✅ (cron `syncHourlyKpiTick` ทุก 15 นาที)
 
-#### 2b. Home Realtime — Aux Devices (ยังไม่ได้แก้)
-ปัจจุบัน: getAuxDevices() ยิง Huawei getDevList ทุกครั้ง (มี 6h in-memory cache)
-ควรเป็น: เก็บ aux device metadata ลง DB แล้วอ่านจาก DB ก่อน
-หมายเหตุ: ต้องสร้าง DB table ใหม่สำหรับ aux devices (EMI, meter, battery ไม่อยู่ใน Inverter table)
+#### ~~2b. Home Realtime — Aux Devices~~ ✅ แก้หมดแล้ว
+- **Aux Device List** (`getAuxDevices`): DB-first — อ่าน `AuxDevice` table ก่อน ✅
+- **Aux Device Realtime** (`fetchAuxRealtimeInner`): **DB-first แล้ว** — อ่าน `AuxDeviceSnapshot` table ก่อน ✅ (cron `syncAuxRealtimeTick` ทุก 5 นาที), fallback Huawei เฉพาะ force refresh
 
 #### ~~2c. PR Chart (/pr route)~~ ✅ แก้แล้ว
-- **Month granularity**: อ่าน `SiteMonthlyActual` จาก DB ก่อน fallback Huawei ถ้า DB ว่าง
-- **Year granularity**: aggregate `SiteMonthlyActual` by year จาก DB ก่อน fallback Huawei
-- **Day granularity**: ยังยิง Huawei (ไม่มี daily KPI table)
+- Month/Year: อ่าน `SiteMonthlyActual` จาก DB ก่อน fallback Huawei
+- Day: อ่าน `SiteHourlyKpi` จาก DB ก่อน (เดียวกับ day view)
 
-#### ผลกระทบที่เหลือ (ลดลงมากแล้ว):
-- Year/Lifetime Energy Management + PR month/year → อ่าน DB ใน <50ms ไม่ยิง Huawei
-- Day/Month Energy Management + PR day → ยังใช้ Huawei ผ่าน in-memory cache (getCachedPlantKpi)
-- Aux devices → ยังใช้ Huawei แต่มี 6h in-memory cache อยู่แล้ว
+#### สรุป ONDEMAND load ต่อการเปิดหน้า 1 plant:
+```
+Inverter cards:            0 API calls (DB - InverterKpiSnapshot)
+Alarm banner:              0 API calls (DB - cron sync)
+Energy Mgmt Year/Lifetime: 0 API calls (DB - SiteMonthlyActual, cron syncMonthlyKpiTick ทุก 4 ชม.)
+Energy Mgmt Month:         0 API calls (DB - SiteDailyKpi)
+Energy Mgmt Day:           0 API calls (DB - SiteHourlyKpi) ✅ แก้แล้ว
+Aux Device List:           0 API calls (DB - AuxDevice table)
+Aux Device Realtime:       0 API calls (DB - AuxDeviceSnapshot) ✅ แก้แล้ว
+──────────────────────────────────────────────────
+รวม:                       0 API calls → ดูกี่คนกี่ plant ก็ได้ ไม่ติด limit
+```
 
-## ปัญหา 3: เพิ่ม Huawei Accounts จาก 4 เป็น 8
+## ปัญหา 3: เพิ่ม Huawei Accounts (อาจได้เพิ่ม 2 ตัว รวม 6)
 
-เป้าหมาย: ใช้ 7 accounts สำหรับ cron + 1 สำหรับ ondemand
+เป้าหมาย: ใช้ 5 accounts สำหรับ cron + 1 สำหรับ ondemand
 
 ไฟล์ที่ต้องแก้ (3 ไฟล์):
 
-1. `src/config/env.ts` — เพิ่ม 4 คู่ env vars:
+1. `src/config/env.ts` — เพิ่ม 2 คู่ env vars:
    ```
    HUAWEI_EXTRA1_USER / HUAWEI_EXTRA1_PASSWORD
    HUAWEI_EXTRA2_USER / HUAWEI_EXTRA2_PASSWORD
-   HUAWEI_EXTRA3_USER / HUAWEI_EXTRA3_PASSWORD
-   HUAWEI_EXTRA4_USER / HUAWEI_EXTRA4_PASSWORD
    ```
 
-2. `src/services/huaweiService.ts` — สร้าง 4 instances เพิ่ม:
-   ```ts
-   export const huaweiExtra1 = getOrCreateHuaweiService({ userName: extra1User, systemCode: extra1Pass, label: 'EXTRA1' });
-   // ... x4
-   ```
+2. `src/services/huaweiService.ts` — สร้าง 2 instances เพิ่ม
 
-3. `src/services/huaweiPool.ts` — เพิ่ม client keys + อัพเดท:
-   ```ts
-   type HuaweiLogicalClientKey = 'main' | 'backup' | 'alarm' | 'ondemand' | 'extra1' | 'extra2' | 'extra3' | 'extra4';
-
-   huaweiClients = { main, backup, alarm, ondemand, extra1, extra2, extra3, extra4 };
-
-   PURPOSE_ORDER.device = ['main', 'backup', 'alarm', 'extra1', 'extra2', 'extra3', 'extra4'];
-   PURPOSE_ORDER.alarm = ['alarm', 'backup', 'main', 'extra1', 'extra2', 'extra3', 'extra4'];
-   ```
+3. `src/services/huaweiPool.ts` — เพิ่ม client keys + อัพเดท PURPOSE_ORDER
 
 สิ่งที่ไม่ต้องแก้ (รองรับ N accounts อยู่แล้ว): rotate(), batchIndex, uniqueServices(), resolveDynamicDevicePlantsPerTick(), DEVICE_SYNC_CONCURRENCY (auto จาก client count)
 
-Timing: 253 sites / 7 accounts x 6.5s = ประมาณ 4 นาที (จากเดิม 27 นาที ด้วย 1 account, 9 นาที ด้วย 3 accounts ปัจจุบัน)
+## ~~ปัญหา 3.1: Huawei API Daily Quota (New Policy)~~ ✅ แก้แล้ว (getDevList cache)
 
-ข้อควรระวัง:
-- 407 (per-account) จะลดมาก
-- 403/429 (org-wide) อาจไม่ลด เพราะ total requests/min สูงขึ้น ต้องมี HUAWEI_BUDGET_MAX_REQUESTS กำกับ
+ดู `docs/smartpvms_rate_limiting_compact_for_ai.md` สำหรับ rate limit formulas
 
-## ปัญหา 4: cron.ts hardcode 4 clients ใน resetStats
+### Quota จริงสำหรับ 253 plants (per account per day/5min):
 
-src/jobs/cron.ts:37-40 hardcode huaweiClients.main/backup/alarm/ondemand สำหรับ resetStats() ถ้าเพิ่มเป็น 8 ต้องอัพเดทให้ iterate ทุก client:
-```ts
-// ปัจจุบัน (hardcode):
-huaweiClients.main.resetStats();
-huaweiClients.backup.resetStats();
-huaweiClients.alarm.resetStats();
-huaweiClients.ondemand.resetStats();
+| API | Limit/account | Window | 4 cron accounts | 6 cron accounts |
+|-----|---------------|--------|-----------------|-----------------|
+| Device List (getDevList) | 27/day | ต่อวัน | 108/day | 162/day |
+| Real-time Plant Data | 3/5min | 5 นาที | 12/5min | 18/5min |
+| Real-time Device Data | ~7/5min | 5 นาที | 28/5min | 42/5min |
+| KPI Hour/Day/Month/Year | 27/day each | ต่อวัน | 108/day | 162/day |
+| Active Alarms | ~7/30min | 30 นาที | 28/30min | 42/30min |
 
-// ควรเป็น:
-Object.values(huaweiClients).forEach(c => c.resetStats());
+### วิธีที่แก้แล้ว:
+
+**แยก device sync เป็น 2 ขั้น** (syncService.ts, `_syncMonitoringTickInner`):
+1. **Inventory sync** (rare): เรียก getDevList เฉพาะ site ที่ `deviceMetaSyncedAt` เป็น null หรือหมดอายุ (> 24h TTL) — cap ต่อ tick ด้วย `HUAWEI_INVENTORY_PER_TICK` (default 2)
+2. **Realtime sync** (frequent): เรียกแค่ getDevRealKpi ทุก 5 นาที (limit ต่อ 5 นาที ไม่ใช่ต่อวัน)
+
+ผลลัพธ์: getDevList ลดจาก 253/cycle เหลือ ~2/tick (max ~576/day แต่ TTL 24h ทำให้จริงๆ เรียก ~253/day กระจายตลอดวัน) → 4 accounts ก็เพียงพอ
+
+### Timing หลังแก้ (4 accounts, 3 cron):
+
+```
+getDevRealKpi: ~21 calls/5min budget (3 cron accounts x 7/5min)
+Device sync ใช้แค่ getDevRealKpi (ไม่ต้อง getDevList ทุก tick)
+→ sync ครบทุก site ได้ตามปกติ ไม่ติด daily quota
 ```
 
-เช่นเดียวกับ getCronStatus() (line 131-134) ที่ hardcode client status
+ข้อควรระวัง:
+- 403/429 (org-wide) อาจไม่ลด เพราะ total requests/min สูงขึ้น ต้องมี HUAWEI_BUDGET_MAX_REQUESTS กำกับ
+- First deploy: ทุก site มี deviceMetaSyncedAt = null → getDevList จะถูกเรียกทีละ 2/tick จนครบ 253 sites (~127 ticks = ~10.5 ชม.) หลังจากนั้น TTL refresh กระจายตลอดวัน
 
-## ปัญหา 5: Frontend team ใช้ credentials ชุดเดียวกัน
+## ~~ปัญหา 4: cron.ts hardcode 4 clients ใน resetStats~~ ✅ แก้แล้ว
 
-สาเหตุ: Frontend team pull backend code ไป dev โดยใช้ .env เดียวกัน ทำให้ accounts ถูกยิงซ้ำ 2 เครื่อง โดน 407 เร็ว 2 เท่า
+แก้โดยใช้ `Object.values(huaweiClients)` สำหรับ `resetStats()` และ `Object.entries(huaweiClients)` สำหรับ `getCronStatus()` → เพิ่ม account ใหม่ไม่ต้องแก้ cron.ts อีก
 
-วิธีแก้ (เลือกอย่างใดอย่างหนึ่ง):
-1. เพิ่ม DISABLE_CRON=true flag ใน cron.ts — frontend team ใส่ flag นี้ปิด cron ฝั่งเขา ใช้ DB ที่ backend sync ให้
-2. แยก credentials ให้ frontend ใช้คนละชุด
+## ~~ปัญหา 5: Frontend team ใช้ credentials ชุดเดียวกัน~~ ✅ แก้แล้ว
+
+DISABLE_CRON flag ถูกเพิ่มใน cron.ts (line 156-159) แล้ว:
+```ts
+if (process.env.DISABLE_CRON === '1' || process.env.DISABLE_CRON === 'true') {
+  console.log('DISABLE_CRON=1 — skipping all Huawei sync jobs (frontend-only mode)');
+  return;
+}
+```
+Frontend team ใส่ `DISABLE_CRON=true` ใน .env ได้เลย
 
 ---
 
@@ -305,7 +402,7 @@ Object.values(huaweiClients).forEach(c => c.resetStats());
 
 | คำถาม | คำตอบ |
 |-------|-------|
-| 8 accounts + 1 instance | **ใช้ได้ดี** — 407 ลดมาก, device sync ~4 นาที |
+| 8 accounts + 1 instance | **ใช้ได้** แต่ต้องแก้ getDevList cache ก่อน (daily quota ไม่พอ) |
 | 8 accounts + 2 instances | **ไม่ลด 407 อาจแย่ลง** — load x2 เหมือนมีแค่ 4 accounts |
 | ปัญหาจริงที่ต้องแก้ก่อน scale | กราฟอ่าน DB ก่อน (ปัญหา 2) ลด load สำคัญกว่าเพิ่ม instance |
 
@@ -328,13 +425,16 @@ Single process + แก้ปัญหาข้างบน เพียงพ�
 
 | # | ปัญหา | ความยาก | ผลกระทบ | สถานะ |
 |---|--------|---------|---------|-------|
-| 1 | Device sync batchIndex | ง่าย | สูง | แก้แล้ว |
-| 2 | PURPOSE_ORDER เอา ondemand ออก | ง่าย | สูง | แก้แล้ว |
-| 3 | Timezone mismatch (ปัญหา 1) | กลาง | สูง — กราฟ null บน cloud | ✅ แก้แล้ว — tzParts/tzDate utilities |
-| 4 | กราฟอ่าน DB ก่อน (ปัญหา 2) | กลาง-ยาก | สูงมาก — UX + ลด API load | ✅ แก้บางส่วน — year/lifetime/PR month+year อ่าน DB, day/month ยัง Huawei |
-| 5 | Frontend DISABLE_CRON (ปัญหา 5) | ง่ายมาก | กลาง — ลด 407 ทันที | ยังไม่ได้แก้ |
-| 6 | เพิ่ม 8 accounts (ปัญหา 3) | กลาง | สูง — ถ้ามี credentials | รอ credentials |
-| 7 | cron.ts hardcode (ปัญหา 4) | ง่าย | ต่ำ — ทำพร้อมข้อ 6 | ยังไม่ได้แก้ |
+| 1 | Device sync batchIndex | ง่าย | สูง | ✅ แก้แล้ว |
+| 2 | PURPOSE_ORDER เอา ondemand ออก | ง่าย | สูง | ✅ แก้แล้ว |
+| 3 | Timezone mismatch (ปัญหา 1) | กลาง | สูง | ✅ แก้แล้ว — tzParts/tzDate utilities |
+| 4 | กราฟอ่าน DB ก่อน (ปัญหา 2) | กลาง-ยาก | สูงมาก | ✅ แก้เกือบหมด — เหลือ day view + aux realtime |
+| 5 | Frontend DISABLE_CRON | ง่ายมาก | กลาง | ✅ แก้แล้ว — cron.ts line 156 |
+| 6 | getDevList cache (ปัญหา 3.1) | กลาง | สูงมาก — daily quota ไม่พอ | ✅ แก้แล้ว — inventory budget per tick + TTL 24h |
+| 7 | Aux realtime → cron sync + DB | กลาง | สูง — หลาย user พร้อมกัน = 407 | ✅ แก้แล้ว — AuxDeviceSnapshot + syncAuxRealtimeTick |
+| 8 | Day view hourly KPI sync (ปัญหา 2 เหลือ) | กลาง | กลาง — ONDEMAND 27/day limit | ✅ แก้แล้ว — SiteHourlyKpi + syncHourlyKpiTick |
+| 9 | เพิ่ม accounts (ปัญหา 3) | กลาง | กลาง — ช่วย cron throughput | รอ credentials |
+| 10 | cron.ts hardcode (ปัญหา 4) | ง่าย | ต่ำ — ทำพร้อมข้อ 9 | ❌ ยังไม่ได้แก้ |
 
 คำสั่ง compile test: `npx tsc --noEmit`
 
@@ -343,7 +443,9 @@ Single process + แก้ปัญหาข้างบน เพียงพ�
 - อย่าเชื่อว่า .env มี 1 account — มี 4 accounts จริง (pvscada, APIscada1, APIscada2, APIscada3) ตรวจสอบได้ใน huaweiService.ts:516-556
 - "8 accounts" หมายถึงต้องแก้โค้ดเพิ่ม client slots ด้วย ไม่ใช่แค่เพิ่ม env
 - 407 เป็น per-account rate limit ไม่ใช่ org-wide — เพิ่ม account ช่วยลด 407 ได้จริง
-- Device sync เป็น bottleneck เพราะยิง per-site (getDevList + getDevRealKpi) ต่างจาก site realtime ที่ยิง batch ได้
+- **getDevList daily quota แก้แล้ว** — device sync ใช้ inventory budget per tick (default 2) + TTL 24h ใน `_syncMonitoringTickInner` (syncService.ts) ไม่เรียก getDevList ทุก site ทุก tick อีกแล้ว
+- **อย่าคำนวณ timing จาก throttle chain (6.5s) อย่างเดียว** — ต้องเช็ค daily quota ด้วย ดู `docs/smartpvms_rate_limiting_compact_for_ai.md`
+- getDevRealKpi มี limit ต่อ 5 นาที (ไม่ใช่ต่อวัน) → เป็น API หลักที่ใช้ใน device sync ได้โดยไม่ติด daily limit
 - getStationClientCandidates มี batchIndex parameter พร้อมใช้แล้ว — ระบบ rotation ทำงานด้วย rotate() function ใน huaweiPool.ts
 - Alarm sync ใช้ batchIndex กระจาย account อยู่แล้ว (alarmSyncService.ts) — เป็นตัวอย่างที่ดี
 
@@ -417,6 +519,57 @@ npm run start:worker   # node dist/worker.js (cron only)
 ### สิ่งที่ยังไม่ได้ทำ (Phase 1)
 - `DISABLE_CRON=1` ใน app.ts ทำงานได้อยู่แล้ว (มีมาก่อน) แต่ API ยังเรียก `huaweiService.ensureLoggedIn()` ตอน startup + `/readyz` — ไม่จำเป็นสำหรับ API-only mode
 - Puppeteer + Email ยังถูกเรียกจาก API routes ตรง ๆ ยังไม่ได้ย้ายไป Worker
+
+---
+
+## Phase B Progress: Redis + BullMQ Queue System
+
+### ✅ สิ่งที่ทำแล้ว (Step 4-6, 2026-03-26)
+
+**Step 4: Install dependencies**
+- `bullmq` + `ioredis` added to package.json
+
+**Step 5: Redis config + env vars**
+- `src/config/redis.ts` — connection factory:
+  - `getRedisConnection()` — shared connection (สำหรับ Queue producer ฝั่ง API)
+  - `createRedisConnection()` — dedicated connection (สำหรับ BullMQ Worker แต่ละตัว)
+  - `closeRedisConnection()` — graceful shutdown
+- `src/config/env.ts` — เพิ่ม `REDIS_HOST` (default 127.0.0.1), `REDIS_PORT` (default 6379), `REDIS_PASSWORD`, `USE_QUEUE`
+- `.env.example` — เพิ่ม Redis section
+
+**Step 6: Queue definitions + types**
+- `src/jobs/types.ts` — interfaces:
+  - `ReportJobData` — `{ jobId: number, jobType: 'cleaning' | 'service' }`
+  - `ReportJobResult` — `{ fileUrl: string }`
+  - `EmailJobData` — `{ jobId, step, source, to, subject, html, attachments? }`
+  - `EmailJobResult` — `{ success, messageId?, accepted?, rejected?, error? }`
+- `src/jobs/queues.ts` — 2 queues:
+  - `report-generation` — attempts: 2, backoff: exponential 5s, keep completed 24h
+  - `email-sending` — attempts: 3, backoff: exponential 3s, keep completed 24h
+
+**Step 7: Report processor** (`src/jobs/processors/reportProcessor.ts`)
+- `processReportJob(job)` — receives `{ jobId, jobType }` from BullMQ
+- Handles both `cleaning` and `service` report types
+- Full logic extracted from `cleaningController.generateReport` + `serviceController.generateReport`:
+  - DB queries (job + attachments + site/layouts)
+  - File resolution via `tryEnsureLocalFilePath()`
+  - Evidence grouping (cleaning) / form images (service)
+  - Calls `generateCleaningReportPdf()` or `generateServiceReportPdf()`
+  - Updates DB: `cleaningJob.reportFileUrl` / `serviceJob.reportFileUrl`, creates `JobAttachment`, bumps job step to 4
+- Reports progress: 10% → 40% → 90% → 100%
+
+**Step 8: Email processor** (`src/jobs/processors/emailProcessor.ts`)
+- `processEmailJob(job)` — receives `{ jobId, step, source, to, subject, html, attachments? }`
+- Calls `sendEmailNow()` from emailService
+- Throws on failure (triggers BullMQ retry with exponential backoff)
+- Note: post-send DB updates (step2SentAt, status changes) still done by controllers after polling task status
+
+**Step 9: Wire into worker.ts**
+- `startQueueWorkers()` function — only runs when `USE_QUEUE=true`
+- Report worker: concurrency=1 (Puppeteer is resource-heavy)
+- Email worker: concurrency=3
+- Both log completed/failed events
+- Each worker uses its own dedicated Redis connection via `createRedisConnection()`
 
 ---
 
@@ -559,7 +712,7 @@ push to main
    - Redis 6.x running on 10.240.68.192:6379
    - bind 0.0.0.0, requirepass ตั้งแล้ว, maxmemory 128mb, appendonly yes
    - Password: ตั้งไว้แล้ว (อยู่ใน .env ของแต่ละ instance)
-   - ยังไม่ได้ทดสอบ connect ข้าม instance (ต้องเช็คจาก solar-api/solar-worker)
+   - ✅ ทดสอบ connect ข้าม instance แล้ว (2026-03-26) — solar-api + solar-worker ได้ PONG ทั้งคู่
 
 2. **solar-api instance** — ติดตั้ง self-hosted runner:
    ```bash
@@ -611,12 +764,12 @@ HUAWEI_PASSWORD=xxx
 | 1 | worker.ts entrypoint | `src/worker.ts` | ต่ำ | ✅ ทำแล้ว |
 | 2 | npm scripts (start:api, start:worker) | `package.json` | ต่ำ | ✅ ทำแล้ว |
 | 3 | docker-compose update | `docker-compose.yml` | ต่ำ | ✅ ทำแล้ว |
-| 4 | Install bullmq + ioredis | `package.json` | ต่ำ | ยังไม่ได้ทำ |
-| 5 | Redis config module | `src/config/redis.ts`, `src/config/env.ts` | ต่ำ | ยังไม่ได้ทำ |
-| 6 | Queue definitions + types | `src/jobs/queues.ts`, `src/jobs/types.ts` | ต่ำ | ยังไม่ได้ทำ |
-| 7 | Report processor | `src/jobs/processors/reportProcessor.ts` | กลาง | ยังไม่ได้ทำ |
-| 8 | Email processor | `src/jobs/processors/emailProcessor.ts` | กลาง | ยังไม่ได้ทำ |
-| 9 | Wire processors เข้า worker.ts | `src/worker.ts` | ต่ำ | ยังไม่ได้ทำ |
+| 4 | Install bullmq + ioredis | `package.json` | ต่ำ | ✅ ทำแล้ว (2026-03-26) |
+| 5 | Redis config module | `src/config/redis.ts`, `src/config/env.ts`, `.env.example` | ต่ำ | ✅ ทำแล้ว (2026-03-26) |
+| 6 | Queue definitions + types | `src/jobs/queues.ts`, `src/jobs/types.ts` | ต่ำ | ✅ ทำแล้ว (2026-03-26) |
+| 7 | Report processor | `src/jobs/processors/reportProcessor.ts` | กลาง | ✅ ทำแล้ว (2026-03-26) |
+| 8 | Email processor | `src/jobs/processors/emailProcessor.ts` | กลาง | ✅ ทำแล้ว (2026-03-26) |
+| 9 | Wire processors เข้า worker.ts | `src/worker.ts` | ต่ำ | ✅ ทำแล้ว (2026-03-26) |
 | 10 | Task status endpoint | `src/routes/taskRoutes.ts`, `src/app.ts` | ต่ำ | ยังไม่ได้ทำ |
 | 11 | Refactor cleaning controller | `src/controllers/cleaningController.ts` | กลาง | ยังไม่ได้ทำ |
 | 12 | Refactor service controller | `src/controllers/serviceController.ts` | กลาง | ยังไม่ได้ทำ |

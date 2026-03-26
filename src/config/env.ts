@@ -56,6 +56,12 @@ const envSchema = z.object({
   HUAWEI_ALARM_CLEAR_MISS_THRESHOLD: numStr(2),
   HUAWEI_ALARM_CLEAR_MIN_ABSENCE_MS: numStr(60 * 60_000),
 
+  // ── Redis (BullMQ) ──
+  REDIS_HOST: z.string().optional().default('127.0.0.1'),
+  REDIS_PORT: numStr(6379),
+  REDIS_PASSWORD: z.string().optional(),
+  USE_QUEUE: boolStr,
+
   // ── Debug ──
   HUAWEI_API_DEBUG: boolStr,
   SYNC_DEBUG: boolStr,

@@ -957,10 +957,11 @@ async function enrichSitesFromMappingResult() {
 
     if (!projectName) continue;
 
+    // Prefer plantCode (authoritative) over matchedDbId (may be stale/wrong)
     let target =
-      (typeof p.matchedDbId === 'number' ? byId.get(p.matchedDbId) : undefined) ||
       (matchedDbPlantCode ? byPlantCode.get(matchedDbPlantCode) : undefined) ||
-      (matchedDbName ? byNormName.get(normalizeName(matchedDbName)) : undefined);
+      (matchedDbName ? byNormName.get(normalizeName(matchedDbName)) : undefined) ||
+      (typeof p.matchedDbId === 'number' ? byId.get(p.matchedDbId) : undefined);
 
     if (!target) {
       const aliasName = aliases[normalizeName(projectName)];

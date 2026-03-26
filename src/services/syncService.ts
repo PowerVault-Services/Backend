@@ -1068,6 +1068,26 @@ const _syncMonitoringTickInner = async () => {
       orderBy: { plantCode: 'asc' },
     } as any)) as unknown) as SiteLite[];
 
+    // --- getDevList daily quota guard ---
+    // getDevList has a daily limit (27/day/account). Only refresh inventory for
+    // sites that have never synced or whose metadata TTL has expired.
+    // Cap per tick to spread quota evenly across the day.
+    const INVENTORY_PER_TICK = Math.max(1, Number(process.env.HUAWEI_INVENTORY_PER_TICK ?? 2));
+    const now = Date.now();
+    const needsInventorySet = new Set(
+      sites
+        .filter(s => !s.deviceMetaSyncedAt || (now - s.deviceMetaSyncedAt.getTime() >= DEVICE_META_TTL_MS))
+        .sort((a, b) => {
+          // nulls first (never synced), then oldest first
+          if (!a.deviceMetaSyncedAt && b.deviceMetaSyncedAt) return -1;
+          if (a.deviceMetaSyncedAt && !b.deviceMetaSyncedAt) return 1;
+          return (a.deviceMetaSyncedAt?.getTime() ?? 0) - (b.deviceMetaSyncedAt?.getTime() ?? 0);
+        })
+        .slice(0, INVENTORY_PER_TICK)
+        .map(s => s.plantCode),
+    );
+    log.info('Inventory budget', { eligible: sites.filter(s => !s.deviceMetaSyncedAt || (now - s.deviceMetaSyncedAt.getTime() >= DEVICE_META_TTL_MS)).length, granted: needsInventorySet.size, cap: INVENTORY_PER_TICK });
+
     // Work-stealing: each worker atomically claims the next site index
     let siteCursor = 0;
     const takeNextSite = () => siteCursor < sites.length ? siteCursor++ : -1;
@@ -1077,11 +1097,11 @@ const _syncMonitoringTickInner = async () => {
         const site = sites[index];
         try {
           const result = await syncPlantDevicesWithFailover(site, runStateCount, {
-            includeInventory: true,
+            includeInventory: needsInventorySet.has(site.plantCode),
             includeDeviceDetail: true,
           }, 'device', index);
           recordSyncOutcome(true);
-          log.info('Device sync done', { plantCode: site.plantCode, client: result.clientLabel ?? 'UNKNOWN', inverters: result.inverters });
+          log.info('Device sync done', { plantCode: site.plantCode, inventory: needsInventorySet.has(site.plantCode), client: result.clientLabel ?? 'UNKNOWN', inverters: result.inverters });
         } catch (e: any) {
           recordSyncOutcome(false);
           enqueueRetry(site.plantCode);
@@ -1387,6 +1407,319 @@ export async function syncDailyKpiTick() {
     log.info('Daily KPI Sync complete', { totalUpserted, batches: batches.length, sites: plantCodes.length });
   } catch (err: any) {
     log.error('Daily KPI Sync tick failed', { error: err?.message ?? err });
+    throw err;
+  }
+}
+
+// ── Hourly KPI Sync (for DB-first day view) ──
+const HOURLY_KPI_BATCH_SIZE = Math.min(100, Math.max(1, Number(process.env.HUAWEI_HOURLY_KPI_BATCH_SIZE ?? 100)));
+
+export async function syncHourlyKpiTick() {
+  log.info('Starting Hourly KPI Sync');
+  try {
+    const stationCodes = await refreshStationsIfNeeded();
+    const plantCodes = stationCodes.filter((code): code is string => !!code);
+    if (plantCodes.length === 0) {
+      log.warn('No sites for hourly KPI sync');
+      return;
+    }
+
+    const sites = await prisma.site.findMany({
+      where: { plantCode: { in: plantCodes } },
+      select: { id: true, plantCode: true },
+    });
+    const siteIdByPlantCode = new Map(sites.map((s) => [s.plantCode, s.id]));
+
+    // collectTime = noon of today in configured timezone
+    const now = new Date();
+    const HUAWEI_TZ = process.env.HUAWEI_SYNC_TIMEZONE ?? 'Asia/Bangkok';
+    const tzFmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: HUAWEI_TZ,
+      year: 'numeric', month: 'numeric', day: 'numeric',
+      hour12: false,
+    });
+    const parts = Object.fromEntries(tzFmt.formatToParts(now).map((x) => [x.type, x.value]));
+    const year = Number(parts.year);
+    const month = Number(parts.month);
+    const day = Number(parts.day);
+    const collectTime = new Date(year, month - 1, day, 12, 0, 0, 0).getTime();
+
+    let totalUpserted = 0;
+    const batches = chunk(plantCodes, HOURLY_KPI_BATCH_SIZE);
+    const clients = getPreferredClientOrderForPurpose('siteRealtime', 0);
+
+    for (let bi = 0; bi < batches.length; bi++) {
+      const batch = batches[bi];
+      const stationCodesStr = batch.join(',');
+      const client = clients[bi % clients.length];
+
+      try {
+        const res: any = await client.postRaw('/thirdData/getKpiStationHour', {
+          stationCodes: stationCodesStr,
+          collectTime,
+        });
+
+        if (!res?.success && res?.failCode) {
+          handleFailCode(client, res.failCode, 'getKpiStationHour(hourlySync)');
+          continue;
+        }
+
+        const rows: any[] = Array.isArray(res?.data) ? res.data : [];
+        const upserts: Promise<any>[] = [];
+
+        for (const row of rows) {
+          const plantCode = String(row?.stationCode ?? '').trim();
+          const siteId = siteIdByPlantCode.get(plantCode);
+          if (!siteId) continue;
+
+          const ct = parseNum(row?.collectTime);
+          if (ct == null) continue;
+
+          const map = (row?.dataItemMap ?? {}) as Record<string, unknown>;
+          const ts = new Date(ct);
+
+          const data = {
+            plantCode,
+            collectTime: ct,
+            production: parseNum(map.PVYield) ?? parseNum(map.inverterYield) ?? parseNum(map.inverter_power),
+            irradiation: parseNum(map.radiation_intensity),
+            gridImport: parseNum(map.buyPower),
+            gridExport: parseNum(map.ongrid_power),
+            consumption: parseNum(map.use_power),
+            consumedFromPv: parseNum(map.selfProvide) ?? parseNum(map.selfUsePower),
+            batteryCharge: parseNum(map.chargeCap),
+            batteryDischarge: parseNum(map.dischargeCap),
+          };
+
+          upserts.push(
+            (prisma as any).siteHourlyKpi.upsert({
+              where: { siteId_ts: { siteId, ts } },
+              create: { siteId, ts, ...data },
+              update: data,
+            }),
+          );
+        }
+
+        if (upserts.length > 0) {
+          await Promise.all(upserts);
+          totalUpserted += upserts.length;
+        }
+      } catch (err: any) {
+        log.warn('Hourly KPI batch failed', { batch: bi, error: err?.message ?? err });
+      }
+    }
+
+    log.info('Hourly KPI Sync complete', { totalUpserted, batches: batches.length, sites: plantCodes.length });
+  } catch (err: any) {
+    log.error('Hourly KPI Sync tick failed', { error: err?.message ?? err });
+    throw err;
+  }
+}
+
+// ── Aux Device Realtime Sync (for DB-first home realtime) ──
+
+export async function syncAuxRealtimeTick() {
+  log.info('Starting Aux Device Realtime Sync');
+  try {
+    const stationCodes = await refreshStationsIfNeeded();
+    const plantCodes = stationCodes.filter((code): code is string => !!code);
+    if (plantCodes.length === 0) {
+      log.warn('No sites for aux realtime sync');
+      return;
+    }
+
+    // Get all aux devices from DB grouped by devTypeId
+    const auxDevices = await (prisma as any).auxDevice.findMany({
+      where: { plantCode: { in: plantCodes } },
+      select: { id: true, siteId: true, plantCode: true, huaweiDevId: true, huaweiDevTypeId: true },
+    }) as { id: number; siteId: number; plantCode: string; huaweiDevId: string; huaweiDevTypeId: number }[];
+
+    if (auxDevices.length === 0) {
+      log.info('No aux devices in DB to sync');
+      return;
+    }
+
+    // Group by devTypeId
+    const byType = new Map<number, typeof auxDevices>();
+    for (const dev of auxDevices) {
+      let arr = byType.get(dev.huaweiDevTypeId);
+      if (!arr) { arr = []; byType.set(dev.huaweiDevTypeId, arr); }
+      arr.push(dev);
+    }
+
+    const clients = getPreferredClientOrderForPurpose('device', 0);
+    let totalUpserted = 0;
+    let clientIdx = 0;
+
+    for (const [devTypeId, devices] of byType) {
+      // Batch device IDs (max 100 per call as per Huawei API)
+      const devIdBatches = chunk(devices.map(d => d.huaweiDevId), 100);
+
+      for (const devIdBatch of devIdBatches) {
+        const client = clients[clientIdx % clients.length];
+        clientIdx++;
+
+        try {
+          const res: any = await client.getDevRealKpi({ devTypeId, devIds: devIdBatch });
+
+          if (!res?.success) {
+            handleFailCode(client, res?.failCode, `getDevRealKpi(auxSync:${devTypeId})`);
+            continue;
+          }
+
+          const rows: any[] = Array.isArray(res?.data) ? res.data : [];
+          if (rows.length === 0) continue;
+
+          // Build a lookup from huaweiDevId -> siteId
+          const devLookup = new Map(devices.map(d => [String(d.huaweiDevId), d]));
+          const upserts: Promise<any>[] = [];
+          const fetchedAt = new Date();
+
+          for (const row of rows) {
+            const devId = String(row?.devId ?? '');
+            const dev = devLookup.get(devId);
+            if (!dev) continue;
+
+            upserts.push(
+              (prisma as any).auxDeviceSnapshot.upsert({
+                where: { siteId_huaweiDevId: { siteId: dev.siteId, huaweiDevId: devId } },
+                create: {
+                  siteId: dev.siteId,
+                  plantCode: dev.plantCode,
+                  huaweiDevId: devId,
+                  huaweiDevTypeId: devTypeId,
+                  dataItemMap: row?.dataItemMap ?? null,
+                  fetchedAt,
+                },
+                update: {
+                  dataItemMap: row?.dataItemMap ?? null,
+                  fetchedAt,
+                },
+              }),
+            );
+          }
+
+          if (upserts.length > 0) {
+            await Promise.all(upserts);
+            totalUpserted += upserts.length;
+          }
+        } catch (err: any) {
+          log.warn('Aux realtime batch failed', { devTypeId, error: err?.message ?? err });
+        }
+      }
+    }
+
+    log.info('Aux Device Realtime Sync complete', { totalUpserted, deviceTypes: byType.size, totalDevices: auxDevices.length });
+  } catch (err: any) {
+    log.error('Aux Realtime Sync tick failed', { error: err?.message ?? err });
+    throw err;
+  }
+}
+
+// ── Monthly KPI Sync (populates SiteMonthlyActual for year/lifetime view) ──
+const MONTHLY_KPI_BATCH_SIZE = Math.min(100, Math.max(1, Number(process.env.HUAWEI_MONTHLY_KPI_BATCH_SIZE ?? 100)));
+
+export async function syncMonthlyKpiTick() {
+  log.info('Starting Monthly KPI Sync');
+  try {
+    const stationCodes = await refreshStationsIfNeeded();
+    const plantCodes = stationCodes.filter((code): code is string => !!code);
+    if (plantCodes.length === 0) {
+      log.warn('No sites for monthly KPI sync');
+      return;
+    }
+
+    const sites = await prisma.site.findMany({
+      where: { plantCode: { in: plantCodes } },
+      select: { id: true, plantCode: true },
+    });
+    const siteIdByPlantCode = new Map(sites.map((s) => [s.plantCode, s.id]));
+
+    // Sync current year's monthly KPI
+    const now = new Date();
+    const HUAWEI_TZ = process.env.HUAWEI_SYNC_TIMEZONE ?? 'Asia/Bangkok';
+    const tzFmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: HUAWEI_TZ,
+      year: 'numeric',
+      hour12: false,
+    });
+    const parts = Object.fromEntries(tzFmt.formatToParts(now).map((x) => [x.type, x.value]));
+    const year = Number(parts.year);
+    // collectTime = end of year (Huawei returns all months for the year)
+    const collectTime = new Date(year, 11, 31, 12, 0, 0, 0).getTime();
+
+    let totalUpserted = 0;
+    const batches = chunk(plantCodes, MONTHLY_KPI_BATCH_SIZE);
+    const clients = getPreferredClientOrderForPurpose('siteRealtime', 0);
+
+    for (let bi = 0; bi < batches.length; bi++) {
+      const batch = batches[bi];
+      const stationCodesStr = batch.join(',');
+      const client = clients[bi % clients.length];
+
+      try {
+        const res: any = await client.postRaw('/thirdData/getKpiStationMonth', {
+          stationCodes: stationCodesStr,
+          collectTime,
+        });
+
+        if (!res?.success && res?.failCode) {
+          handleFailCode(client, res.failCode, 'getKpiStationMonth(monthlySync)');
+          continue;
+        }
+
+        const rows: any[] = Array.isArray(res?.data) ? res.data : [];
+        const upserts: Promise<any>[] = [];
+
+        for (const row of rows) {
+          const plantCode = String(row?.stationCode ?? '').trim();
+          const siteId = siteIdByPlantCode.get(plantCode);
+          if (!siteId) continue;
+
+          const ct = parseNum(row?.collectTime);
+          if (ct == null) continue;
+
+          const map = (row?.dataItemMap ?? {}) as Record<string, unknown>;
+          const dateObj = new Date(ct);
+          const m = dateObj.getMonth() + 1;
+          const y = dateObj.getFullYear();
+          const key = `${y}-${String(m).padStart(2, '0')}`;
+
+          const data = {
+            plantCode,
+            key,
+            collectTime: ct,
+            irradiation: parseNum(map.radiation_intensity),
+            production: parseNum(map.PVYield) ?? parseNum(map.inverterYield) ?? parseNum(map.inverter_power),
+            pr: parseNum(map.performance_ratio),
+            gridImport: parseNum(map.buyPower),
+            gridExport: parseNum(map.ongrid_power),
+            consumption: parseNum(map.use_power),
+            revenue: parseNum(map.power_profit),
+            selfProvide: parseNum(map.selfProvide) ?? parseNum(map.selfUsePower),
+          };
+
+          upserts.push(
+            prisma.siteMonthlyActual.upsert({
+              where: { siteId_year_month: { siteId, year: y, month: m } },
+              create: { siteId, year: y, month: m, ...data },
+              update: data,
+            }),
+          );
+        }
+
+        if (upserts.length > 0) {
+          await Promise.all(upserts);
+          totalUpserted += upserts.length;
+        }
+      } catch (err: any) {
+        log.warn('Monthly KPI batch failed', { batch: bi, error: err?.message ?? err });
+      }
+    }
+
+    log.info('Monthly KPI Sync complete', { totalUpserted, batches: batches.length, sites: plantCodes.length });
+  } catch (err: any) {
+    log.error('Monthly KPI Sync tick failed', { error: err?.message ?? err });
     throw err;
   }
 }
