@@ -62,7 +62,9 @@
       "Read(//d /**)",
       "Bash(grep -r \"type.*4\\\\|job.*4\\\\|INSPECTION.*4\" --include=*.ts --include=*.prisma)",
       "Bash(grep -l \"SiteLayout\\\\|layouts\" /d/Backend/prisma/migrations/*/migration.sql)",
-      "Bash(find /d/Backend -type f \\\\\\(-name *.test.ts -o -name *.spec.ts -o -name *test* \\\\\\))"
+      "Bash(find /d/Backend -type f \\\\\\(-name *.test.ts -o -name *.spec.ts -o -name *test* \\\\\\))",
+      "Bash(node -e \"const p = require\\(''@prisma/client''\\); const c = new p.PrismaClient\\(\\); c.$queryRaw\\\\`SELECT tablename FROM pg_tables WHERE schemaname=''public'' ORDER BY tablename\\\\`.then\\(r => { console.log\\(r.map\\(x=>x.tablename\\).join\\(''\\\\n''\\)\\); c.$disconnect\\(\\); }\\)\")",
+      "Bash(node -e \"const p = require\\(''@prisma/client''\\); const c = new p.PrismaClient\\(\\); c[''$queryRawUnsafe'']\\(''SELECT tablename FROM pg_tables WHERE schemaname=$$ublic$$ORDER BY tablename''\\).then\\(r => { console.log\\(r.map\\(x=>x.tablename\\).join\\(''\\\\n''\\)\\); c[''$disconnect'']\\(\\); }\\)\")"
     ]
   }
 }

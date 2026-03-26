@@ -49,6 +49,11 @@ npm run dev
 
 Default server: `http://localhost:3000`
 
+> **สำหรับ Frontend Dev:** แค่ `npm install` แล้ว `npm run dev` ก็ใช้ได้เลย
+> ไม่ต้องลง Redis, ไม่ต้องรัน Worker แยก — ทุกอย่างทำงานแบบ sync เหมือนเดิม
+> (ระบบ queue จะทำงานเฉพาะตอนตั้ง `USE_QUEUE=true` ใน production เท่านั้น)
+> ดูรายละเอียดเพิ่มที่ [Frontend Integration Guide](#frontend-integration-guide-use_queuetrue)
+
 ### รัน Worker แยก (production-style)
 
 ```bash
