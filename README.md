@@ -51,28 +51,24 @@ Default server: `http://localhost:3000`
 
 ---
 
-### สำหรับ Frontend Dev: วิธีรัน Backend
+### สำหรับ Frontend Dev: วิธีเชื่อมต่อ Backend
 
-มี 2 แบบ เลือกตามสถานการณ์:
+#### ✅ วิธีง่ายสุด: ใช้ Cloud API (แนะนำ — ไม่ต้องรัน backend เอง)
 
-#### แบบ A: รันแบบเดิม (ง่ายสุด ไม่ต้องแก้โค้ด frontend)
+Backend deploy อยู่บน CE Cloud แล้ว ไม่ต้อง pull หรือรัน backend เอง
 
-ใช้แบบนี้ถ้ายังไม่ต้องการเทส queue mode (สร้าง PDF / ส่ง email ทำงานทันทีไม่ต้องรอ)
-
-1. ตั้งค่า `.env`:
+1. ต่อ **VPN** (ce-cloud-vpn) ก่อน
+2. แก้ `.env` ของ frontend:
 ```env
-USE_QUEUE=false          # ← สำคัญ! ต้องเป็น false
+VITE_API_URL=http://10.240.68.114:3000
 ```
+3. รัน frontend ได้เลย — backend พร้อมใช้งาน
 
-2. รัน:
-```bash
-npm install
-npm run dev              # แค่นี้พอ ไม่ต้องเปิด terminal อื่น
-```
+---
 
-3. เชื่อม frontend ไปที่ `http://localhost:3000` — ทุกอย่างทำงานเหมือนเดิม
+#### รันแบบ Local (ถ้าจำเป็นต้องรัน backend เอง)
 
-#### แบบ B: รันแบบ Queue Mode (เหมือน production — ต้องแก้โค้ด frontend)
+####  รันแบบ Queue Mode (เหมือน production — ต้องแก้โค้ด frontend)
 
 ใช้แบบนี้เมื่อจะ deploy ขึ้น cloud จริง เพราะ production ใช้ queue mode
 
