@@ -425,10 +425,14 @@ export async function sendStep2Email(req: Request, res: Response) {
 
   // ── Queue mode ──
   if (getEnv().USE_QUEUE) {
+    // Send fileUrl instead of local path — Worker will resolve on its own machine
+    const queueAtt = job.attachments
+      .filter((a) => a.fileType === 'STEP2_ATTACHMENT' && a.fileUrl)
+      .map((a) => ({ filename: path.basename(a.fileUrl), fileUrl: a.fileUrl }));
     const task = await getEmailQueue().add('send', {
       jobId: id, step: 2, source: 'cleaning',
       to: cleaning.step2EmailTo, subject: cleaning.step2EmailSubject, html: cleaning.step2EmailBody,
-      attachments: att,
+      attachments: queueAtt,
     });
 
     // Optimistic DB update — email is queued, mark as sent
@@ -772,7 +776,7 @@ export async function sendStep5Email(req: Request, res: Response) {
     const task = await getEmailQueue().add('send', {
       jobId: id, step: 5, source: 'cleaning',
       to: String(to), subject: String(subject), html: finalHtml,
-      attachments: [{ filename: `Cleaning-Report-${job.jobNo}.pdf`, path: reportAbs }],
+      attachments: [{ filename: `Cleaning-Report-${job.jobNo}.pdf`, fileUrl: cleaning.reportFileUrl }],
     });
 
     await prisma.cleaningJob.update({

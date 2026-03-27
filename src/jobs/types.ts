@@ -19,7 +19,10 @@ export type EmailJobSource = 'cleaning' | 'service' | 'inspection';
 
 export interface EmailAttachment {
   filename: string;
-  path: string;
+  /** Local file path (when API and Worker are on the same machine) */
+  path?: string;
+  /** MinIO/storage fileUrl — Worker will resolve to local path before sending */
+  fileUrl?: string;
   cid?: string;
 }
 

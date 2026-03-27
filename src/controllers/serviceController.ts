@@ -433,10 +433,13 @@ export async function sendStep2Email(req: Request, res: Response) {
 
   // ── Queue mode ──
   if (getEnv().USE_QUEUE) {
+    const queueAtt = job.attachments
+      .filter((a) => a.fileType === 'STEP2_ATTACHMENT' && a.fileUrl)
+      .map((a) => ({ filename: path.basename(a.fileUrl), fileUrl: a.fileUrl }));
     const task = await getEmailQueue().add('send', {
       jobId: id, step: 2, source: 'service',
       to: service.step2EmailTo, subject: service.step2EmailSubject, html: service.step2EmailBody,
-      attachments: att,
+      attachments: queueAtt,
     });
 
     await prisma.serviceJob.update({ where: { jobId: id }, data: { step2SentAt: new Date(), step2SentByUserId: 1 } });
@@ -767,7 +770,7 @@ export async function sendStep5Email(req: Request, res: Response) {
     const task = await getEmailQueue().add('send', {
       jobId: id, step: 5, source: 'service',
       to: String(to), subject: String(subject), html: finalHtml,
-      attachments: [{ filename: `Service-Report-${job.jobNo}.pdf`, path: reportAbs }],
+      attachments: [{ filename: `Service-Report-${job.jobNo}.pdf`, fileUrl: service.reportFileUrl }],
     });
 
     await prisma.serviceJob.update({

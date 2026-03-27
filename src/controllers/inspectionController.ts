@@ -411,10 +411,13 @@ export async function sendStep2Email(req: Request, res: Response) {
   // ตอนนี้ผมทำแบบ "ส่งได้ แม้บางไฟล์หาย" แต่แจ้งรายการไฟล์ที่หายกลับไป
   // ── Queue mode ──
   if (getEnv().USE_QUEUE) {
+    const queueAtt = (job.attachments ?? [])
+      .filter((a) => a.fileType === 'INSP_STEP2_ATTACHMENT' && a.fileUrl)
+      .map((a) => ({ filename: path.basename(a.fileUrl), fileUrl: a.fileUrl }));
     const task = await getEmailQueue().add('send', {
       jobId: id, step: 2, source: 'inspection',
       to: inspection.step2EmailTo, subject: inspection.step2EmailSubject, html: inspection.step2EmailBody,
-      attachments: att,
+      attachments: queueAtt,
     });
 
     await prisma.inspectionJob.update({ where: { jobId: id }, data: { step2SentAt: new Date(), step2SentByUserId: 1 } });
@@ -545,7 +548,7 @@ export async function sendStep3Email(req: Request, res: Response) {
     const task = await getEmailQueue().add('send', {
       jobId: id, step: 3, source: 'inspection',
       to: inspection.step3EmailTo, subject: inspection.step3EmailSubject, html: inspection.step3EmailBody,
-      attachments: [{ filename: path.basename(reportAbs), path: reportAbs }],
+      attachments: [{ filename: path.basename(inspection.reportFileUrl), fileUrl: inspection.reportFileUrl }],
     });
 
     await prisma.inspectionJob.update({ where: { jobId: id }, data: { step3SentAt: new Date(), step3SentByUserId: 1 } });
