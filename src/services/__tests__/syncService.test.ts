@@ -5,6 +5,7 @@ jest.mock('../huaweiService', () => ({
   huaweiAlarm: { getAccountKey: () => 'alarm', getLabels: () => ['alarm'], getCooldownRemainingMs: () => 0 },
   huaweiBackup: { getAccountKey: () => 'backup', getLabels: () => ['backup'], getCooldownRemainingMs: () => 0 },
   huaweiOnDemand: { getAccountKey: () => 'ondemand', getLabels: () => ['ondemand'], getCooldownRemainingMs: () => 0 },
+  huaweiExtra1: { getAccountKey: () => 'extra1', getLabels: () => ['extra1'], getCooldownRemainingMs: () => 0 },
   HuaweiService: class {},
 }));
 jest.mock('../syncStateService', () => ({
