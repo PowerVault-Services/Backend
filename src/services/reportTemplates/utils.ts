@@ -79,6 +79,16 @@ export function getFontFaceCss() {
       normal: '/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf',
       bold: '/usr/share/fonts/truetype/noto/NotoSansThai-Bold.ttf',
     },
+    {
+      family: 'ReportThai',
+      normal: '/usr/share/fonts/truetype/noto-sans-thai/NotoSansThai-Regular.ttf',
+      bold: '/usr/share/fonts/truetype/noto-sans-thai/NotoSansThai-Bold.ttf',
+    },
+    {
+      family: 'ReportThai',
+      normal: '/usr/share/fonts/opentype/noto/NotoSansThai-Regular.ttf',
+      bold: '/usr/share/fonts/opentype/noto/NotoSansThai-Bold.ttf',
+    },
   ];
 
   for (const c of candidates) {

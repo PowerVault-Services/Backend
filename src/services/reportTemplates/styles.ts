@@ -54,7 +54,7 @@ export function getReportCss(fontCss: string, fontFamily: string) {
       margin-top: 6mm;
     }
     .cover-title {
-      font-size: 24pt;
+      font-size: 18;
       font-weight: 700;
       margin-top: 24mm;
       line-height: 1.35;
@@ -106,7 +106,7 @@ export function getReportCss(fontCss: string, fontFamily: string) {
     }
     .center { text-align: center; }
     .plan-title {
-      font-size: 22pt;
+      font-size: 18pt;
       font-weight: 700;
       line-height: 1.25;
       text-align: center;
@@ -193,7 +193,7 @@ export function getReportCss(fontCss: string, fontFamily: string) {
     }
     .photo-title {
       text-align: center;
-      font-size: 24pt;
+      font-size: 18pt;
       font-weight: 700;
       text-decoration: underline;
       margin: 0 0 6mm;
