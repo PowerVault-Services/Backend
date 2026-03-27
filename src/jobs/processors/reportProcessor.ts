@@ -42,6 +42,7 @@ async function processCleaningReport(job: Job<ReportJobData>, jobId: number): Pr
       .filter((a) => a.fileType === 'STEP3_CERTIFICATE')
       .map(async (a) => {
         const filePath = await tryEnsureLocalFilePath(a.fileUrl);
+        if (!filePath) console.warn(`[ReportProcessor] Skipped certificate image for jobId=${jobId}: ${a.fileUrl}`);
         return filePath ? { filePath } : null;
       }),
   );
@@ -53,6 +54,7 @@ async function processCleaningReport(job: Job<ReportJobData>, jobId: number): Pr
       .filter((a) => a.fileType === 'STEP3_LAYOUT')
       .map(async (a) => {
         const filePath = await tryEnsureLocalFilePath(a.fileUrl);
+        if (!filePath) console.warn(`[ReportProcessor] Skipped layout for jobId=${jobId}: ${a.fileUrl}`);
         return filePath ? { title: 'Layout', filePath } : null;
       }),
   );
@@ -104,7 +106,10 @@ async function processCleaningReport(job: Job<ReportJobData>, jobId: number): Pr
 
     if (!grouped.has(groupTitle)) grouped.set(groupTitle, { images: [], order });
     const filePath = await tryEnsureLocalFilePath(a.fileUrl);
-    if (!filePath) continue;
+    if (!filePath) {
+      console.warn(`[ReportProcessor] Skipped evidence image for jobId=${jobId}: ${a.fileUrl}`);
+      continue;
+    }
     grouped.get(groupTitle)!.images.push({ label, filePath });
   }
 
@@ -118,6 +123,7 @@ async function processCleaningReport(job: Job<ReportJobData>, jobId: number): Pr
   const pvLayout = (dbJob.site.layouts ?? []).find((l) => l.type === 'PV_LAYOUT');
   if (pvLayout?.fileUrl) {
     siteLayoutPath = await tryEnsureLocalFilePath(pvLayout.fileUrl);
+    if (!siteLayoutPath) console.warn(`[ReportProcessor] Skipped PV layout for jobId=${jobId}: ${pvLayout.fileUrl}`);
   }
 
   await job.updateProgress(40);
@@ -187,6 +193,7 @@ async function processServiceReport(job: Job<ReportJobData>, jobId: number): Pro
       .filter((a) => a.fileType === 'SERVICE_REPORT_FORM')
       .map(async (a) => {
         const filePath = await tryEnsureLocalFilePath(a.fileUrl);
+        if (!filePath) console.warn(`[ReportProcessor] Skipped report form image for jobId=${jobId}: ${a.fileUrl}`);
         return filePath ? { filePath } : null;
       }),
   );
@@ -199,6 +206,7 @@ async function processServiceReport(job: Job<ReportJobData>, jobId: number): Pro
       .slice(0, 12)
       .map(async (a) => {
         const filePath = await tryEnsureLocalFilePath(a.fileUrl);
+        if (!filePath) console.warn(`[ReportProcessor] Skipped evidence photo for jobId=${jobId}: ${a.fileUrl}`);
         return filePath ? { label: '', filePath } : null;
       }),
   );

@@ -434,7 +434,7 @@ export async function sendStep2Email(req: Request, res: Response) {
   // ── Queue mode ──
   if (getEnv().USE_QUEUE) {
     const queueAtt = job.attachments
-      .filter((a) => a.fileType === 'STEP2_ATTACHMENT' && a.fileUrl)
+      .filter((a) => a.fileType === 'SERVICE_STEP2_ATTACHMENT' && a.fileUrl)
       .map((a) => ({ filename: path.basename(a.fileUrl), fileUrl: a.fileUrl }));
     const task = await getEmailQueue().add('send', {
       jobId: id, step: 2, source: 'service',

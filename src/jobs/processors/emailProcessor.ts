@@ -14,14 +14,16 @@ export async function processEmailJob(job: Job<EmailJobData>): Promise<EmailJobR
           if (a.fileUrl && !a.path) {
             const localPath = await tryEnsureLocalFilePath(a.fileUrl);
             if (!localPath) {
-              console.warn(`[EmailProcessor] Could not resolve attachment: ${a.fileUrl}`);
-              return null;
+              throw new Error(`[EmailProcessor] Failed to resolve attachment: ${a.fileUrl}`);
             }
             return { filename: a.filename, path: localPath, cid: a.cid };
           }
-          return { filename: a.filename, path: a.path!, cid: a.cid };
+          if (!a.path) {
+            throw new Error(`[EmailProcessor] Attachment has no path or fileUrl: ${a.filename}`);
+          }
+          return { filename: a.filename, path: a.path, cid: a.cid };
         }),
-      ).then((arr) => arr.filter(Boolean) as { filename: string; path: string; cid?: string }[])
+      )
     : undefined;
 
   const result = await sendEmailNow({
