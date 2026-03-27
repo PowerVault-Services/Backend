@@ -93,16 +93,18 @@ export function getFontFaceCss() {
 
   for (const c of candidates) {
     if (fs.existsSync(c.normal) && fs.existsSync(c.bold)) {
+      const normalB64 = fs.readFileSync(c.normal).toString('base64');
+      const boldB64 = fs.readFileSync(c.bold).toString('base64');
       return {
         css: `
           @font-face {
             font-family: '${c.family}';
-            src: url('${asFileUrl(c.normal)}') format('truetype');
+            src: url('data:font/truetype;base64,${normalB64}') format('truetype');
             font-weight: 400;
           }
           @font-face {
             font-family: '${c.family}';
-            src: url('${asFileUrl(c.bold)}') format('truetype');
+            src: url('data:font/truetype;base64,${boldB64}') format('truetype');
             font-weight: 700;
           }
         `,
