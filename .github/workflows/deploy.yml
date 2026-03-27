@@ -90,10 +90,11 @@ jobs:
           fi
           pm2 save
 
-  # ── Job 3: Deploy API to CE Cloud (manual only for now) ──
+  # ── Job 3: Deploy API to CE Cloud ──
   deploy-api:
     needs: build
     if: >-
+      github.event_name == 'push' ||
       github.event.inputs.deploy_target == 'api' ||
       github.event.inputs.deploy_target == 'both'
     runs-on: [self-hosted, ce-cloud]
