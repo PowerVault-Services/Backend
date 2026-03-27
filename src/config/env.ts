@@ -28,6 +28,8 @@ const envSchema = z.object({
   HUAWEI_BACKUP_PASSWORD: z.string().optional(),
   HUAWEI_ONDEMAND_USER: z.string().optional(),
   HUAWEI_ONDEMAND_PASSWORD: z.string().optional(),
+  HUAWEI_EXTRA1_USER: z.string().optional(),
+  HUAWEI_EXTRA1_PASSWORD: z.string().optional(),
 
   // ── Huawei rate limiting ──
   HUAWEI_MIN_INTERVAL_MS: numStr(6500),

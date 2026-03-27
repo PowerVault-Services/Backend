@@ -34,7 +34,7 @@ const SITE_REALTIME_SCHEDULE = process.env.HUAWEI_SITE_REALTIME_CRON ?? '*/5 * *
 const DEVICE_SCHEDULE = process.env.HUAWEI_DEVICE_CRON ?? '2-59/5 * * * *';
 const ALARM_SCHEDULE = process.env.HUAWEI_ALARM_CRON ?? '1-59/5 * * * *';
 const DAILY_KPI_SCHEDULE = process.env.HUAWEI_DAILY_KPI_CRON ?? '15 * * * *'; // every hour at :15
-const HOURLY_KPI_SCHEDULE = process.env.HUAWEI_HOURLY_KPI_CRON ?? '10-59/15 * * * *'; // every 15 min at :10,:25,:40,:55
+const HOURLY_KPI_SCHEDULE = process.env.HUAWEI_HOURLY_KPI_CRON ?? '10 * * * *'; // every 60 min at :10 — getKpiStationHour quota = 27/day, 24 runs/day fits within limit
 const AUX_REALTIME_SCHEDULE = process.env.HUAWEI_AUX_REALTIME_CRON ?? '3-59/5 * * * *'; // every 5 min at :03
 const MONTHLY_KPI_SCHEDULE = process.env.HUAWEI_MONTHLY_KPI_CRON ?? '20 */4 * * *'; // every 4 hours at :20
 const WATCHDOG_INTERVAL_MS = Math.max(60_000, Number(process.env.HUAWEI_SYNC_WATCHDOG_INTERVAL_MS ?? 60_000));

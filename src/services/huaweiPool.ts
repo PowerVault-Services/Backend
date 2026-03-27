@@ -1,6 +1,6 @@
-import { huaweiMain, huaweiAlarm, huaweiBackup, huaweiOnDemand, HuaweiService } from './huaweiService';
+import { huaweiMain, huaweiAlarm, huaweiBackup, huaweiOnDemand, huaweiExtra1, HuaweiService } from './huaweiService';
 
-export type HuaweiLogicalClientKey = 'main' | 'backup' | 'alarm' | 'ondemand';
+export type HuaweiLogicalClientKey = 'main' | 'backup' | 'alarm' | 'ondemand' | 'extra1';
 export type HuaweiPurpose = 'inventory' | 'siteRealtime' | 'device' | 'alarm' | 'ondemand';
 
 type StationAccessMeta = {
@@ -11,11 +11,11 @@ type StationAccessMeta = {
 };
 
 const PURPOSE_ORDER: Record<HuaweiPurpose, HuaweiLogicalClientKey[]> = {
-  inventory: ['backup', 'main', 'alarm', 'ondemand'],
-  siteRealtime: ['main', 'backup', 'alarm', 'ondemand'],
-  device: ['main', 'backup', 'alarm'],
-  alarm: ['alarm', 'backup', 'main'],
-  ondemand: ['ondemand', 'alarm', 'backup', 'main'],
+  inventory: ['backup', 'main', 'extra1', 'alarm', 'ondemand'],
+  siteRealtime: ['main', 'backup', 'extra1', 'alarm', 'ondemand'],
+  device: ['main', 'backup', 'extra1', 'alarm'],
+  alarm: ['alarm', 'backup', 'main', 'extra1'],
+  ondemand: ['ondemand', 'alarm', 'backup', 'main', 'extra1'],
 };
 
 const stationAccessRegistry = new Map<string, StationAccessMeta>();
@@ -27,6 +27,7 @@ export const huaweiClients = {
   alarm: huaweiAlarm,
   backup: huaweiBackup,
   ondemand: huaweiOnDemand,
+  extra1: huaweiExtra1,
 };
 
 function uniqueServices(services: HuaweiService[]): HuaweiService[] {

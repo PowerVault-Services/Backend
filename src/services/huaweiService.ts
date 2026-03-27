@@ -525,6 +525,9 @@ const ondemandPass = process.env.HUAWEI_ONDEMAND_PASSWORD ?? basePass;
 const backupUser = process.env.HUAWEI_BACKUP_USER ?? baseUser;
 const backupPass = process.env.HUAWEI_BACKUP_PASSWORD ?? basePass;
 
+const extra1User = process.env.HUAWEI_EXTRA1_USER ?? baseUser;
+const extra1Pass = process.env.HUAWEI_EXTRA1_PASSWORD ?? basePass;
+
 const huaweiServiceRegistry = new Map<string, HuaweiService>();
 const warnedSharedCredentialKeys = new Set<string>();
 
@@ -554,6 +557,7 @@ export const huaweiMain = getOrCreateHuaweiService({ userName: baseUser, systemC
 export const huaweiAlarm = getOrCreateHuaweiService({ userName: alarmUser, systemCode: alarmPass, label: 'ALARM' });
 export const huaweiOnDemand = getOrCreateHuaweiService({ userName: ondemandUser, systemCode: ondemandPass, label: 'ONDEMAND' });
 export const huaweiBackup = getOrCreateHuaweiService({ userName: backupUser, systemCode: backupPass, label: 'BACKUP' });
+export const huaweiExtra1 = getOrCreateHuaweiService({ userName: extra1User, systemCode: extra1Pass, label: 'EXTRA1' });
 
 export const huaweiService = huaweiMain;
 export { HuaweiService };
