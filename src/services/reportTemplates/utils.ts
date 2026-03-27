@@ -37,9 +37,6 @@ export function fileToDataUri(filePath: string): string | null {
   }
 }
 
-function asFileUrl(p: string) {
-  return 'file://' + p.replace(/\\/g, '/');
-}
 
 export function formatThaiDate(date?: Date | null) {
   if (!date) return '-';
