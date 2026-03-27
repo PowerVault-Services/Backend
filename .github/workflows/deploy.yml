@@ -50,6 +50,7 @@ jobs:
           path: |
             dist/
             prisma/
+            assets/
             package.json
             package-lock.json
           retention-days: 1
