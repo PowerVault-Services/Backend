@@ -31,11 +31,9 @@ rectangle "Job" as E_Job
 ' ── ProductCategory ──
 rectangle "ProductCategory" as E_PCat
 
-usecase "<u>id</u>" as A_PC_id
-usecase "name" as A_PC_name
+usecase "<u>name</u>" as A_PC_name
 
-E_PCat -left- A_PC_id
-E_PCat -right- A_PC_name
+E_PCat -- A_PC_name
 
 ' ── Unit ──
 rectangle "Unit" as E_Unit

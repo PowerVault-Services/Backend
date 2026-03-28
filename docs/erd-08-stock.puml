@@ -21,9 +21,7 @@ entity "Job" as job {
 }
 
 entity "ProductCategory" as pcat {
-  primary_key(id) : INT <<PK>>
-  --
-  not_null(name) : VARCHAR <<unique>>
+  primary_key(name) : VARCHAR <<PK>>
 }
 
 entity "Unit" as unit {

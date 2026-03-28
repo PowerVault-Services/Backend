@@ -559,10 +559,8 @@ R_job_email == "N" E_Email
 
 rectangle "ProductCategory" as E_PCat
 
-usecase "<u>id</u>" as A_PC_id
-usecase "name" as A_PC_name
+usecase "<u>name</u>" as A_PC_name
 
-E_PCat -- A_PC_id
 E_PCat -- A_PC_name
 
 ' ╔══════════════════════════════════════════╗
