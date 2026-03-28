@@ -35,42 +35,33 @@ entity "Inverter" as inverter {
 }
 
 entity "InverterKpiSnapshot" as kpi {
-  primary_key(id) : INT <<PK>>
+  primary_key(inverterId) : INT <<PK, FK>>
+  primary_key(ts) : TIMESTAMP <<PK>>
   --
-  foreign_key(inverterId) : INT <<FK>>
-  not_null(ts) : TIMESTAMP
   activePower : FLOAT
   dayEnergy : FLOAT
   totalEnergy : FLOAT
   temperature : FLOAT
   raw : JSON
   createdAt : TIMESTAMP
-  ..
-  <<unique>> (inverterId, ts)
 }
 
 entity "InverterStringSnapshot" as stringsnap {
-  primary_key(id) : INT <<PK>>
+  primary_key(snapshotId) : INT <<PK, FK>>
+  primary_key(stringNo) : INT <<PK>>
   --
-  foreign_key(snapshotId) : INT <<FK>>
-  not_null(stringNo) : INT
   voltage : FLOAT
   current : FLOAT
   status : VARCHAR
-  ..
-  <<unique>> (snapshotId, stringNo)
 }
 
 entity "SiteDailyEnergy" as daily {
-  primary_key(id) : INT <<PK>>
+  primary_key(siteId) : INT <<PK, FK>>
+  primary_key(date) : TIMESTAMP <<PK>>
   --
-  foreign_key(siteId) : INT <<FK>>
-  not_null(date) : TIMESTAMP
   not_null(energyKWh) : FLOAT
   raw : JSON
   createdAt : TIMESTAMP
-  ..
-  <<unique>> (siteId, date)
 }
 
 ' Relationships

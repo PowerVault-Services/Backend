@@ -131,15 +131,13 @@ R_contains == "N" E_Inv
 
 rectangle "InverterKpiSnapshot" as E_KPI
 
-usecase "<u>id</u>" as A_K_id
-usecase "//inverterId//" as A_K_iid
-usecase "ts" as A_K_ts
+usecase "<u>//inverterId//</u>" as A_K_iid
+usecase "<u>ts</u>" as A_K_ts
 usecase "activePower" as A_K_ap
 usecase "dayEnergy" as A_K_de
 usecase "temperature" as A_K_temp
 usecase "raw" as A_K_raw
 
-E_KPI -- A_K_id
 E_KPI -- A_K_iid
 E_KPI -- A_K_ts
 E_KPI -- A_K_ap
@@ -157,13 +155,11 @@ R_inv_kpi == "N" E_KPI
 
 rectangle "InverterStringSnapshot" as E_Str
 
-usecase "<u>id</u>" as A_Str_id
-usecase "//snapshotId//" as A_Str_sid
-usecase "stringNo" as A_Str_no
+usecase "<u>//snapshotId//</u>" as A_Str_sid
+usecase "<u>stringNo</u>" as A_Str_no
 usecase "voltage" as A_Str_v
 usecase "current" as A_Str_c
 
-E_Str -- A_Str_id
 E_Str -- A_Str_sid
 E_Str -- A_Str_no
 E_Str -- A_Str_v
@@ -211,13 +207,11 @@ R_inv_alarm == "N" E_Alarm
 
 rectangle "SiteDailyEnergy" as E_Daily
 
-usecase "<u>id</u>" as A_D_id
-usecase "//siteId//" as A_D_sid
-usecase "date" as A_D_dt
+usecase "<u>//siteId//</u>" as A_D_sid
+usecase "<u>date</u>" as A_D_dt
 usecase "energyKWh" as A_D_e
 usecase "raw" as A_D_raw
 
-E_Daily -- A_D_id
 E_Daily -- A_D_sid
 E_Daily -- A_D_dt
 E_Daily -- A_D_e
@@ -233,12 +227,10 @@ R_site_daily == "N" E_Daily
 
 rectangle "SiteLayout" as E_Layout
 
-usecase "<u>id</u>" as A_L_id
-usecase "//siteId//" as A_L_sid
-usecase "type" as A_L_type
+usecase "<u>//siteId//</u>" as A_L_sid
+usecase "<u>type</u>" as A_L_type
 usecase "fileUrl" as A_L_url
 
-E_Layout -- A_L_id
 E_Layout -- A_L_sid
 E_Layout -- A_L_type
 E_Layout -- A_L_url
@@ -253,13 +245,11 @@ R_site_layout == "N" E_Layout
 
 rectangle "SiteForecastMonthly" as E_FCM
 
-usecase "<u>id</u>" as A_FM_id
-usecase "//siteId//" as A_FM_sid
-usecase "month" as A_FM_m
+usecase "<u>//siteId//</u>" as A_FM_sid
+usecase "<u>month</u>" as A_FM_m
 usecase "eGridKwh" as A_FM_eg
 usecase "prRatio" as A_FM_pr
 
-E_FCM -- A_FM_id
 E_FCM -- A_FM_sid
 E_FCM -- A_FM_m
 E_FCM -- A_FM_eg
@@ -275,13 +265,11 @@ R_site_fcm == "N" E_FCM
 
 rectangle "SiteForecastYearly" as E_FCY
 
-usecase "<u>id</u>" as A_FY_id
-usecase "//siteId//" as A_FY_sid
-usecase "year" as A_FY_y
+usecase "<u>//siteId//</u>" as A_FY_sid
+usecase "<u>year</u>" as A_FY_y
 usecase "degradationPct" as A_FY_dp
 usecase "annualProductionKwh" as A_FY_ap
 
-E_FCY -- A_FY_id
 E_FCY -- A_FY_sid
 E_FCY -- A_FY_y
 E_FCY -- A_FY_dp
@@ -297,19 +285,17 @@ R_site_fcy == "N" E_FCY
 
 rectangle "SiteMonthlyActual" as E_ACT
 
-usecase "<u>id</u>" as A_A_id
-usecase "//siteId//" as A_A_sid
+usecase "<u>//siteId//</u>" as A_A_sid
+usecase "<u>year</u>" as A_A_y
+usecase "<u>month</u>" as A_A_m
 usecase "plantCode" as A_A_pc
-usecase "year" as A_A_y
-usecase "month" as A_A_m
 usecase "production" as A_A_prod
 usecase "pr" as A_A_pr
 
-E_ACT -- A_A_id
 E_ACT -- A_A_sid
-E_ACT -- A_A_pc
 E_ACT -- A_A_y
 E_ACT -- A_A_m
+E_ACT -- A_A_pc
 E_ACT -- A_A_prod
 E_ACT -- A_A_pr
 
@@ -457,8 +443,7 @@ R_site_job == "N" E_Job
 
 rectangle "CleaningJob" as E_CJ
 
-usecase "<u>id</u>" as A_CJ_id
-usecase "//jobId//" as A_CJ_jid
+usecase "<u>//jobId//</u>" as A_CJ_jid
 usecase "//step2SentByUserId//" as A_CJ_s2
 usecase "//step5SentByUserId//" as A_CJ_s5
 usecase "projectName" as A_CJ_pn
@@ -466,7 +451,6 @@ usecase "workDate" as A_CJ_wd
 usecase "checklist" as A_CJ_cl
 usecase "reportFileUrl" as A_CJ_rpt
 
-E_CJ -- A_CJ_id
 E_CJ -- A_CJ_jid
 E_CJ -- A_CJ_s2
 E_CJ -- A_CJ_s5

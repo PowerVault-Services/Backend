@@ -31,14 +31,12 @@ rectangle "Site" as E_Site
 ' ── SiteForecastMonthly ──
 rectangle "SiteForecastMonthly" as E_FCM
 
-usecase "<u>id</u>" as A_FM_id
-usecase "//siteId//" as A_FM_sid
-usecase "month" as A_FM_m
+usecase "<u>//siteId//</u>" as A_FM_sid
+usecase "<u>month</u>" as A_FM_m
 usecase "globalKwhM2" as A_FM_gk
 usecase "eGridKwh" as A_FM_eg
 usecase "prRatio" as A_FM_pr
 
-E_FCM -left- A_FM_id
 E_FCM -left- A_FM_sid
 E_FCM -left- A_FM_m
 E_FCM -right- A_FM_gk
@@ -52,14 +50,12 @@ R_site_fcm == "N" E_FCM
 ' ── SiteForecastYearly ──
 rectangle "SiteForecastYearly" as E_FCY
 
-usecase "<u>id</u>" as A_FY_id
-usecase "//siteId//" as A_FY_sid
-usecase "year" as A_FY_y
+usecase "<u>//siteId//</u>" as A_FY_sid
+usecase "<u>year</u>" as A_FY_y
 usecase "degradationPct" as A_FY_dp
 usecase "annualProductionKwh" as A_FY_ap
 usecase "warrantyEnergyOutputKwh" as A_FY_we
 
-E_FCY -left- A_FY_id
 E_FCY -left- A_FY_sid
 E_FCY -left- A_FY_y
 E_FCY -right- A_FY_dp
@@ -73,20 +69,18 @@ R_site_fcy == "N" E_FCY
 ' ── SiteMonthlyActual ──
 rectangle "SiteMonthlyActual" as E_ACT
 
-usecase "<u>id</u>" as A_A_id
-usecase "//siteId//" as A_A_sid
+usecase "<u>//siteId//</u>" as A_A_sid
+usecase "<u>year</u>" as A_A_y
+usecase "<u>month</u>" as A_A_m
 usecase "plantCode" as A_A_pc
-usecase "year" as A_A_y
-usecase "month" as A_A_m
 usecase "production" as A_A_prod
 usecase "pr" as A_A_pr
 usecase "revenue" as A_A_rev
 
-E_ACT -left- A_A_id
 E_ACT -left- A_A_sid
-E_ACT -left- A_A_pc
 E_ACT -left- A_A_y
-E_ACT -right- A_A_m
+E_ACT -left- A_A_m
+E_ACT -right- A_A_pc
 E_ACT -right- A_A_prod
 E_ACT -right- A_A_pr
 E_ACT -right- A_A_rev

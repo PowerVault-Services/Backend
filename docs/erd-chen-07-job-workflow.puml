@@ -73,8 +73,7 @@ R_site_job == "N" E_Job
 ' ── CleaningJob ──
 rectangle "CleaningJob" as E_CJ
 
-usecase "<u>id</u>" as A_CJ_id
-usecase "//jobId//" as A_CJ_jid
+usecase "<u>//jobId//</u>" as A_CJ_jid
 usecase "//step2SentByUserId//" as A_CJ_s2
 usecase "//step5SentByUserId//" as A_CJ_s5
 usecase "projectName" as A_CJ_pn
@@ -82,7 +81,6 @@ usecase "workDate" as A_CJ_wd
 usecase "checklist" as A_CJ_cl
 usecase "reportFileUrl" as A_CJ_rpt
 
-E_CJ -left- A_CJ_id
 E_CJ -left- A_CJ_jid
 E_CJ -left- A_CJ_s2
 E_CJ -left- A_CJ_s5

@@ -67,12 +67,10 @@ R_owns == "N" E_Site
 ' ── SiteLayout ──
 rectangle "SiteLayout" as E_Layout
 
-usecase "<u>id</u>" as A_L_id
-usecase "//siteId//" as A_L_sid
-usecase "type" as A_L_type
+usecase "<u>//siteId//</u>" as A_L_sid
+usecase "<u>type</u>" as A_L_type
 usecase "fileUrl" as A_L_url
 
-E_Layout -down- A_L_id
 E_Layout -down- A_L_sid
 E_Layout -down- A_L_type
 E_Layout -down- A_L_url

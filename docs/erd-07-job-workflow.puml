@@ -45,9 +45,8 @@ entity "Job" as job {
 }
 
 entity "CleaningJob" as cjob {
-  primary_key(id) : INT <<PK>>
+  primary_key(jobId) : INT <<PK, FK>>
   --
-  foreign_key(jobId) : INT <<FK>> <<unique>>
   foreign_key(step2SentByUserId) : INT <<FK>> (optional)
   foreign_key(step5SentByUserId) : INT <<FK>> (optional)
   projectName : VARCHAR

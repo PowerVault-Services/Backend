@@ -45,14 +45,11 @@ entity "Site" as site {
 }
 
 entity "SiteLayout" as layout {
-  primary_key(id) : INT <<PK>>
+  primary_key(siteId) : INT <<PK, FK>>
+  primary_key(type) : LayoutType <<PK>> <<enum>>
   --
-  foreign_key(siteId) : INT <<FK>>
-  not_null(type) : LayoutType <<enum>>
   not_null(fileUrl) : VARCHAR
   createdAt : TIMESTAMP
-  ..
-  <<unique>> (siteId, type)
 }
 
 entity "SiteOtherRow" as other {

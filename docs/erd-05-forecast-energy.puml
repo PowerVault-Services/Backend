@@ -21,42 +21,33 @@ entity "Site" as site {
 }
 
 entity "SiteForecastMonthly" as fcm {
-  primary_key(id) : INT <<PK>>
+  primary_key(siteId) : INT <<PK, FK>>
+  primary_key(month) : INT <<PK>>
   --
-  foreign_key(siteId) : INT <<FK>>
-  not_null(month) : INT
   globalKwhM2 : FLOAT
   eGridKwh : FLOAT
   prRatio : FLOAT
-  ..
-  <<unique>> (siteId, month)
 }
 
 entity "SiteForecastYearly" as fcy {
-  primary_key(id) : INT <<PK>>
+  primary_key(siteId) : INT <<PK, FK>>
+  primary_key(year) : INT <<PK>>
   --
-  foreign_key(siteId) : INT <<FK>>
-  not_null(year) : INT
   degradationPct : FLOAT
   annualProductionKwh : FLOAT
   warrantyEnergyOutputKwh : FLOAT
-  ..
-  <<unique>> (siteId, year)
 }
 
 entity "SiteMonthlyActual" as actual {
-  primary_key(id) : INT <<PK>>
+  primary_key(siteId) : INT <<PK, FK>>
+  primary_key(year) : INT <<PK>>
+  primary_key(month) : INT <<PK>>
   --
-  foreign_key(siteId) : INT <<FK>>
   not_null(plantCode) : VARCHAR
-  not_null(year) : INT
-  not_null(month) : INT
   not_null(key) : VARCHAR
   production : FLOAT
   pr : FLOAT
   revenue : FLOAT
-  ..
-  <<unique>> (siteId, year, month)
 }
 
 ' Relationships

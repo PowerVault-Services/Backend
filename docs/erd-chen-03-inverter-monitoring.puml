@@ -58,16 +58,14 @@ R_contains == "N" E_Inv
 ' ── InverterKpiSnapshot ──
 rectangle "InverterKpiSnapshot" as E_KPI
 
-usecase "<u>id</u>" as A_K_id
-usecase "//inverterId//" as A_K_iid
-usecase "ts" as A_K_ts
+usecase "<u>//inverterId//</u>" as A_K_iid
+usecase "<u>ts</u>" as A_K_ts
 usecase "activePower" as A_K_ap
 usecase "dayEnergy" as A_K_de
 usecase "totalEnergy" as A_K_te
 usecase "temperature" as A_K_temp
 usecase "raw" as A_K_raw
 
-E_KPI -left- A_K_id
 E_KPI -left- A_K_iid
 E_KPI -left- A_K_ts
 E_KPI -left- A_K_ap
@@ -83,13 +81,11 @@ R_inv_kpi == "N" E_KPI
 ' ── InverterStringSnapshot ──
 rectangle "InverterStringSnapshot" as E_Str
 
-usecase "<u>id</u>" as A_Str_id
-usecase "//snapshotId//" as A_Str_sid
-usecase "stringNo" as A_Str_no
+usecase "<u>//snapshotId//</u>" as A_Str_sid
+usecase "<u>stringNo</u>" as A_Str_no
 usecase "voltage" as A_Str_v
 usecase "current" as A_Str_c
 
-E_Str -left- A_Str_id
 E_Str -left- A_Str_sid
 E_Str -left- A_Str_no
 E_Str -right- A_Str_v
@@ -102,13 +98,11 @@ R_kpi_str == "N" E_Str
 ' ── SiteDailyEnergy ──
 rectangle "SiteDailyEnergy" as E_Daily
 
-usecase "<u>id</u>" as A_D_id
-usecase "//siteId//" as A_D_sid
-usecase "date" as A_D_dt
+usecase "<u>//siteId//</u>" as A_D_sid
+usecase "<u>date</u>" as A_D_dt
 usecase "energyKWh" as A_D_e
 usecase "raw" as A_D_raw
 
-E_Daily -left- A_D_id
 E_Daily -left- A_D_sid
 E_Daily -left- A_D_dt
 E_Daily -right- A_D_e

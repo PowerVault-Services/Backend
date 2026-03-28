@@ -66,30 +66,24 @@ entity "Inverter" as inverter {
 }
 
 entity "InverterKpiSnapshot" as kpi {
-  primary_key(id) : INT <<PK>>
+  primary_key(inverterId) : INT <<PK, FK>>
+  primary_key(ts) : TIMESTAMP <<PK>>
   --
-  foreign_key(inverterId) : INT <<FK>>
-  not_null(ts) : TIMESTAMP
   activePower : FLOAT
   dayEnergy : FLOAT
   totalEnergy : FLOAT
   temperature : FLOAT
   raw : JSON
   createdAt : TIMESTAMP
-  ..
-  <<unique>> (inverterId, ts)
 }
 
 entity "InverterStringSnapshot" as stringsnap {
-  primary_key(id) : INT <<PK>>
+  primary_key(snapshotId) : INT <<PK, FK>>
+  primary_key(stringNo) : INT <<PK>>
   --
-  foreign_key(snapshotId) : INT <<FK>>
-  not_null(stringNo) : INT
   voltage : FLOAT
   current : FLOAT
   status : VARCHAR
-  ..
-  <<unique>> (snapshotId, stringNo)
 }
 
 entity "Alarm" as alarm {
@@ -108,65 +102,50 @@ entity "Alarm" as alarm {
 }
 
 entity "SiteDailyEnergy" as daily {
-  primary_key(id) : INT <<PK>>
+  primary_key(siteId) : INT <<PK, FK>>
+  primary_key(date) : TIMESTAMP <<PK>>
   --
-  foreign_key(siteId) : INT <<FK>>
-  not_null(date) : TIMESTAMP
   not_null(energyKWh) : FLOAT
   raw : JSON
   createdAt : TIMESTAMP
-  ..
-  <<unique>> (siteId, date)
 }
 
 entity "SiteLayout" as layout {
-  primary_key(id) : INT <<PK>>
+  primary_key(siteId) : INT <<PK, FK>>
+  primary_key(type) : LayoutType <<PK>> <<enum>>
   --
-  foreign_key(siteId) : INT <<FK>>
-  not_null(type) : LayoutType <<enum>>
   not_null(fileUrl) : VARCHAR
   createdAt : TIMESTAMP
-  ..
-  <<unique>> (siteId, type)
 }
 
 entity "SiteForecastMonthly" as fcm {
-  primary_key(id) : INT <<PK>>
+  primary_key(siteId) : INT <<PK, FK>>
+  primary_key(month) : INT <<PK>>
   --
-  foreign_key(siteId) : INT <<FK>>
-  not_null(month) : INT
   globalKwhM2 : FLOAT
   eGridKwh : FLOAT
   prRatio : FLOAT
-  ..
-  <<unique>> (siteId, month)
 }
 
 entity "SiteForecastYearly" as fcy {
-  primary_key(id) : INT <<PK>>
+  primary_key(siteId) : INT <<PK, FK>>
+  primary_key(year) : INT <<PK>>
   --
-  foreign_key(siteId) : INT <<FK>>
-  not_null(year) : INT
   degradationPct : FLOAT
   annualProductionKwh : FLOAT
   warrantyEnergyOutputKwh : FLOAT
-  ..
-  <<unique>> (siteId, year)
 }
 
 entity "SiteMonthlyActual" as actual {
-  primary_key(id) : INT <<PK>>
+  primary_key(siteId) : INT <<PK, FK>>
+  primary_key(year) : INT <<PK>>
+  primary_key(month) : INT <<PK>>
   --
-  foreign_key(siteId) : INT <<FK>>
   not_null(plantCode) : VARCHAR
-  not_null(year) : INT
-  not_null(month) : INT
   not_null(key) : VARCHAR
   production : FLOAT
   pr : FLOAT
   revenue : FLOAT
-  ..
-  <<unique>> (siteId, year, month)
 }
 
 entity "SiteWarrantySupplierItem" as wsi {
@@ -225,9 +204,8 @@ entity "Job" as job {
 }
 
 entity "CleaningJob" as cjob {
-  primary_key(id) : INT <<PK>>
+  primary_key(jobId) : INT <<PK, FK>>
   --
-  foreign_key(jobId) : INT <<FK>> <<unique>>
   foreign_key(step2SentByUserId) : INT <<FK>> (optional)
   foreign_key(step5SentByUserId) : INT <<FK>> (optional)
   projectName : VARCHAR
