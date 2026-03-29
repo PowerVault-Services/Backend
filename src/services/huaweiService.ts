@@ -207,11 +207,19 @@ class HuaweiService {
             this.minIntervalMs = newMin;
           }
 
-          if (originalRequest._retryCount <= 3) {
-            log.warn('Huawei rate limit (407), cooling down then retry', { label: this.label, delayMs: delay, retryCount: originalRequest._retryCount });
+          // Daily-quota endpoints: retry เปล่าเพราะ quota หมดทั้งวัน กิน quota เพิ่มเปล่าๆ
+          // Per-5-min endpoints: retry ได้ 1 ครั้ง เพราะ quota อาจ reset ทัน
+          const url = originalRequest.url ?? '';
+          const isDailyQuota = /getDevList|getKpiStation(Hour|Day|Month|Year)|getAlarmData/i.test(url);
+          const maxRetries = isDailyQuota ? 0 : 1;
+
+          if (originalRequest._retryCount <= maxRetries) {
+            log.warn('Huawei rate limit (407), cooling down then retry', { label: this.label, delayMs: delay, retryCount: originalRequest._retryCount, url });
             await sleep(jitter(delay));
             return this.client(originalRequest);
           }
+
+          log.warn('Huawei rate limit (407), no retry (daily quota or max retries reached)', { label: this.label, url, isDailyQuota, retryCount: originalRequest._retryCount });
         }
 
         return Promise.reject(error);
