@@ -1140,6 +1140,25 @@ export { restoreRetryQueue };
 export const syncInverterData = syncMonitoringTick;
 
 export async function syncPlantOnDemand(plantCode: string, opts?: SyncPlantOnDemandOptions) {
+  // API-only mode: skip all Huawei calls, serve from DB only
+  const disableCron = process.env.DISABLE_CRON;
+  if (disableCron === '1' || disableCron === 'true') {
+    return {
+      ok: true,
+      plantCode,
+      skippedRemoteSync: true,
+      reason: 'api_only_mode',
+      siteRealtimeRefreshed: false,
+      deviceSync: {
+        ok: true,
+        inverters: 0,
+        currentPowerKW: null,
+        skippedDeviceDetail: true,
+        usedCachedInventory: false,
+      },
+    };
+  }
+
   const normalized = normalizeOnDemandOptions(opts);
   const inflightKey = makeOnDemandInflightKey(plantCode, normalized);
   const existing = onDemandSyncInflight.get(inflightKey);

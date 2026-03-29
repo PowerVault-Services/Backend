@@ -4,10 +4,14 @@
 
 ## สถาปัตยกรรมปัจจุบัน
 
-- **Single-process monolith** — Express API + Cron jobs + Huawei clients ทั้งหมดรันใน process เดียว (`src/app.ts`)
-- **Database**: PostgreSQL via Prisma ORM
+- **Split services** — แยก API server กับ Worker process ออกจากกัน deploy บนคนละ VM บน CE Cloud
+  - `solar-api` (10.240.68.114): Express API + `DISABLE_CRON=1` + `USE_QUEUE=true`
+  - `solar-worker` (10.240.68.60): Cron sync + Puppeteer PDF + Email via BullMQ
+- **Database**: PostgreSQL via Prisma ORM (10.240.68.192)
+- **File Storage**: MinIO (10.240.68.52:9000)
+- **Queue**: BullMQ + Redis (10.240.68.192:6379) — API enqueue, Worker process
 - **Huawei API**: FusionSolar `https://intl.fusionsolar.huawei.com/thirdData/*`
-- **Deploy**: CE Cloud (KMITL) — รัน 24/7 บน cloud (timezone UTC)
+- **Deploy**: CE Cloud (KMITL) — CI/CD via GitHub Actions self-hosted runners (auto-deploy on push to `main`)
 - **Branch**: `dev` (main branch คือ `main`)
 
 ## ไฟล์สำคัญ
@@ -112,26 +116,27 @@
 6. **เพิ่ม jitter** ให้ทุก scheduled polling เพื่อลด synchronized bursts
 7. **Report values อาจ lag** — day_income update ทุก 5 นาที แต่ total_income update ทุก 1 ชม. (current > total ได้ชั่วคราว)
 
-## 4 Huawei Accounts (ปัจจุบัน — 4 credentials แยกกันจริง)
+## 5 Huawei Accounts (ปัจจุบัน — 5 credentials แยกกันจริง)
 
 ```
-MAIN (pvscada)      — ตัวหลัก
-BACKUP (APIscada1)  — สำรอง
-ALARM (APIscada2)   — สำหรับ alarm
-ONDEMAND (APIscada3) — reserved สำหรับ on-demand requests จากหน้า monitoring เท่านั้น
+MAIN     (pvscada)    — ตัวหลัก
+BACKUP   (APIscada1)  — สำรอง
+ALARM    (APIscada2)  — สำหรับ alarm
+ONDEMAND (APIscada3)  — reserved สำหรับ on-demand requests จากหน้า monitoring เท่านั้น
+EXTRA1   (APIscada4)  — เพิ่มเพื่อ cron throughput (+33% device sync speed)
 ```
 
-Credentials อยู่ใน env vars: `HUAWEI_USER/PASSWORD`, `HUAWEI_BACKUP_*/ALARM_*/ONDEMAND_*`
+Credentials อยู่ใน env vars: `HUAWEI_USER/PASSWORD`, `HUAWEI_BACKUP_*/ALARM_*/ONDEMAND_*/EXTRA1_*`
 
-Account instances สร้างใน `huaweiService.ts:553-556` ด้วย `getOrCreateHuaweiService()` ที่ dedup ถ้า credentials ซ้ำ
+Account instances สร้างใน `huaweiService.ts` ด้วย `getOrCreateHuaweiService()` ที่ dedup ถ้า credentials ซ้ำ
 
-PURPOSE_ORDER ใน `huaweiPool.ts:13-19` (สถานะปัจจุบัน):
+PURPOSE_ORDER ใน `huaweiPool.ts` (สถานะปัจจุบัน):
 ```ts
-inventory:    ['backup', 'main', 'alarm', 'ondemand'],
-siteRealtime: ['main', 'backup', 'alarm', 'ondemand'],
-device:       ['main', 'backup', 'alarm'],         // ondemand ถูกเอาออกแล้ว
-alarm:        ['alarm', 'backup', 'main'],          // ondemand ถูกเอาออกแล้ว
-ondemand:     ['ondemand', 'alarm', 'backup', 'main'],
+inventory:    ['backup', 'main', 'extra1', 'alarm', 'ondemand'],
+siteRealtime: ['main', 'backup', 'extra1', 'alarm', 'ondemand'],
+device:       ['main', 'backup', 'extra1', 'alarm'],  // 4 cron accounts → 8 sites/tick
+alarm:        ['alarm', 'backup', 'main', 'extra1'],
+ondemand:     ['ondemand', 'alarm', 'backup', 'main', 'extra1'],
 ```
 
 ## Cron Jobs and Startup Warmup
@@ -142,7 +147,7 @@ Cron schedules:
   - Alarm:          1-59/5 * * * *       (ทุก 5 นาที offset :01)
   - Device:         2-59/5 * * * *       (ทุก 5 นาที offset :02)
   - Aux Realtime:   3-59/5 * * * *       (ทุก 5 นาที offset :03)
-  - Hourly KPI:     10-59/15 * * * *     (ทุก 15 นาที)
+  - Hourly KPI:     10 * * * *           (ทุก 60 นาที — quota 27/day, 24 runs/day < limit)
   - Daily KPI:      15 * * * *           (ทุก 1 ชม. at :15)
   - Monthly KPI:    20 */4 * * *         (ทุก 4 ชม. at :20)
 
@@ -290,23 +295,17 @@ Aux Device Realtime:       0 API calls (DB - AuxDeviceSnapshot) ✅ แก้แ
 รวม:                       0 API calls → ดูกี่คนกี่ plant ก็ได้ ไม่ติด limit
 ```
 
-## ปัญหา 3: เพิ่ม Huawei Accounts (อาจได้เพิ่ม 2 ตัว รวม 6)
+## ~~ปัญหา 3: เพิ่ม Huawei Accounts~~ ✅ แก้แล้ว (EXTRA1)
 
-เป้าหมาย: ใช้ 5 accounts สำหรับ cron + 1 สำหรับ ondemand
+เพิ่ม EXTRA1 (APIscada4) แล้ว รวม 5 accounts:
+- MAIN (pvscada), BACKUP (APIscada1), ALARM (APIscada2), ONDEMAND (APIscada3), EXTRA1 (APIscada4)
 
-ไฟล์ที่ต้องแก้ (3 ไฟล์):
+ถ้าได้ account เพิ่มอีก (EXTRA2+) แก้แค่ 3 ไฟล์:
+1. `src/config/env.ts` — เพิ่ม `HUAWEI_EXTRA2_USER / HUAWEI_EXTRA2_PASSWORD`
+2. `src/services/huaweiService.ts` — สร้าง instance เพิ่ม
+3. `src/services/huaweiPool.ts` — เพิ่มใน `huaweiClients` + `PURPOSE_ORDER`
 
-1. `src/config/env.ts` — เพิ่ม 2 คู่ env vars:
-   ```
-   HUAWEI_EXTRA1_USER / HUAWEI_EXTRA1_PASSWORD
-   HUAWEI_EXTRA2_USER / HUAWEI_EXTRA2_PASSWORD
-   ```
-
-2. `src/services/huaweiService.ts` — สร้าง 2 instances เพิ่ม
-
-3. `src/services/huaweiPool.ts` — เพิ่ม client keys + อัพเดท PURPOSE_ORDER
-
-สิ่งที่ไม่ต้องแก้ (รองรับ N accounts อยู่แล้ว): rotate(), batchIndex, uniqueServices(), resolveDynamicDevicePlantsPerTick(), DEVICE_SYNC_CONCURRENCY (auto จาก client count)
+สิ่งที่ไม่ต้องแก้: rotate(), batchIndex, uniqueServices(), resolveDynamicDevicePlantsPerTick(), DEVICE_SYNC_CONCURRENCY (auto จาก client count), cron.ts (ใช้ Object.values แล้ว)
 
 ## ~~ปัญหา 3.1: Huawei API Daily Quota (New Policy)~~ ✅ แก้แล้ว (getDevList cache)
 
@@ -348,14 +347,15 @@ Device sync ใช้แค่ getDevRealKpi (ไม่ต้อง getDevList �
 
 ## ~~ปัญหา 5: Frontend team ใช้ credentials ชุดเดียวกัน~~ ✅ แก้แล้ว
 
-DISABLE_CRON flag ถูกเพิ่มใน cron.ts (line 156-159) แล้ว:
+**วิธีหลัก (แนะนำ)**: Frontend devs ต่อ VPN → ชี้ `VITE_API_URL=http://10.240.68.114:3000` → ไม่ต้องรัน backend เอง
+
+**วิธีสำรอง (รัน backend local)**: ใส่ `DISABLE_CRON=true` ใน .env — cron.ts จะ skip Huawei sync ทั้งหมด:
 ```ts
 if (process.env.DISABLE_CRON === '1' || process.env.DISABLE_CRON === 'true') {
   console.log('DISABLE_CRON=1 — skipping all Huawei sync jobs (frontend-only mode)');
   return;
 }
 ```
-Frontend team ใส่ `DISABLE_CRON=true` ใน .env ได้เลย
 
 ---
 
@@ -433,15 +433,15 @@ Single process + แก้ปัญหาข้างบน เพียงพ�
 | 6 | getDevList cache (ปัญหา 3.1) | กลาง | สูงมาก — daily quota ไม่พอ | ✅ แก้แล้ว — inventory budget per tick + TTL 24h |
 | 7 | Aux realtime → cron sync + DB | กลาง | สูง — หลาย user พร้อมกัน = 407 | ✅ แก้แล้ว — AuxDeviceSnapshot + syncAuxRealtimeTick |
 | 8 | Day view hourly KPI sync (ปัญหา 2 เหลือ) | กลาง | กลาง — ONDEMAND 27/day limit | ✅ แก้แล้ว — SiteHourlyKpi + syncHourlyKpiTick |
-| 9 | เพิ่ม accounts (ปัญหา 3) | กลาง | กลาง — ช่วย cron throughput | รอ credentials |
-| 10 | cron.ts hardcode (ปัญหา 4) | ง่าย | ต่ำ — ทำพร้อมข้อ 9 | ❌ ยังไม่ได้แก้ |
+| 9 | เพิ่ม accounts (ปัญหา 3) | กลาง | กลาง — ช่วย cron throughput | ✅ แก้แล้ว — เพิ่ม EXTRA1 (APIscada4) รวม 5 accounts |
+| 10 | cron.ts hardcode (ปัญหา 4) | ง่าย | ต่ำ — ทำพร้อมข้อ 9 | ✅ แก้แล้ว — Object.values/entries(huaweiClients) |
 
 คำสั่ง compile test: `npx tsc --noEmit`
 
 ## ข้อควรระวังสำหรับ AI ที่รับต่อ
 
-- อย่าเชื่อว่า .env มี 1 account — มี 4 accounts จริง (pvscada, APIscada1, APIscada2, APIscada3) ตรวจสอบได้ใน huaweiService.ts:516-556
-- "8 accounts" หมายถึงต้องแก้โค้ดเพิ่ม client slots ด้วย ไม่ใช่แค่เพิ่ม env
+- อย่าเชื่อว่า .env มี 1 account — มี **5 accounts** จริง (pvscada, APIscada1-4) ตรวจสอบได้ใน huaweiService.ts
+- ถ้าได้ credentials เพิ่ม ต้องแก้ 3 ไฟล์: env.ts (zod schema), huaweiService.ts (สร้าง instance), huaweiPool.ts (เพิ่มใน huaweiClients + PURPOSE_ORDER) — cron.ts ไม่ต้องแก้แล้วเพราะใช้ Object.values()
 - 407 เป็น per-account rate limit ไม่ใช่ org-wide — เพิ่ม account ช่วยลด 407 ได้จริง
 - **getDevList daily quota แก้แล้ว** — device sync ใช้ inventory budget per tick (default 2) + TTL 24h ใน `_syncMonitoringTickInner` (syncService.ts) ไม่เรียก getDevList ทุก site ทุก tick อีกแล้ว
 - **อย่าคำนวณ timing จาก throttle chain (6.5s) อย่างเดียว** — ต้องเช็ค daily quota ด้วย ดู `docs/smartpvms_rate_limiting_compact_for_ai.md`
@@ -464,11 +464,11 @@ Deploy บน CE Cloud (console.cloud.ce.kmitl.ac.th) — university cloud ข�
 
 | Instance | Internal IP | หน้าที่ | สถานะ |
 |----------|-------------|---------|--------|
-| `postgres-db` | 10.240.68.192 | PostgreSQL database | มีแล้ว |
-| `minio-backend` | 10.240.68.52 | MinIO file storage | มีแล้ว |
-| `solar-admin-dev` | 10.240.68.20 | Frontend (NOT backend) | มีแล้ว |
-| `solar-api` | TBD | Express API server (DISABLE_CRON=1) | สร้างใหม่ |
-| `solar-worker` | TBD | Cron sync + Puppeteer + Email Worker | สร้างใหม่ |
+| `postgres-db` | 10.240.68.192 | PostgreSQL + Redis | ✅ running |
+| `minio-backend` | 10.240.68.52 | MinIO file storage | ✅ running |
+| `solar-admin-dev` | 10.240.68.20 | Frontend (NOT backend) | ✅ running |
+| `solar-api` | 10.240.68.114 | Express API server (DISABLE_CRON=1, USE_QUEUE=true) | ✅ deployed |
+| `solar-worker` | 10.240.68.60 | Cron sync + Puppeteer PDF + Email Worker | ✅ deployed |
 
 ### Target Architecture
 
@@ -677,6 +677,45 @@ res.json({ success: true, data: { taskId: task.id, status: 'queued' } });
 
 ---
 
+## Thai Font in PDF Reports (Puppeteer)
+
+### ปัญหา
+
+Puppeteer `setContent()` ใช้ `about:blank` เป็น base URL → Chromium บล็อก `file://` URL → `@font-face src: url('file:///...')` โหลดไม่ได้ → ภาษาไทยในรายงาน PDF กลายเป็น กล่องสี่เหลี่ยม
+
+### วิธีแก้ (commit 445d78a)
+
+`src/services/reportTemplates/utils.ts` — `getFontFaceCss()`:
+- อ่านไฟล์ font แล้ว encode เป็น base64 → embed ตรงใน CSS `@font-face src: url('data:font/truetype;base64,...')`
+- ไม่ใช้ `file://` อีกต่อไป → Chromium โหลดได้แน่นอน
+
+Font candidates (ลำดับตรวจสอบ):
+1. `assets/fonts/THSarabunNew.ttf` (project asset)
+2. `/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf` (system — installed บน solar-worker)
+3. `/usr/share/fonts/truetype/noto-sans-thai/NotoSansThai-Regular.ttf`
+4. `/usr/share/fonts/opentype/noto/NotoSansThai-Regular.ttf`
+
+ถ้าหาไม่เจอสักทาง → ใช้ system font stack (fallback — อาจยังพัง)
+
+### ข้อควรระวัง
+
+- font file ใหญ่ (NotoSansThai ~500KB) → base64 ทำให้ HTML string ใหญ่ขึ้น ~700KB → เป็นเรื่องปกติ
+- ถ้าเพิ่ม font ใหม่หรือเปลี่ยน font path ต้องแก้ candidates list ใน `getFontFaceCss()`
+- `PUPPETEER_EXECUTABLE_PATH` env var override Chromium path ได้
+
+---
+
+## สิ่งที่รอ Verify / Pending
+
+| งาน | สถานะ | หมายเหตุ |
+|-----|--------|----------|
+| Thai font PDF — verify หลัง deploy | ⏳ รอ frontend dev ทดสอบ | commit 445d78a deploy แล้ว — ให้ frontend สร้างรายงานและดู PDF |
+| Domain + SSL (nginx) | ⏳ ยังไม่ได้ domain | ต้องการอย่างน้อย 2 domains: frontend + API |
+| CORS บน solar-api | ⏳ รอ frontend domain | ตอนนี้ allow all origins (dev mode) |
+| Redis `maxmemory-policy noeviction` | ⏳ low priority | ตั้งบน postgres-db instance |
+
+---
+
 ## CI/CD Pipeline Plan
 
 ### สถานะปัจจุบัน
@@ -791,4 +830,8 @@ HUAWEI_PASSWORD=xxx
 | 14 | Docker compose + Redis service | `docker-compose.yml` | ต่ำ | ✅ ทำแล้ว (2026-03-26) |
 | 15 | Deploy workflow | `.github/workflows/deploy.yml` | กลาง | ✅ ทำแล้ว (2026-03-26) |
 | 16 | Install Redis on postgres-db | Manual SSH | ต่ำ | ✅ ทำแล้ว |
-| 17 | Setup self-hosted runners | Manual SSH | กลาง | ยังไม่ได้ทำ |
+| 17 | Setup self-hosted runners (solar-api + solar-worker) | Manual SSH | กลาง | ✅ ทำแล้ว (2026-03-27) |
+| 18 | ตั้ง .env บน solar-api (PORT, DISABLE_CRON, USE_QUEUE, DB, MinIO, Redis) | Manual SSH | ต่ำ | ✅ ทำแล้ว |
+| 19 | ตั้ง .env บน solar-worker (Huawei credentials ครบ 5 accounts, USE_QUEUE, DISABLE_CRON ออก) | Manual SSH | ต่ำ | ✅ ทำแล้ว |
+| 20 | Thai font fix (base64 data URI ใน CSS @font-face) | `src/services/reportTemplates/utils.ts` | กลาง | ✅ ทำแล้ว (commit 445d78a) — รอ verify |
+| 21 | อัพเดท README วิธีต่อ cloud API สำหรับ frontend devs | `README.md` | ต่ำ | ✅ ทำแล้ว |
