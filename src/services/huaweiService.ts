@@ -198,19 +198,21 @@ class HuaweiService {
           const baseDelay = Math.min(300_000, 30_000 * originalRequest._retryCount);
           const delay = retryAfterMs != null ? Math.max(baseDelay, retryAfterMs) : baseDelay;
 
+          const url = originalRequest.url ?? '';
+          const isDailyQuota = /getDevList|getKpiStation(Hour|Day|Month|Year)|getAlarmData|stations/i.test(url);
+
           this.cooldownUntil = Date.now() + delay;
           this.lastRateLimitAt = Date.now();
 
-          const newMin = Math.min(15_000, Math.floor(this.minIntervalMs * 1.25));
-          if (newMin !== this.minIntervalMs) {
-            log.warn('Increasing minIntervalMs', { label: this.label, from: this.minIntervalMs, to: newMin });
-            this.minIntervalMs = newMin;
+          // Daily-quota 407 = quota หมดทั้งวัน → ส่งช้าลงไม่ช่วย ไม่ต้องบวม minIntervalMs
+          // Per-5-min 407 = ส่งเร็วเกิน → ชะลอช่วยได้
+          if (!isDailyQuota) {
+            const newMin = Math.min(15_000, Math.floor(this.minIntervalMs * 1.25));
+            if (newMin !== this.minIntervalMs) {
+              log.warn('Increasing minIntervalMs', { label: this.label, from: this.minIntervalMs, to: newMin });
+              this.minIntervalMs = newMin;
+            }
           }
-
-          // Daily-quota endpoints: retry เปล่าเพราะ quota หมดทั้งวัน กิน quota เพิ่มเปล่าๆ
-          // Per-5-min endpoints: retry ได้ 1 ครั้ง เพราะ quota อาจ reset ทัน
-          const url = originalRequest.url ?? '';
-          const isDailyQuota = /getDevList|getKpiStation(Hour|Day|Month|Year)|getAlarmData/i.test(url);
           const maxRetries = isDailyQuota ? 0 : 1;
 
           if (originalRequest._retryCount <= maxRetries) {
@@ -307,7 +309,7 @@ class HuaweiService {
    * Huawei บาง tenant ตอบ rate limit เป็น HTTP 200 แต่มี { success:false, failCode:407 }
    * -> ต้อง handle จาก body
    */
-  public notifyRateLimit(opts?: { kind?: 'personal' | 'system'; delayMs?: number; reason?: string }) {
+  public notifyRateLimit(opts?: { kind?: 'personal' | 'system'; delayMs?: number; reason?: string; endpoint?: string }) {
     const kind = opts?.kind ?? 'personal';
     const delayMs =
       opts?.delayMs ??
@@ -318,14 +320,19 @@ class HuaweiService {
     this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + delayMs);
     this.lastRateLimitAt = Date.now();
 
-    const factor = kind === 'personal' ? 1.25 : 1.15;
-    const newMin = Math.min(20_000, Math.floor(this.minIntervalMs * factor));
-    if (newMin !== this.minIntervalMs) {
-      log.warn('Increasing minIntervalMs', { label: this.label, from: this.minIntervalMs, to: newMin });
-      this.minIntervalMs = newMin;
+    // Daily-quota endpoints: ส่งช้าลงไม่ช่วย quota หมดทั้งวัน → ไม่บวม minIntervalMs
+    const ep = opts?.endpoint ?? opts?.reason ?? '';
+    const isDailyQuota = /getDevList|getKpiStation(Hour|Day|Month|Year)|getAlarmData|stations/i.test(ep);
+    if (!isDailyQuota) {
+      const factor = kind === 'personal' ? 1.25 : 1.15;
+      const newMin = Math.min(20_000, Math.floor(this.minIntervalMs * factor));
+      if (newMin !== this.minIntervalMs) {
+        log.warn('Increasing minIntervalMs', { label: this.label, from: this.minIntervalMs, to: newMin });
+        this.minIntervalMs = newMin;
+      }
     }
 
-    log.debug('notifyRateLimit', { label: this.label, kind, delayMs, reason: opts?.reason ?? '' });
+    log.debug('notifyRateLimit', { label: this.label, kind, delayMs, reason: opts?.reason ?? '', isDailyQuota });
   }
 
   private handleFailCodeFromBody(endpoint: string, body: any) {
