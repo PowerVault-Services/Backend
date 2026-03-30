@@ -3481,6 +3481,51 @@ evidence: [file: photo1.jpg]
 { "success": true }
 ```
 
+### Site Image (Upload / Replace / Delete)
+
+#### POST `/api/client-data/projects/:siteId/image`
+
+**Description:** อัปโหลดรูป site image (รูปโปรเจกต์หน้า Information)
+
+**Content-Type:** `multipart/form-data`
+
+**File field:** `file` (single — รองรับ PNG, JPG, JPEG, WebP, GIF, SVG)
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "siteImageUrl": "/uploads/sites/site_3/image/photo.jpg" } }
+```
+
+**Errors:**
+
+- `400` `file is required`
+- `404` `Project not found`
+
+#### PUT `/api/client-data/projects/:siteId/image`
+
+**Description:** เปลี่ยนรูป site image (ลบรูปเก่าอัตโนมัติ + upload รูปใหม่)
+
+**Content-Type:** `multipart/form-data`
+
+**File field:** `file` (single)
+
+**Response 200 (example):**
+
+```json
+{ "success": true, "data": { "siteImageUrl": "/uploads/sites/site_3/image/new-photo.jpg" } }
+```
+
+#### DELETE `/api/client-data/projects/:siteId/image`
+
+**Description:** ลบรูป site image (ลบไฟล์ + set `siteImageUrl` เป็น `null`)
+
+**Response 200:**
+
+```json
+{ "success": true }
+```
+
 ### Layouts (Upload)
 
 #### POST `/api/client-data/projects/:siteId/layouts/:type`

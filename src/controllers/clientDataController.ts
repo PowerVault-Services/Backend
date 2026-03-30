@@ -6,7 +6,7 @@ import {
 } from '@prisma/client';
 import { Request, Response } from 'express';
 import path from 'path';
-import { storeIncomingUserUpload } from '../services/storageService';
+import { storeIncomingUserUpload, deleteStoredFile } from '../services/storageService';
 
 const prisma = new PrismaClient();
 
@@ -450,7 +450,48 @@ export async function deleteProject(req: Request, res: Response) {
   if (!siteId) return res.status(400).json({ success: false, message: 'siteId is required' });
 
   try {
-    await prisma.site.delete({ where: { id: siteId } });
+    await prisma.$transaction(async (tx) => {
+      // Delete related records that don't have onDelete: Cascade
+      await tx.alarm.deleteMany({ where: { siteId } });
+
+      const inverterIds = (
+        await tx.inverter.findMany({ where: { siteId }, select: { id: true } })
+      ).map((i) => i.id);
+      if (inverterIds.length) {
+        await tx.alarm.deleteMany({ where: { inverterId: { in: inverterIds } } });
+        const snapshotIds = (
+          await tx.inverterKpiSnapshot.findMany({
+            where: { inverterId: { in: inverterIds } },
+            select: { id: true },
+          })
+        ).map((s) => s.id);
+        if (snapshotIds.length) {
+          await tx.inverterStringSnapshot.deleteMany({ where: { snapshotId: { in: snapshotIds } } });
+          await tx.inverterKpiSnapshot.deleteMany({ where: { inverterId: { in: inverterIds } } });
+        }
+        await tx.inverter.deleteMany({ where: { siteId } });
+      }
+
+      // Jobs and their nested relations
+      const jobIds = (
+        await tx.job.findMany({ where: { siteId }, select: { id: true } })
+      ).map((j) => j.id);
+      if (jobIds.length) {
+        await tx.jobAttachment.deleteMany({ where: { jobId: { in: jobIds } } });
+        await tx.stockTransaction.deleteMany({ where: { jobId: { in: jobIds } } });
+        await tx.emailLog.deleteMany({ where: { jobId: { in: jobIds } } });
+        await tx.cleaningJob.deleteMany({ where: { jobId: { in: jobIds } } });
+        await tx.inspectionJob.deleteMany({ where: { jobId: { in: jobIds } } });
+        await tx.serviceJob.deleteMany({ where: { jobId: { in: jobIds } } });
+        await tx.job.deleteMany({ where: { siteId } });
+      }
+
+      await tx.siteDailyEnergy.deleteMany({ where: { siteId } });
+
+      // Now delete site (cascade handles the rest)
+      await tx.site.delete({ where: { id: siteId } });
+    });
+
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err?.message ?? 'Delete project failed' });
@@ -482,6 +523,70 @@ export async function getProjectDetail(req: Request, res: Response) {
   if (!site) return res.status(404).json({ success: false, message: 'Project not found' });
 
   res.json({ success: true, data: site });
+}
+
+// =====================================================
+// SITE IMAGE (upload / replace / delete)
+// =====================================================
+
+/** POST /api/client-data/projects/:siteId/image */
+export async function uploadSiteImage(req: Request, res: Response) {
+  const siteId = Number(req.params.siteId);
+  const file = (req as any).file as Express.Multer.File | undefined;
+  if (!siteId) return res.status(400).json({ success: false, message: 'siteId is required' });
+  if (!file) return res.status(400).json({ success: false, message: 'file is required' });
+
+  const site = await prisma.site.findUnique({ where: { id: siteId }, select: { id: true } });
+  if (!site) return res.status(404).json({ success: false, message: 'Project not found' });
+
+  const stored = await storeIncomingUserUpload(file, {
+    scopeParts: ['sites', `site_${siteId}`, 'image'],
+  });
+
+  await prisma.site.update({ where: { id: siteId }, data: { siteImageUrl: stored.fileUrl } });
+
+  res.json({ success: true, data: { siteImageUrl: stored.fileUrl } });
+}
+
+/** PUT /api/client-data/projects/:siteId/image */
+export async function updateSiteImage(req: Request, res: Response) {
+  const siteId = Number(req.params.siteId);
+  const file = (req as any).file as Express.Multer.File | undefined;
+  if (!siteId) return res.status(400).json({ success: false, message: 'siteId is required' });
+  if (!file) return res.status(400).json({ success: false, message: 'file is required' });
+
+  const site = await prisma.site.findUnique({ where: { id: siteId }, select: { id: true, siteImageUrl: true } });
+  if (!site) return res.status(404).json({ success: false, message: 'Project not found' });
+
+  // Delete old image if exists
+  if (site.siteImageUrl) {
+    await deleteStoredFile(site.siteImageUrl);
+  }
+
+  const stored = await storeIncomingUserUpload(file, {
+    scopeParts: ['sites', `site_${siteId}`, 'image'],
+  });
+
+  await prisma.site.update({ where: { id: siteId }, data: { siteImageUrl: stored.fileUrl } });
+
+  res.json({ success: true, data: { siteImageUrl: stored.fileUrl } });
+}
+
+/** DELETE /api/client-data/projects/:siteId/image */
+export async function deleteSiteImage(req: Request, res: Response) {
+  const siteId = Number(req.params.siteId);
+  if (!siteId) return res.status(400).json({ success: false, message: 'siteId is required' });
+
+  const site = await prisma.site.findUnique({ where: { id: siteId }, select: { id: true, siteImageUrl: true } });
+  if (!site) return res.status(404).json({ success: false, message: 'Project not found' });
+
+  if (site.siteImageUrl) {
+    await deleteStoredFile(site.siteImageUrl);
+  }
+
+  await prisma.site.update({ where: { id: siteId }, data: { siteImageUrl: null } });
+
+  res.json({ success: true });
 }
 
 // =====================================================

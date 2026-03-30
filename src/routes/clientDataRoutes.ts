@@ -14,6 +14,9 @@ import {
   createOtherRow,
   updateOtherRow,
   deleteOtherRow,
+  uploadSiteImage,
+  updateSiteImage,
+  deleteSiteImage,
   createWarrantySupplierItem,
   updateWarrantySupplierItem,
   deleteWarrantySupplierItem,
@@ -66,6 +69,11 @@ router.delete('/warranty/supplier/:itemId', deleteWarrantySupplierItem);
 router.post('/projects/:siteId/warranty/customer', createWarrantyCustomerItem);
 router.put('/warranty/customer/:itemId', updateWarrantyCustomerItem);
 router.delete('/warranty/customer/:itemId', deleteWarrantyCustomerItem);
+
+// Site image
+router.post('/projects/:siteId/image', upload.single('file'), uploadSiteImage);
+router.put('/projects/:siteId/image', upload.single('file'), updateSiteImage);
+router.delete('/projects/:siteId/image', deleteSiteImage);
 
 // Layout upload (PV Layout / PV String Layout)
 router.post(
