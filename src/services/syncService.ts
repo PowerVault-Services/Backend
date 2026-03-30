@@ -388,21 +388,23 @@ async function refreshStationsIfNeeded(force = false): Promise<string[]> {
     }
   }
 
+  // เติม station codes จาก DB เสมอ — กรณี API ได้ไม่ครบ (407 ก่อนดึงทุก page)
+  const dbSites = (await prisma.site.findMany({ where: { isClientOnly: false }, select: { plantCode: true }, orderBy: [{ createdAt: 'asc' }], take: 5000 } as any)) as any[];
+  const dbCodes = dbSites.map((s: any) => s.plantCode).filter(Boolean) as string[];
+  for (const code of dbCodes) stationCodes.add(code);
+
   const uniq = Array.from(stationCodes);
   if (uniq.length > 0) {
-    const ttl = successfulClients === stationClients.length ? STATION_CACHE_TTL_MS : Math.min(STATION_CACHE_TTL_MS, 30 * 60 * 1000);
+    const allFromApi = successfulClients === stationClients.length;
+    const ttl = allFromApi ? STATION_CACHE_TTL_MS : Math.min(STATION_CACHE_TTL_MS, 30 * 60 * 1000);
     stationCache = { expiresAt: now + ttl, stationCodes: uniq };
     replaceKnownHuaweiStationCodes(uniq);
-    log.info('Station cache refreshed', { count: uniq.length, successfulClients, totalClients: stationClients.length, ttlMs: ttl });
+    log.info('Station cache refreshed', { count: uniq.length, fromApi: uniq.length - dbCodes.length + stationCodes.size, fromDb: dbCodes.length, successfulClients, totalClients: stationClients.length, ttlMs: ttl });
     return uniq;
   }
 
-  log.warn('Cannot refresh stations from Huawei, falling back to DB');
-  const sites = (await prisma.site.findMany({ where: { isClientOnly: false }, select: { plantCode: true }, orderBy: [{ createdAt: 'asc' }], take: 5000 } as any)) as any[];
-  const codes = sites.map((s) => s.plantCode).filter(Boolean);
-  stationCache = { expiresAt: now + 10 * 60_000, stationCodes: codes };
-  log.info('Using DB fallback station codes', { count: codes.length, ttlMs: 600_000 });
-  return codes;
+  log.warn('No stations found from API or DB');
+  return [];
 }
 
 function normalizeDeviceTarget(inv: HuaweiDevice): DeviceTarget | null {
