@@ -1038,18 +1038,36 @@ const _syncMonitoringTickInner = async () => {
       log.warn('Backpressure active', { level: bpLevel, multiplier: bpMultiplier, maxPlantsPerTick, rawMax: rawMaxPlants, retryQueueSize: retryQueue.size, recentErrors: recentErrors.length });
     }
     const picked = new Set<string>();
+
+    // Priority 0: sites ที่ยังไม่เคย sync device inventory เลย → ต้องครบก่อน
+    const unsyncedSites = await prisma.site.findMany({
+      where: { deviceMetaSyncedAt: null, plantCode: { in: stationCodes, not: '' } },
+      select: { plantCode: true },
+      take: maxPlantsPerTick,
+    } as any) as { plantCode: string }[];
+    for (const s of unsyncedSites) {
+      if (picked.size >= maxPlantsPerTick) break;
+      picked.add(s.plantCode);
+    }
+    if (unsyncedSites.length > 0) {
+      log.info('Prioritizing unsynced sites for inventory', { unsynced: unsyncedSites.length, picked: picked.size });
+    }
+
+    // Priority 1: retry queue
     for (const code of retryQueue) {
       if (picked.size >= maxPlantsPerTick) break;
       picked.add(code);
     }
     for (const code of picked) retryQueue.delete(code);
 
+    // Priority 2: stalest stations
     const staleCandidates = getStalestStationCodes('device', stationCodes, maxPlantsPerTick * 2, { exclude: picked });
     for (const code of staleCandidates) {
       if (picked.size >= maxPlantsPerTick) break;
       picked.add(code);
     }
 
+    // Priority 3: round-robin
     while (picked.size < maxPlantsPerTick && stationCodes.length > 0) {
       const code = stationCodes[deviceSyncCursor % stationCodes.length];
       deviceSyncCursor = (deviceSyncCursor + 1) % Math.max(stationCodes.length, 1);
@@ -1071,8 +1089,11 @@ const _syncMonitoringTickInner = async () => {
     // --- getDevList daily quota guard ---
     // getDevList has a daily limit (27/day/account). Only refresh inventory for
     // sites that have never synced or whose metadata TTL has expired.
-    // Cap per tick to spread quota evenly across the day.
-    const INVENTORY_PER_TICK = Math.max(1, Number(process.env.HUAWEI_INVENTORY_PER_TICK ?? 2));
+    // ถ้ายังมี site ที่ไม่เคย sync เลย → ปล่อยให้เรียก getDevList ได้เต็ม tick
+    // ถ้าครบหมดแล้ว → จำกัดตาม INVENTORY_PER_TICK เพื่อกระจาย quota สำหรับ TTL refresh
+    const baseInventoryPerTick = Math.max(1, Number(process.env.HUAWEI_INVENTORY_PER_TICK ?? 2));
+    const hasUnsyncedSites = unsyncedSites.length > 0;
+    const INVENTORY_PER_TICK = hasUnsyncedSites ? maxPlantsPerTick : baseInventoryPerTick;
     const now = Date.now();
     const needsInventorySet = new Set(
       sites
