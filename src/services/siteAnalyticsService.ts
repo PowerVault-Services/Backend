@@ -378,7 +378,9 @@ export async function fetchSiteDailyActualMap(siteId: number, month: MonthRangeI
     console.warn(`⚠️ [PR] DB read error for daily KPI siteId=${siteId}:`, err?.message ?? err);
   }
 
-  // Fallback: Huawei API
+  // Fallback: Huawei API (skip non-Huawei plantCodes)
+  const isHuaweiPlant = site.plantCode.startsWith('NE=');
+  if (!isHuaweiPlant) return new Map();
   try {
     const raw = await huaweiOnDemand.postRaw<any>('/thirdData/getKpiStationDay', {
       stationCodes: site.plantCode,
