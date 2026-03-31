@@ -415,7 +415,7 @@ export async function summarizeSitePrRange(
     const forecast = forecastTemplate.get(period.month);
     return {
       month: period.key,
-      label: period.label,
+      monthName: period.label,
       irradiation: {
         actual: actual?.irradiation ?? null,
         forecast: forecast?.globalKwhM2 ?? null,
@@ -432,8 +432,7 @@ export async function summarizeSitePrRange(
         varPct: calcVarPct(actual?.pr ?? null, forecast?.prRatio ?? null),
       },
       grid: {
-        importActual: actual?.gridImport ?? null,
-        exportActual: actual?.gridExport ?? null,
+        actual: actual?.gridImport ?? null,
         forecast: null,
         varPct: null,
       },
@@ -446,8 +445,7 @@ export async function summarizeSitePrRange(
   const irradiationForecast = sumNullable(detailRows.map((row) => row.irradiation.forecast));
   const productionActual = sumNullable(detailRows.map((row) => row.production.actual));
   const productionForecast = sumNullable(detailRows.map((row) => row.production.forecast));
-  const gridImportActual = sumNullable(detailRows.map((row) => row.grid.importActual));
-  const gridExportActual = sumNullable(detailRows.map((row) => row.grid.exportActual));
+  const gridActual = sumNullable(detailRows.map((row) => row.grid.actual));
   const consumptionActual = sumNullable(detailRows.map((row) => row.consumption));
   const revenueActual = sumNullable(detailRows.map((row) => row.revenue));
 
@@ -478,8 +476,7 @@ export async function summarizeSitePrRange(
         varPct: calcVarPct(prActual, prForecast),
       },
       grid: {
-        importActual: gridImportActual,
-        exportActual: gridExportActual,
+        actual: gridActual,
       },
       consumptionActual,
       revenueActual,
@@ -506,52 +503,49 @@ export async function buildEnergyYieldPayload(siteId: number, monthValue: string
     return {
       day,
       date: `${month.key}-${String(day).padStart(2, '0')}`,
-      energyProducedKWh: row?.production ?? null,
-      radiationWhM2: row?.irradiation ?? null,
-      fromGridKWh: row?.gridImport ?? null,
-      feedToGridKWh: row?.gridExport ?? null,
-      consumptionKWh: row?.consumption ?? null,
-      revenueBaht: row?.revenue ?? null,
-      moduleTempC: row?.moduleTempC ?? null,
-      downTimeClientHours: row?.downTimeClientHours ?? null,
-      fromPvKWh: row?.selfProvide ?? null,
+      production: row?.production ?? null,
+      irradiation: row?.irradiation ?? null,
+      fromGrid: row?.gridImport ?? null,
+      feedToGrid: row?.gridExport ?? null,
+      consumption: row?.consumption ?? null,
+      revenue: row?.revenue ?? null,
+      moduleTemp: row?.moduleTempC ?? null,
+      downTime: row?.downTimeClientHours ?? null,
+      fromPV: row?.selfProvide ?? null,
     };
   });
 
-  const productionVsRadiation = monthTable.map((row) => ({
+  // charts.production — Frontend EnergyProductionChart expects { date, production, irradiation }
+  const production = monthTable.map((row) => ({
     date: row.date,
     label: String(row.day).padStart(2, '0'),
-    energyProducedKWh: row.energyProducedKWh,
-    radiationWhM2: row.radiationWhM2,
+    production: row.production,
+    irradiation: row.irradiation,
   }));
 
-  const energyTrend = monthTable.map((row) => ({
+  // charts.trend — Frontend TrendChart (period="month") expects { day, pv, grid }
+  const trend = monthTable.map((row) => ({
     date: row.date,
-    label: String(row.day),
-    yieldMWh: row.energyProducedKWh != null ? Number((row.energyProducedKWh / 1000).toFixed(3)) : null,
-    consumptionMWh: row.consumptionKWh != null ? Number((row.consumptionKWh / 1000).toFixed(3)) : null,
-    feedToGridMWh: row.feedToGridKWh != null ? Number((row.feedToGridKWh / 1000).toFixed(3)) : null,
-    fromPvMWh: row.fromPvKWh != null ? Number((row.fromPvKWh / 1000).toFixed(3)) : null,
-    fromGridMWh: row.fromGridKWh != null ? Number((row.fromGridKWh / 1000).toFixed(3)) : null,
+    day: String(row.day),
+    pv: row.production != null ? Number((row.production / 1000).toFixed(3)) : null,
+    grid: row.fromGrid != null ? Number((row.fromGrid / 1000).toFixed(3)) : null,
+    consumption: row.consumption != null ? Number((row.consumption / 1000).toFixed(3)) : null,
+    feedToGrid: row.feedToGrid != null ? Number((row.feedToGrid / 1000).toFixed(3)) : null,
+    fromPV: row.fromPV != null ? Number((row.fromPV / 1000).toFixed(3)) : null,
   }));
 
+  // summary — Frontend EnergySummary expects { yield, consumption, fromPV, fromGrid, feedToGrid }
+  const toMWh = (vals: (number | null)[]) => {
+    const s = sumNullable(vals);
+    return s != null ? Number((s / 1000).toFixed(3)) : null;
+  };
   const summary = {
-    yieldMWh: sumNullable(monthTable.map((row) => row.energyProducedKWh)) != null
-      ? Number(((sumNullable(monthTable.map((row) => row.energyProducedKWh)) ?? 0) / 1000).toFixed(3))
-      : null,
-    consumptionMWh: sumNullable(monthTable.map((row) => row.consumptionKWh)) != null
-      ? Number(((sumNullable(monthTable.map((row) => row.consumptionKWh)) ?? 0) / 1000).toFixed(3))
-      : null,
-    feedToGridMWh: sumNullable(monthTable.map((row) => row.feedToGridKWh)) != null
-      ? Number(((sumNullable(monthTable.map((row) => row.feedToGridKWh)) ?? 0) / 1000).toFixed(3))
-      : null,
-    fromPvMWh: sumNullable(monthTable.map((row) => row.fromPvKWh)) != null
-      ? Number(((sumNullable(monthTable.map((row) => row.fromPvKWh)) ?? 0) / 1000).toFixed(3))
-      : null,
-    fromGridMWh: sumNullable(monthTable.map((row) => row.fromGridKWh)) != null
-      ? Number(((sumNullable(monthTable.map((row) => row.fromGridKWh)) ?? 0) / 1000).toFixed(3))
-      : null,
-    revenueBaht: sumNullable(monthTable.map((row) => row.revenueBaht)),
+    yield: toMWh(monthTable.map((row) => row.production)),
+    consumption: toMWh(monthTable.map((row) => row.consumption)),
+    feedToGrid: toMWh(monthTable.map((row) => row.feedToGrid)),
+    fromPV: toMWh(monthTable.map((row) => row.fromPV)),
+    fromGrid: toMWh(monthTable.map((row) => row.fromGrid)),
+    revenue: sumNullable(monthTable.map((row) => row.revenue)),
   };
 
   const prReport = await summarizeSitePrRange(siteId, `${month.year}-01`, `${month.year}-12`);
@@ -566,8 +560,8 @@ export async function buildEnergyYieldPayload(siteId: number, monthValue: string
     month: month.key,
     monthTable,
     charts: {
-      productionVsRadiation,
-      energyTrend,
+      production,
+      trend,
     },
     summary,
     prReport,
