@@ -778,6 +778,19 @@ export async function getEnergyManagementSeries(siteId: number, opts?: { view?: 
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   }
 
+  // Map to frontend-expected field names:
+  // label→time, pvOutput→pv, powerOfGrid→grid, consumptionPower→load,
+  // batteryCharge-batteryDischarge→battery, irradiance stays
+  const frontendPoints = points.map((p) => ({
+    ...p,
+    time: p.label,
+    pv: p.pvOutput,
+    grid: p.powerOfGrid,
+    load: p.consumptionPower,
+    battery: roundValue((p.batteryCharge ?? 0) - (p.batteryDischarge ?? 0)),
+    irradiance: p.irradiance,
+  }));
+
   return {
     siteId: site.id,
     plantCode: site.plantCode,
@@ -791,15 +804,13 @@ export async function getEnergyManagementSeries(siteId: number, opts?: { view?: 
       requestedDate: opts?.date ?? null,
     },
     units: {
-      pvOutput: view === 'day' ? 'kWh per hour (~avg kW)' : 'kWh',
-      powerOfGrid: view === 'day' ? 'kWh per hour (~avg kW)' : 'kWh',
-      consumptionPower: view === 'day' ? 'kWh per hour (~avg kW)' : 'kWh',
-      consumedFromPv: view === 'day' ? 'kWh per hour (~avg kW)' : 'kWh',
-      batteryCharge: 'kWh',
-      batteryDischarge: 'kWh',
+      pv: view === 'day' ? 'kWh per hour (~avg kW)' : 'kWh',
+      grid: view === 'day' ? 'kWh per hour (~avg kW)' : 'kWh',
+      load: view === 'day' ? 'kWh per hour (~avg kW)' : 'kWh',
+      battery: 'kWh',
       irradiance: view === 'day' ? 'kWh/m²' : 'kWh/m²',
     },
-    points,
+    points: frontendPoints,
     _debug: {
       dataSource,
       huaweiFailCode,
