@@ -1163,14 +1163,18 @@ export { restoreRetryQueue };
 export const syncInverterData = syncMonitoringTick;
 
 export async function syncPlantOnDemand(plantCode: string, opts?: SyncPlantOnDemandOptions) {
-  // API-only mode: skip all Huawei calls, serve from DB only
+  // API-only mode: still attempt on-demand refresh if Huawei credentials exist,
+  // but fall back gracefully to DB-only if no credentials or API fails.
   const disableCron = process.env.DISABLE_CRON;
-  if (disableCron === '1' || disableCron === 'true') {
+  const isApiOnlyMode = disableCron === '1' || disableCron === 'true';
+  const hasHuaweiCreds = !!(process.env.HUAWEI_USER && process.env.HUAWEI_PASSWORD);
+
+  if (isApiOnlyMode && !hasHuaweiCreds) {
     return {
       ok: true,
       plantCode,
       skippedRemoteSync: true,
-      reason: 'api_only_mode',
+      reason: 'api_only_mode_no_credentials',
       siteRealtimeRefreshed: false,
       deviceSync: {
         ok: true,
@@ -1180,6 +1184,10 @@ export async function syncPlantOnDemand(plantCode: string, opts?: SyncPlantOnDem
         usedCachedInventory: false,
       },
     };
+  }
+
+  if (isApiOnlyMode) {
+    log.info('ONDEMAND: api_only_mode but credentials available, attempting on-demand refresh', { plantCode });
   }
 
   const normalized = normalizeOnDemandOptions(opts);

@@ -838,8 +838,25 @@ export async function getMonitoringHomeRealtime(siteId: number, opts?: { refresh
   const siteRealtimeMap = ((bundle.site.siteRealtimeRaw as any)?.dataItemMap ?? {}) as Record<string, unknown>;
 
   const pvPowerKw = roundValue(bundle.site.currentPowerKW ?? 0, 3) ?? 0;
-  const gridSignedPowerKw = toSignedGridPowerKw(parseNum(meterMap.active_power));
+  const rawGridSignedPowerKw = toSignedGridPowerKw(parseNum(meterMap.active_power));
   const batterySigned = toSignedBatteryPowerKw(battery);
+  const batteryDischargeKw = batterySigned.direction === 'discharge' ? Math.abs(batterySigned.powerKw ?? 0) : 0;
+
+  // ── Energy balance validation ──
+  // Physics constraint: grid export cannot exceed PV generation + battery discharge.
+  // When data sources are out of sync (PV from site realtime vs grid from meter snapshot),
+  // this can produce impossible values. Clamp grid export to maintain a valid energy balance.
+  let gridSignedPowerKw = rawGridSignedPowerKw;
+  let energyFlowClamped = false;
+  if (gridSignedPowerKw != null && gridSignedPowerKw < 0) {
+    const maxExport = pvPowerKw + batteryDischargeKw;
+    if (Math.abs(gridSignedPowerKw) > maxExport + 0.5) {
+      // Grid export exceeds generation — data is inconsistent
+      gridSignedPowerKw = maxExport > 0 ? roundValue(-maxExport, 3) : 0;
+      energyFlowClamped = true;
+    }
+  }
+
   const loadPowerKw = roundValue(Math.max(0, pvPowerKw + (gridSignedPowerKw ?? 0) + (batterySigned.powerKw ?? 0)), 3);
 
   const meterVoltage = roundValue(parseNum(meterMap.a_u) ?? parseNum(meterMap.meter_u), 2);
@@ -884,6 +901,11 @@ export async function getMonitoringHomeRealtime(siteId: number, opts?: { refresh
         powerKw: loadPowerKw,
       },
       balanceKw: roundValue((pvPowerKw ?? 0) + (gridSignedPowerKw ?? 0) + (batterySigned.powerKw ?? 0) - (loadPowerKw ?? 0), 3),
+      _validation: {
+        clamped: energyFlowClamped,
+        rawGridSignedPowerKw: energyFlowClamped ? roundValue(rawGridSignedPowerKw, 3) : undefined,
+        reason: energyFlowClamped ? 'grid_export_exceeded_generation' : undefined,
+      },
     },
     summaryCards: {
       meterMain: {
